@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+option go_package = "google.golang.org/grpc/examples/route_guide/routeguide";
+
+package zachexample;
+
+// This interface is exported by the server - does this implicitly
+service ZachExample {
+    // Simple input output
+    rpc MathematicalFunction(NumberInput) returns (NumberOutput) {}
+
+    // Number from client, Return 0 - all the numbers received
+    rpc ZeroToNumber(NumberInput) returns (stream NumberOutput) {}
+
+    // Stream from client, sum all the numbers received
+    rpc SumAllNumbers(stream NumberInput) returns (NumberOutput) {}
+
+    // Simply send numbers back and forth
+    rpc NumbersBackAndForth(stream NumberInput) returns (stream NumberOutput) {}
+}
+
+message NumberInput {
+    int32 number_input = 1;
+}
+
+message NumberOutput {
+    int32 number_output = 1;
+}
