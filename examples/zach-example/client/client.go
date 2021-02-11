@@ -81,7 +81,7 @@ func runThroughSumAllNumbers(client pb.ZachExampleClient) {
 	}
 	log.Printf("Sum (from 0 - %v): %v", lengthOfArrayOfNumbers, sum.NumberOutput)
 }
-/*
+
 func runThroughNumbersBackAndForth(client pb.ZachExampleClient) {
 	lengthOfArrayOfNumbers := 10
 	arrayOfNumbers := generateArrayOfNumbers(lengthOfArrayOfNumbers)
@@ -93,7 +93,30 @@ func runThroughNumbersBackAndForth(client pb.ZachExampleClient) {
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
-}*/
+
+	waitc := make(chan struct{})
+	go func() {
+		for {
+			numberOutput, err := stream.Recv()
+			if err == io.EOF {
+				close(waitc)
+				return
+			}
+			if err != nil {
+				log.Fatalf("%v", err)
+			}
+			log.Printf("Number Received: %v", numberOutput.NumberOutput)
+		}
+	}()
+	for _, numberInput := range arrayOfNumbers {
+		log.Printf("Number Sent: %v", numberInput.NumberInput)
+		if err := stream.Send(numberInput); err != nil {
+			log.Fatalf("%v", err)
+		}
+	}
+	stream.CloseSend()
+	<-waitc
+}
 
 func main() {
 	var opts []grpc.DialOption
@@ -112,7 +135,7 @@ func main() {
 
 	runThroughSumAllNumbers(client)
 
-	//runThroughNumbersBackAndForth(client)
+	runThroughNumbersBackAndForth(client)
 
 	// Number to number
 }
