@@ -150,6 +150,11 @@ type ccUpdate struct {
 	err         error
 }
 
+type clusterHandlerUpdate struct {
+	chu []xdsclient.ClusterUpdate
+	err error
+}
+
 // scUpdate wraps a subConn update received from gRPC. This is directly passed
 // on to the edsBalancer.
 type scUpdate struct {
