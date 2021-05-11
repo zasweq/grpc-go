@@ -7,27 +7,36 @@ import (
 	v3rbacpb "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 )
 
-type decision int
+/*type decision int
 
 const (
 	ALLOW decision = iota
 	DENY
-)
+)*/
 
+// authorizationDecision is what will be returned from the RBAC Engine
+// when it is asked to see if an rpc should be allowed or denied.
 type authorizationDecision struct {
 	decision decision
 	matchingPolicyName string
 }
 
+// RbacEngine is used for making authorization decisions on an incoming
+// RPC. It will be called by an interceptor on the server side and act as
+// a logical gatekeeper to a service's methods. The RbacEngine will be configured
+// based on the Envoy RBAC Proto, and will be created in two use cases, one in regular
+// gRPC and one from XDS and TrafficDirector. The engine will then be passed in data pulled
+// from incoming RPC's to the server side.
 type RbacEngine struct {
 	action v3rbacpb.RBAC_Action
-	policyMatchers map[string]*policyMatcher // I think that these need to be internal (name casing)
+	policyMatchers map[string]*policyMatcher
 }
 
-// So we have these data types defined, (v3rbacpb.X, Y, Z), let's fill start filling it out.
-// I think I should do the entire configuration logic first.
-
-func newRbacEngine(policy *v3rbacpb.RBAC) *RbacEngine {
+// NewRbacEngine will be used in order to create a Rbac Engine
+// based on a policy. This policy will be used to instantiate a tree
+// of matchers that will be used to make an authorization decision on
+// an incoming RPC.
+func NewRbacEngine(policy *v3rbacpb.RBAC) *RbacEngine {
 	var policyMatchers map[string]*policyMatcher
 	for policyName, policyConfig := range policy.Policies { // map[string]*Policy
 		policyMatchers[policyName] = createPolicyMatcher(policyConfig)
@@ -38,20 +47,37 @@ func newRbacEngine(policy *v3rbacpb.RBAC) *RbacEngine {
 	}
 }
 
-// The actual data that will be used to configure the RBAC engine seems to be already defined
-// Problem statement how tf do I get this data type into this component ^^^ v3rbacpb?
-// Okay, so this is defined in the go control plane, so now how do I link that to this file?
-
-
-
-
-// Jiangtao Li designed this as
-
+// evaluateArgs represents the data pulled from an incoming RPC to a gRPC server.
+// This data will be passed around the RBAC Engine and pass through the logical tree of matchers,
+// and will help determine whether a RPC is allowed to proceed.
 type evaluateArgs struct {
 	 MD metadata.MD // What's in here? I'm assuming this data type can be looked into to get the same fields as those defined in the C struct
-	 PeerInfo *peer.Peer // What are these used for?
-	 FullMethod string // Why is this here?
+	 PeerInfo *peer.Peer
+	 FullMethod string
 }
+
+// Evaluate will be called after the RBAC Engine is instantiated. This will
+// determine whether any incoming RPC's are allowed to proceed.
+func (r *RbacEngine) Evaluate(args *evaluateArgs) authorizationDecision {
+	// Loop through the policies that this engine was instantiated with. If a policy hits, you now can now return the action
+	// this engine was instantiated with, and the policy name. // TODO: is there any precedence on the policy types here?
+	// i.e. if there is an admin policy and a policy with any principal as the policy, and the policy with any principal
+	// in it hits first, instead of admin, is this okay. I guess, how do we prevent a race condition here lol.
+	for policy, matcher := range r.policyMatchers {
+		if matcher.matches(args) {
+			return authorizationDecision{
+				decision: r.action, // TODO: Is it okay that this is a proto field being returned rather than a type that I defined?
+				matchingPolicyName: policy,
+			}
+		}
+	}
+	// What do you return if no policies match?
+}
+
+
+// VVVV Useless, don't look at
+
+/*
 
 // This is what I defined as it (copied from C Core design)
 
@@ -74,25 +100,6 @@ type RBACData struct {
 	direct_remote_ip string
 	// Metadata - not supported?
 }
-
-func (r *RbacEngine) Evaluate(/*rbacData RBACData*/  args *evaluateArgs) authorizationDecision {
-	// Loop through policies, if one hits, simply pass it back the action that this engine was instantiated with from the
-	// policy passed into it
-	// Problem statement: matcher is of type Matcher interface, seems like you need to instantiate it with a specific
-	// Matcher type to call .matches on
-	for policy, matcher := range r.policyMatchers {
-		// Is there any precedence here? I.e. hits type all first vs. type Admin
-		if matcher.matches(args) {
-			return authorizationDecision{
-				// All this is doing is converting the r.action field (which is of the proto config type to
-				// an enum type called decision which is 0 or 1 logically representing ALLOW or DENY.
-				decision: r.action, // TODO: Figure out how to take from this proto and convert to true/false
-				matchingPolicyName: policy,
-			}
-		}
-	}
-}
-
 // We don't need this. However, these enums give a visual indication of what is in the proto config
 
 // VVV this is logically like defining nodes of a tree up until the base cases, which are primitive data types
@@ -153,5 +160,6 @@ type RbacConfig struct {
 
 
 	action decision
-	policies map[string]Policy
+	policies map[string]policy
 }
+*/
