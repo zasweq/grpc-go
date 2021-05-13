@@ -173,27 +173,15 @@ type andMatcher struct {
 	matcher
 	matchers []matcher
 }
-/*
-func newAndMatcherPermissions(permissions []*v3rbacpb.Permission) *andMatcher {
-	return &andMatcher{
-		matchers: createMatcherListFromPermissionList(permissions),
-	}
-}
 
-func newAndMatcherPrincipals(principals []*v3rbacpb.Principal) *andMatcher {
-	return &andMatcher {
-		matchers: createMatcherListFromPrincipalList(principals),
-	}
-}*/
-
-/*func (am *andMatcher) matches(args *EvaluateArgs) bool {
+func (am *andMatcher) matches(args *EvaluateArgs) bool {
 	for _, matcher := range am.matchers {
 		if !matcher.matches(args) {
 			return false
 		}
 	}
 	return true
-}*/
+}
 
 // alwaysMatcher is a matcher that will always match. This logically represents an any rule for a permission or a principal.
 type alwaysMatcher struct {
