@@ -22,7 +22,7 @@ import (
 // any incoming RPC's will be passed through the tree to help make a decision about whether the RPC should be allowed
 // or not.
 type matcher interface {
-	matches(args *evaluateArgs) bool
+	matches(args *EvaluateArgs) bool
 }
 /*
 // TODO: Should the matcher interface have another method defined it called createMatcher? This seems illogical, as
@@ -47,15 +47,19 @@ type policyMatcher struct {
 	principals *orMatcher
 }
 
-func createPolicyMatcher(policy *v3rbacpb.Policy) *policyMatcher {
+func newPolicyMatcher(policy *v3rbacpb.Policy) *policyMatcher {
 	return &policyMatcher{
-		permissions: createOrMatcherPermissions(policy.Permissions),
-		principals: createOrMatcherPrincipals(policy.Principals),
+		permissions: &orMatcher{
+			matchers: createMatcherListFromPermissionList(policy.Permissions),
+		},
+		principals: &orMatcher{
+			matchers: createMatcherListFromPrincipalList(policy.Principals),
+		},
 	}
 }
 
 
-func (pm *policyMatcher) matches(args *evaluateArgs) bool {
+func (pm *policyMatcher) matches(args *EvaluateArgs) bool {
 	// Due to a policy matching iff one of the permissions match the action taking place and one of the principals
 	// match the peer, you can simply delegate the data about the incoming RPC to the child permission and principal or matchers.
 	return pm.permissions.matches(args) && pm.principals.matches(args)
@@ -75,23 +79,25 @@ func createMatcherListFromPermissionList(permissions []*v3rbacpb.Permission) []m
 	for _, permission := range permissions {
 		switch permission.GetRule().(type) {
 		case *v3rbacpb.Permission_AndRules:
-			matcherList = append(matcherList, createAndMatcherPermissions(permission.GetAndRules().Rules))
+			matcherList = append(matcherList, &andMatcher{matchers: createMatcherListFromPermissionList(permission.GetAndRules().Rules)})
 		case *v3rbacpb.Permission_OrRules:
-			matcherList = append(matcherList, createOrMatcherPermissions(permission.GetOrRules().Rules))
+			matcherList = append(matcherList, &orMatcher{
+			matchers: createMatcherListFromPermissionList(permission.GetOrRules().Rules),
+			})
 		case *v3rbacpb.Permission_Any:
 			matcherList = append(matcherList, &alwaysMatcher{})
 		case *v3rbacpb.Permission_Header:
-			matcherList = append(matcherList, createHeaderMatcher(permission.GetHeader()))
+			matcherList = append(matcherList, newHeaderMatcher(permission.GetHeader()))
 		case *v3rbacpb.Permission_UrlPath:
-			matcherList = append(matcherList, createUrlPathMatcher(permission.GetUrlPath()))
+			matcherList = append(matcherList, newUrlPathMatcher(permission.GetUrlPath()))
 		case *v3rbacpb.Permission_DestinationIp:
-			matcherList = append(matcherList, createDestinationIpMatcher(permission.GetDestinationIp()))
+			matcherList = append(matcherList, newDestinationIpMatcher(permission.GetDestinationIp()))
 		case *v3rbacpb.Permission_DestinationPort:
-			matcherList = append(matcherList, createPortMatcher(permission.GetDestinationPort()))
+			matcherList = append(matcherList, newPortMatcher(permission.GetDestinationPort()))
 		case *v3rbacpb.Permission_Metadata:
 			// Not supported in gRPC RBAC currently - a permission typed as Metadata in the initial config will be a no-op.
 		case *v3rbacpb.Permission_NotRule:
-			matcherList = append(matcherList, createNotMatcherPermission(permission))
+			matcherList = append(matcherList, newNotMatcherPermission(permission))
 		case *v3rbacpb.Permission_RequestedServerName:
 			// Not supported in gRPC RBAC currently - a permission typed as requested server name in the initial config will
 			// be a no-op.
@@ -105,27 +111,27 @@ func createMatcherListFromPrincipalList(principals []*v3rbacpb.Principal) []matc
 	for _, principal := range principals {
 		switch principal.GetIdentifier().(type) {
 		case *v3rbacpb.Principal_AndIds:
-			matcherList = append(matcherList, createAndMatcherPrincipals(principal.GetAndIds().Ids))
+			matcherList = append(matcherList, &andMatcher{matchers: createMatcherListFromPrincipalList(principal.GetAndIds().Ids)}) // Make this generic have it as matchers
 		case *v3rbacpb.Principal_OrIds:
-			matcherList = append(matcherList, createOrMatcherPrincipals(principal.GetOrIds().Ids))
+			matcherList = append(matcherList, &orMatcher{matchers: createMatcherListFromPrincipalList(principal.GetOrIds().Ids)})
 		case *v3rbacpb.Principal_Any:
 			matcherList = append(matcherList, &alwaysMatcher{})
 		case *v3rbacpb.Principal_Authenticated_:
 			// What matcher do I put here lol? - looks like this is only new one
 		case *v3rbacpb.Principal_SourceIp: // This is logically distinct from destination ip and thus will need a seperate matcher type, as matches will call the peer info rather than passed in from listener.
-			matcherList = append(matcherList, createSourceIpMatcher(principal.GetSourceIp())) // TODO: What to do about this deprecated field here?
+			matcherList = append(matcherList, newSourceIpMatcher(principal.GetSourceIp())) // TODO: What to do about this deprecated field here?
 		case *v3rbacpb.Principal_DirectRemoteIp: // This is the same thing as source ip
-			matcherList = append(matcherList, createSourceIpMatcher(principal.GetDirectRemoteIp()))
+			matcherList = append(matcherList, newSourceIpMatcher(principal.GetDirectRemoteIp()))
 		case *v3rbacpb.Principal_RemoteIp:
 			// Not supported in gRPC RBAC currently - a principal typed as Remote Ip in the initial config will be a no-op.
 		case *v3rbacpb.Principal_Header:
-			matcherList = append(matcherList, createHeaderMatcher(principal.GetHeader()))
+			matcherList = append(matcherList, newHeaderMatcher(principal.GetHeader()))
 		case *v3rbacpb.Principal_UrlPath:
-			matcherList = append(matcherList, createUrlPathMatcher(principal.GetUrlPath()))
+			matcherList = append(matcherList, newUrlPathMatcher(principal.GetUrlPath()))
 		case *v3rbacpb.Principal_Metadata:
 			// Not supported in gRPC RBAC currently - a principal typed as Metadata in the initial config will be a no-op.
 		case *v3rbacpb.Principal_NotId:
-			matcherList = append(matcherList, createNotMatcherPrincipal(principal))
+			matcherList = append(matcherList, newNotMatcherPrincipal(principal))
 		}
 	}
 	return matcherList
@@ -136,22 +142,22 @@ func createMatcherListFromPrincipalList(principals []*v3rbacpb.Principal) []matc
 // the config tree.
 type orMatcher struct {
 	matcher
-	matchers []matcher
+	matchers []matcher // You can create this inline rather than what I have
 }
-
-func createOrMatcherPermissions(permissions []*v3rbacpb.Permission) *orMatcher {
+/*
+func newOrMatcherPermissions(permissions []*v3rbacpb.Permission) *orMatcher { // Generic concept or, base level combinatorial and or not, base level branching, indistingushable
 	return &orMatcher{
 		matchers: createMatcherListFromPermissionList(permissions),
 	}
 }
 
-func createOrMatcherPrincipals(principals []*v3rbacpb.Principal) *orMatcher {
+func newOrMatcherPrincipals(principals []*v3rbacpb.Principal) *orMatcher {
 	return &orMatcher{
 		matchers: createMatcherListFromPrincipalList(principals),
 	}
-}
+}*/
 
-func (om *orMatcher) matches(args *evaluateArgs) bool {
+func (om *orMatcher) matches(args *EvaluateArgs) bool {
 	// Range through child matchers and pass in rbacData, and only one child matcher has to match to be
 	// logically successful.
 	for _, matcher := range om.matchers {
@@ -167,34 +173,34 @@ type andMatcher struct {
 	matcher
 	matchers []matcher
 }
-
-func createAndMatcherPermissions(permissions []*v3rbacpb.Permission) *andMatcher {
+/*
+func newAndMatcherPermissions(permissions []*v3rbacpb.Permission) *andMatcher {
 	return &andMatcher{
 		matchers: createMatcherListFromPermissionList(permissions),
 	}
 }
 
-func createAndMatcherPrincipals(principals []*v3rbacpb.Principal) *andMatcher {
+func newAndMatcherPrincipals(principals []*v3rbacpb.Principal) *andMatcher {
 	return &andMatcher {
 		matchers: createMatcherListFromPrincipalList(principals),
 	}
-}
+}*/
 
-func (am *andMatcher) matches(args *evaluateArgs) bool {
+/*func (am *andMatcher) matches(args *EvaluateArgs) bool {
 	for _, matcher := range am.matchers {
 		if !matcher.matches(args) {
 			return false
 		}
 	}
 	return true
-}
+}*/
 
 // alwaysMatcher is a matcher that will always match. This logically represents an any rule for a permission or a principal.
 type alwaysMatcher struct {
 	matcher
 }
 
-func (am *alwaysMatcher) Matches(args *evaluateArgs) bool {
+func (am *alwaysMatcher) Matches(args *EvaluateArgs) bool {
 	return true
 }
 
@@ -204,7 +210,7 @@ type notMatcher struct {
 	matcherToNot matcher
 }
 
-func createNotMatcherPermission(permission *v3rbacpb.Permission) *notMatcher {
+func newNotMatcherPermission(permission *v3rbacpb.Permission) *notMatcher {
 	// The Cardinality of the matcher list to the permission list will be 1 to 1.
 	matcherList := createMatcherListFromPermissionList([]*v3rbacpb.Permission{permission})
 	return &notMatcher{
@@ -213,11 +219,11 @@ func createNotMatcherPermission(permission *v3rbacpb.Permission) *notMatcher {
 }
 
 
-func (nm *notMatcher) matches(args *evaluateArgs) bool {
+func (nm *notMatcher) matches(args *EvaluateArgs) bool {
 	return !nm.matcherToNot.matches(args)
 }
 
-func createNotMatcherPrincipal(principal *v3rbacpb.Principal) *notMatcher {
+func newNotMatcherPrincipal(principal *v3rbacpb.Principal) *notMatcher {
 	// The cardinality of the matcher list to the policy list will be 1 to 1.
 	matcherList := createMatcherListFromPrincipalList([]*v3rbacpb.Principal{principal})
 	return &notMatcher{
@@ -247,7 +253,7 @@ type headerMatcher struct {
 	// headerMatcher headerMatcherInterface (will be moved to internal
 }
 
-func createHeaderMatcher(headerMatcher *v3route_componentspb.HeaderMatcher) *headerMatcher {
+func newHeaderMatcher(headerMatcher *v3route_componentspb.HeaderMatcher) *headerMatcher {
 	// Convert that HeaderMatcher type from function argument to the
 	// soon to be internal headerMatcherInterface.
 	// Branch across the type of this headerMatcher, instantiate an internal matcher interface type
@@ -255,7 +261,7 @@ func createHeaderMatcher(headerMatcher *v3route_componentspb.HeaderMatcher) *hea
 	// Take that config, branch across type, then you persist ONE of the internal Black boxes that I will move
 }
 
-func (hm *headerMatcher) matches(args *evaluateArgs) bool {
+func (hm *headerMatcher) matches(args *EvaluateArgs) bool {
 	// Use that persisted internal black box, pull metadata from args function argument, then send that to
 	// the internal black box for the function argument.
 }
@@ -267,7 +273,7 @@ type urlPathMatcher struct {
 	// This state could also be a matcher you pull from xds/internal/resolver/... into internal
 }
 
-func createUrlPathMatcher(pathMatcher *v3matcherpb.PathMatcher) *urlPathMatcher {
+func newUrlPathMatcher(pathMatcher *v3matcherpb.PathMatcher) *urlPathMatcher {
 	// There's a path matcher in matcher_path.go in same directory as xds resolver.
 	// match(path string), exact, prefix, regex match
 	// This gets into string matcher branching logic, which the 6 types are defined as: exact, prefix, suffix, safe regex
@@ -275,7 +281,7 @@ func createUrlPathMatcher(pathMatcher *v3matcherpb.PathMatcher) *urlPathMatcher 
 	pathMatcher.Rule
 }
 
-func (upm *urlPathMatcher) matches(args *evaluateArgs) bool {
+func (upm *urlPathMatcher) matches(args *EvaluateArgs) bool {
 
 }
 
@@ -292,7 +298,7 @@ type sourceIpMatcher struct {
 
 }
 
-func createSourceIpMatcher(cidrRange *v3corepb.CidrRange) *sourceIpMatcher {
+func newSourceIpMatcher(cidrRange *v3corepb.CidrRange) *sourceIpMatcher {
 	// Convert configuration to a cidrRangeString, as Go standard library has methods that parse
 	// cidr string.
 	cidrRangeString := cidrRange.AddressPrefix + fmt.Sprint(cidrRange.PrefixLen.Value) // Does go prefer () or just calling the object within the proto object?
@@ -303,7 +309,7 @@ func createSourceIpMatcher(cidrRange *v3corepb.CidrRange) *sourceIpMatcher {
 	}
 }
 
-func (sim *sourceIpMatcher) matches(args *evaluateArgs) bool {
+func (sim *sourceIpMatcher) matches(args *EvaluateArgs) bool {
 	return sim.ipNet.Contains(net.IP(args.PeerInfo.Addr.String()))
 }
 
@@ -313,7 +319,7 @@ type destinationIpMatcher struct {
 	ipNet *net.IPNet
 }
 
-func createDestinationIpMatcher(cidrRange *v3corepb.CidrRange) *destinationIpMatcher {
+func newDestinationIpMatcher(cidrRange *v3corepb.CidrRange) *destinationIpMatcher {
 	cidrRangeString := cidrRange.AddressPrefix + fmt.Sprint(cidrRange)
 	_, ipNet, err := net.ParseCIDR(cidrRangeString) // Again, big question of error handling
 	// Error handling here.
@@ -322,8 +328,8 @@ func createDestinationIpMatcher(cidrRange *v3corepb.CidrRange) *destinationIpMat
 	}
 }
 
-func (dim *destinationIpMatcher) matches(args *evaluateArgs) bool {
-	return dim.ipNet.Contains(net.IP(args.destinationAddr.String()))
+func (dim *destinationIpMatcher) matches(args *EvaluateArgs) bool {
+	return dim.ipNet.Contains(net.IP(args.DestinationAddr.String()))
 }
 
 
@@ -332,14 +338,14 @@ type portMatcher struct {
 	destinationPort uint32
 }
 
-func createPortMatcher(destinationPort uint32) *portMatcher {
+func newPortMatcher(destinationPort uint32) *portMatcher {
 	return &portMatcher{
 		destinationPort: destinationPort,
 	}
 }
 
-func (pm *portMatcher) matches(args *evaluateArgs) bool {
-	return args.destinationPort == pm.destinationPort
+func (pm *portMatcher) matches(args *EvaluateArgs) bool {
+	return args.DestinationPort == pm.destinationPort
 }
 
 
