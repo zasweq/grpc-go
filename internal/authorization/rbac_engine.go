@@ -3,21 +3,15 @@ package authorization
 import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
+	"net"
 
 	v3rbacpb "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 )
 
-/*type decision int
-
-const (
-	ALLOW decision = iota
-	DENY
-)*/
-
 // authorizationDecision is what will be returned from the RBAC Engine
 // when it is asked to see if an rpc should be allowed or denied.
 type authorizationDecision struct {
-	decision decision
+	decision v3rbacpb.RBAC_Action
 	matchingPolicyName string
 }
 
@@ -54,6 +48,8 @@ type evaluateArgs struct {
 	 MD metadata.MD // What's in here? I'm assuming this data type can be looked into to get the same fields as those defined in the C struct
 	 PeerInfo *peer.Peer
 	 FullMethod string
+	 destinationPort uint32 // Will be constructed from listener data
+	 destinationAddr net.Addr
 }
 
 // Evaluate will be called after the RBAC Engine is instantiated. This will
@@ -73,93 +69,3 @@ func (r *RbacEngine) Evaluate(args *evaluateArgs) authorizationDecision {
 	}
 	// What do you return if no policies match?
 }
-
-
-// VVVV Useless, don't look at
-
-/*
-
-// This is what I defined as it (copied from C Core design)
-
-type RBACData struct {
-	// HTTP request header
-	header string
-	// Full gRPC method name
-	url_path string
-	// Destination IP Address
-	destination_ip string
-	// Destination Port
-	destination_port string
-	// TLS SNI - will we support?
-	// first URL SAN or DNS SAN in that order or subject field from certificate
-	principal_name string
-	// remote_ip - not supported?
-	// Source IP address
-	source_ip string
-	// Remote/origin address
-	direct_remote_ip string
-	// Metadata - not supported?
-}
-// We don't need this. However, these enums give a visual indication of what is in the proto config
-
-// VVV this is logically like defining nodes of a tree up until the base cases, which are primitive data types
-
-// Is there any matchers that are already implemented in the codebase?
-
-// Needs to convert JSON config into an internal go struct parseX doug said to parse the JSON config into a struct
-
-// Structs for each layer of JSON
-
-
-type permissionType int
-const ( // Do we captialize this?
-	permissionTypeAND permissionType = iota
-	permissionTypeOR
-	permissionTypeANY
-	permissionTypeHEADER
-	permissionTypePATH
-	permissionTypeDEST_IP
-	permissionTypeDEST_PORT
-	// Not rule? Metadata?
-	permissionTypeREQ_SERVER_NAME
-)
-
-type permission struct { // These need to be lowercase - as these are all internal
-	// All this state not related to permission type
-
-}
-
-type principalType int
-const (
-	principalTypeAND principalType = iota
-	principalTypeOR
-	principalTypeANY
-	principalTypePRINICPAL_NAME
-	principalTypeSOURCE_IP
-	principalTypeHEADER
-	principalTypePATH
-)
-
-type principal struct {
-	// All this state not related to prinicpal type
-}
-// STRONG UNIT TESTS - CLOSE TO 100% COVERAGE *** - can reuse string matchers
-// Define data type here that represents the policy
-// This is what JSON config will get converted to, this Policy struct
-
-
-// Mission statement for the day: Define an internal policy in grpc based off the "gRPC Authz translator"
-
-type policy struct {
-	action decision // Why is this here?
-	permissions permission
-	principals principal
-}
-
-type RbacConfig struct {
-
-
-	action decision
-	policies map[string]policy
-}
-*/

@@ -1,10 +1,12 @@
 package authorization
 
 import (
+	"fmt"
 	v3rbacpb "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	v3route_componentspb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	"net"
 )
 
 // Logically,
@@ -83,13 +85,13 @@ func createMatcherListFromPermissionList(permissions []*v3rbacpb.Permission) []m
 		case *v3rbacpb.Permission_UrlPath:
 			matcherList = append(matcherList, createUrlPathMatcher(permission.GetUrlPath()))
 		case *v3rbacpb.Permission_DestinationIp:
-			matcherList = append(matcherList, createIpMatcher(permission.GetDestinationIp()))
+			matcherList = append(matcherList, createDestinationIpMatcher(permission.GetDestinationIp()))
 		case *v3rbacpb.Permission_DestinationPort:
 			matcherList = append(matcherList, createPortMatcher(permission.GetDestinationPort()))
 		case *v3rbacpb.Permission_Metadata:
 			// Not supported in gRPC RBAC currently - a permission typed as Metadata in the initial config will be a no-op.
 		case *v3rbacpb.Permission_NotRule:
-			matcherList = append(matcherList, createNotMatcher(permission))
+			matcherList = append(matcherList, createNotMatcherPermission(permission))
 		case *v3rbacpb.Permission_RequestedServerName:
 			// Not supported in gRPC RBAC currently - a permission typed as requested server name in the initial config will
 			// be a no-op.
@@ -100,9 +102,32 @@ func createMatcherListFromPermissionList(permissions []*v3rbacpb.Permission) []m
 
 func createMatcherListFromPrincipalList(principals []*v3rbacpb.Principal) []matcher {
 	var matcherList []matcher
-
-	// branching logic on principals here
-
+	for _, principal := range principals {
+		switch principal.GetIdentifier().(type) {
+		case *v3rbacpb.Principal_AndIds:
+			matcherList = append(matcherList, createAndMatcherPrincipals(principal.GetAndIds().Ids))
+		case *v3rbacpb.Principal_OrIds:
+			matcherList = append(matcherList, createOrMatcherPrincipals(principal.GetOrIds().Ids))
+		case *v3rbacpb.Principal_Any:
+			matcherList = append(matcherList, &alwaysMatcher{})
+		case *v3rbacpb.Principal_Authenticated_:
+			// What matcher do I put here lol? - looks like this is only new one
+		case *v3rbacpb.Principal_SourceIp: // This is logically distinct from destination ip and thus will need a seperate matcher type, as matches will call the peer info rather than passed in from listener.
+			matcherList = append(matcherList, createSourceIpMatcher(principal.GetSourceIp())) // TODO: What to do about this deprecated field here?
+		case *v3rbacpb.Principal_DirectRemoteIp: // This is the same thing as source ip
+			matcherList = append(matcherList, createSourceIpMatcher(principal.GetDirectRemoteIp()))
+		case *v3rbacpb.Principal_RemoteIp:
+			// Not supported in gRPC RBAC currently - a principal typed as Remote Ip in the initial config will be a no-op.
+		case *v3rbacpb.Principal_Header:
+			matcherList = append(matcherList, createHeaderMatcher(principal.GetHeader()))
+		case *v3rbacpb.Principal_UrlPath:
+			matcherList = append(matcherList, createUrlPathMatcher(principal.GetUrlPath()))
+		case *v3rbacpb.Principal_Metadata:
+			// Not supported in gRPC RBAC currently - a principal typed as Metadata in the initial config will be a no-op.
+		case *v3rbacpb.Principal_NotId:
+			matcherList = append(matcherList, createNotMatcherPrincipal(principal))
+		}
+	}
 	return matcherList
 }
 
@@ -179,7 +204,7 @@ type notMatcher struct {
 	matcherToNot matcher
 }
 
-func createNotMatcher(permission *v3rbacpb.Permission) *notMatcher {
+func createNotMatcherPermission(permission *v3rbacpb.Permission) *notMatcher {
 	// The Cardinality of the matcher list to the permission list will be 1 to 1.
 	matcherList := createMatcherListFromPermissionList([]*v3rbacpb.Permission{permission})
 	return &notMatcher{
@@ -191,6 +216,19 @@ func createNotMatcher(permission *v3rbacpb.Permission) *notMatcher {
 func (nm *notMatcher) matches(args *evaluateArgs) bool {
 	return !nm.matcherToNot.matches(args)
 }
+
+func createNotMatcherPrincipal(principal *v3rbacpb.Principal) *notMatcher {
+	// The cardinality of the matcher list to the policy list will be 1 to 1.
+	matcherList := createMatcherListFromPrincipalList([]*v3rbacpb.Principal{principal})
+	return &notMatcher{
+		matcherToNot: matcherList[0],
+	}
+}
+
+
+
+
+
 
 // The four types of matchers still left to implement are
 
@@ -241,27 +279,52 @@ func (upm *urlPathMatcher) matches(args *evaluateArgs) bool {
 
 }
 
+// sourceIpMatcher and destinationIpMatcher both are matchers that match against
+// a CIDR Range. Two different matchers are needed as the source and ip address
+// come from different parts of the data passed in. Matching a CIDR Range means
+// to determine whether the IP Address falls within the CIDR Range or not.
 
+type sourceIpMatcher struct {
+	matcher // Again, do you need this?
+	// ipNet represents the CidrRange that this matcher was configured with.
+	// This is what will source and destination IP's will be matched against.
+	ipNet *net.IPNet
 
-
-
-
-type ipMatcher struct {
-	matcher
 }
 
-func createIpMatcher(cidrRange *v3corepb.CidrRange) *ipMatcher {
-	// I think this isn't present in the codebase yet
-	cidrRange.
+func createSourceIpMatcher(cidrRange *v3corepb.CidrRange) *sourceIpMatcher {
+	// Convert configuration to a cidrRangeString, as Go standard library has methods that parse
+	// cidr string.
+	cidrRangeString := cidrRange.AddressPrefix + fmt.Sprint(cidrRange.PrefixLen.Value) // Does go prefer () or just calling the object within the proto object?
+	_, ipNet, err := net.ParseCIDR(cidrRangeString) // What to do about error handling? BIG QUESTION
+	// Error handling here.
+	return &sourceIpMatcher{
+		ipNet: ipNet,
+	}
 }
 
-func (im *ipMatcher) matches(args *evaluateArgs) bool {
-	// Cidr range here
-	// I see a ParseCIDR in Github search. C Core design says will have to be implemented
+func (sim *sourceIpMatcher) matches(args *evaluateArgs) bool {
+	return sim.ipNet.Contains(net.IP(args.PeerInfo.Addr.String()))
 }
 
 
+type destinationIpMatcher struct {
+	matcher // Again, I don't think you need this
+	ipNet *net.IPNet
+}
 
+func createDestinationIpMatcher(cidrRange *v3corepb.CidrRange) *destinationIpMatcher {
+	cidrRangeString := cidrRange.AddressPrefix + fmt.Sprint(cidrRange)
+	_, ipNet, err := net.ParseCIDR(cidrRangeString) // Again, big question of error handling
+	// Error handling here.
+	return &destinationIpMatcher{
+		ipNet :ipNet,
+	}
+}
+
+func (dim *destinationIpMatcher) matches(args *evaluateArgs) bool {
+	return dim.ipNet.Contains(net.IP(args.destinationAddr.String()))
+}
 
 
 type portMatcher struct {
@@ -276,49 +339,10 @@ func createPortMatcher(destinationPort uint32) *portMatcher {
 }
 
 func (pm *portMatcher) matches(args *evaluateArgs) bool {
-	// Figure out a way to get the port from the args.MD thing. In C core, it exposes a method that is called
-	// called GetLocalPort(). How does this map into grpc-go? From Doug's comment: from listener
-	args.MD.
-	return args.MD.Get("port") == pm.destinationPort // I think this is what it is
-}
-
-
-
-
-
-
-// VVVVV Useless, don't look at
-/*
-type pathMatcher struct {
-	matcher
-	stringMatcher stringMatcher
-}
-
-func createPathMatcher(stringMatcher stringMatcher) pathMatcher { // Should this be a pointer?
-
-}
-
-func (pm *pathMatcher) matches(args *evaluateArgs) bool {
-
+	return args.destinationPort == pm.destinationPort
 }
 
 
 // Authenticated Matcher?
-
-
-type stringMatcher struct {
-	matcher
-	// any other state? probably the string needed right
-}
-
-func createStringMatcher() stringMatcher {
-
-}
-
-func (sm *stringMatcher) matches(args *evaluateArgs) bool {
-
-}
-*/
-
 
 
