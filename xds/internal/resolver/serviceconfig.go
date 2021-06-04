@@ -113,6 +113,7 @@ type routeCluster struct {
 type route struct {
 	m                 *compositeMatcher // converted from route matchers
 	clusters          wrr.WRR           // holds *routeCluster entries
+	hashPolicies []*xdsclient.HashPolicy
 	maxStreamDuration time.Duration
 	// map from filter name to its config
 	httpFilterConfigOverride map[string]httpfilter.FilterConfig
@@ -160,6 +161,9 @@ func (cs *configSelector) SelectConfig(rpcInfo iresolver.RPCInfo) (*iresolver.RP
 	if err != nil {
 		return nil, err
 	}
+
+	// SOMEWHERE IN HERE, FIGURE OUT HOW TO USE PERSISTED HASH POLICIES PER ROUTE TO GENERATE A HASH
+	// xxhash(part of request pulled from rpcInfo based on persisted hash policy)
 
 	config := &iresolver.RPCConfig{
 		// Communicate to the LB policy the chosen cluster.
@@ -293,6 +297,7 @@ func (r *xdsResolver) newConfigSelector(su serviceUpdate) (*configSelector, erro
 		}
 
 		cs.routes[i].httpFilterConfigOverride = rt.HTTPFilterConfigOverride
+		cs.routes[i].hashPolicies = rt.HashPolicies
 	}
 
 	// Account for this config selector's clusters.  Do this after no further

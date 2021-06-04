@@ -269,6 +269,25 @@ type VirtualHost struct {
 	HTTPFilterConfigOverride map[string]httpfilter.FilterConfig
 }
 
+// NEED TO SCALE UP INTERNAL REPRESENTATIONS OF ROUTES TO SUPPORT
+// HASH POLICY
+type HashPolicyType int
+
+const (
+	HashPolicyTypeHeader HashPolicyType = iota
+	HashPolicyTypeChannelID
+)
+
+type HashPolicy struct {
+	HashPolicyType HashPolicyType
+	terminal       bool
+	// Fields used for type HEADER.
+	headerName string
+	regex      string
+
+	regexSubstitution string
+}
+
 // Route is both a specification of how to match a request as well as an
 // indication of the action to take upon match.
 type Route struct {
@@ -280,6 +299,8 @@ type Route struct {
 	CaseInsensitive bool
 	Headers         []*HeaderMatcher
 	Fraction        *uint32
+
+	HashPolicies []*HashPolicy
 
 	// If the matchers above indicate a match, the below configuration is used.
 	WeightedClusters map[string]WeightedCluster

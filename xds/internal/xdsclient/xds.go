@@ -373,6 +373,36 @@ func unmarshalRouteConfigResource(r *anypb.Any, logger *grpclog.PrefixLogger) (s
 	return rc.GetName(), u, nil
 }
 
+// function that converts from list of hash policies to internal list of hash policies
+// logically tied to a single route, will be called in each route node, how do I combine these lol?
+// hashPoliciesProtoToSlice c
+// Need to call this function for each route node in the list
+func hashPoliciesProtoToSlice(policies []*v3routepb.RouteAction_HashPolicy /*logger *grpclog.PrefixLogger, v2 bool?*/) []*HashPolicy { // Do I need to send error back to the thing
+	var hashPolicies []*HashPolicy
+	for _, policy := range policies {
+		var policyInternal HashPolicy
+		policyInternal.terminal = policy.Terminal
+		switch policy.GetPolicySpecifier().(type) {
+		case *v3routepb.RouteAction_HashPolicy_Header_:
+			policyInternal.HashPolicyType = HashPolicyTypeHeader
+			// Pull more fields out of here into internal representation of headers
+			// I think you need to get the headers here
+			//policy.GetHeader().
+			policyInternal.headerName = policy.GetHeader().HeaderName
+			// Right now, regex is a string, FIGURE OUT HOW TO CONVERT THIS PROTO CONFIG INTO SOMETHING INTERNAL
+			policyInternal.regex = policy.GetHeader().RegexRewrite.Pattern.Regex
+			policyInternal.regexSubstitution = policy.GetHeader().GetRegexRewrite().Substitution
+		case *v3routepb.RouteAction_HashPolicy_ConnectionProperties_: // THIS NEEDS TO BE THE ONE THAT LOGICALLY MAPS TO CHANNEL ID
+			policyInternal.HashPolicyType = HashPolicyTypeChannelID
+		default: // EVERY OTHER TYPE IS NOT REALLY SUPPORTED, NO OP AND SKIP?
+			// Rather than an error, ahve this be a no op
+		}
+		hashPolicies = append(hashPolicies, &policyInternal)
+	}
+
+	return hashPolicies, nil
+}
+
 // generateRDSUpdateFromRouteConfiguration checks if the provided
 // RouteConfiguration meets the expected criteria. If so, it returns a
 // RouteConfigUpdate with nil error.
@@ -412,6 +442,7 @@ func generateRDSUpdateFromRouteConfiguration(rc *v3routepb.RouteConfiguration, l
 	return RouteConfigUpdate{VirtualHosts: vhs}, nil
 }
 
+// THIS FUNCTION HERE NEEDS TO START PARSING REQUEST HASHES FROM ENVOY'S PROTO
 func routesProtoToSlice(routes []*v3routepb.Route, logger *grpclog.PrefixLogger, v2 bool) ([]*Route, error) {
 	var routesRet []*Route
 
@@ -499,7 +530,13 @@ func routesProtoToSlice(routes []*v3routepb.Route, logger *grpclog.PrefixLogger,
 		}
 
 		route.WeightedClusters = make(map[string]WeightedCluster)
-		action := r.GetRoute()
+		action := r.GetRoute() // Route seems to be guaranteed to be the type of action performed
+		// What's inside this thing?
+		// action.HashPolicy // Is this guaranteed to be here?
+		// Check here on the hash policy if it exists, unload it into new HashPolicies []*HashPolicy data definition
+		route.HashPolicies = hashPoliciesProtoToSlice(action.HashPolicy) // If config doesn't specify hash policy, it'll just send an empty hash to cluster manager, which can just logically be ignored if so
+
+
 		switch a := action.GetClusterSpecifier().(type) {
 		case *v3routepb.RouteAction_Cluster:
 			route.WeightedClusters[a.Cluster] = WeightedCluster{Weight: 1}
