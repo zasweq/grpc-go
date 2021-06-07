@@ -52,9 +52,14 @@ func (pg *pickerGroup) Pick(info balancer.PickInfo) (balancer.PickResult, error)
 
 type clusterKey struct{}
 
+// This one too - move to xds resolver
+
 func getPickedCluster(ctx context.Context) string {
-	cluster, _ := ctx.Value(clusterKey{}).(string)
-	return cluster
+	return ctx.Value(clusterKey{}).(clusterInfo).clusterName
+}
+
+func getRequestHash(ctx context.Context) uint64 {
+	return ctx.Value(clusterKey{}).(clusterInfo).requestHash
 }
 
 // GetPickedClusterForTesting returns the cluster in the context; to be used
@@ -63,8 +68,17 @@ func GetPickedClusterForTesting(ctx context.Context) string {
 	return getPickedCluster(ctx)
 }
 
-// SetPickedCluster adds the selected cluster to the context for the
-// xds_cluster_manager LB policy to pick.
-func SetPickedCluster(ctx context.Context, cluster string) context.Context {
-	return context.WithValue(ctx, clusterKey{}, cluster)
+// Move to another package,
+type clusterInfo struct {
+	clusterName string
+	requestHash uint64
+}
+
+// SetPickedClusterAndRequestHash adds the selected cluster and request hash to
+// the context for the xds_cluster_manager LB policy to pick.
+func SetPickedClusterAndRequestHash(ctx context.Context, cluster string, requestHash uint64) context.Context {
+	return context.WithValue(ctx, clusterKey{}, clusterInfo{
+		clusterName: cluster,
+		requestHash: requestHash,
+	})
 }
