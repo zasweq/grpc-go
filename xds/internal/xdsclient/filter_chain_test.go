@@ -45,7 +45,9 @@ var (
 		{
 			Name: "filter-1",
 			ConfigType: &v3listenerpb.Filter_TypedConfig{
-				TypedConfig: testutils.MarshalAny(&v3httppb.HttpConnectionManager{}),
+				TypedConfig: testutils.MarshalAny(&v3httppb.HttpConnectionManager{
+					RouteSpecifier:
+				}),
 			},
 		},
 	}
