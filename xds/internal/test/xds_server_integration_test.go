@@ -40,6 +40,8 @@ import (
 	xdscreds "google.golang.org/grpc/credentials/xds"
 	testpb "google.golang.org/grpc/test/grpc_testing"
 	xdstestutils "google.golang.org/grpc/xds/internal/testutils"
+
+	rpb "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 )
 
 const (
@@ -447,7 +449,19 @@ func (s) TestRBACHTTPFilter(t *testing.T) {
 
 	// Create an inbound xDS listener resource with route configuration which
 	// selectively will allow RPC's through or not.
-	inboundLis := e2e.DefaultServerListener(host, port, e2e.SecurityLevelNone) // Switch this to default, and then append HTTP Filters to it
+	// inboundLis := e2e.DefaultServerListener(host, port, e2e.SecurityLevelNone) // Switch this to default, and then append HTTP Filters to it
+
+	// variable variables in t test:
+	// []rpb.RBAC
+
+	// Also where do I put this in in regards to voerrides
+	// override per route/vh this thing is wrapped inside something else
+	rpb.RBAC{
+		// TODO once returned: fill this out  - figure out how you can map this to knobs you can turn of incoming RPC's
+		Rules: /**/
+	}
+
+	inboundLis := e2e.ServerListenerWithRBACHTTPFilters(host, port, /*list of rbac configurations - perhaps from a t test*/)
 	resources.Listeners = append(resources.Listeners, inboundLis)
 
 	// Setup the management server with client and server-side resources.

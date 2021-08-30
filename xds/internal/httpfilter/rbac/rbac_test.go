@@ -25,3 +25,9 @@ func (s) TestRBACHTTPFilter(t *testing.T) {
 
 	
 }
+
+// t test
+// variables:
+// the list of RBAC configurations
+// Queries and what you want to happen? Denied or proceed, have to knob the RPC sent to Server
+// All unary, as streaming doesn't trigger any functionality

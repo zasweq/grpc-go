@@ -37,6 +37,8 @@ import (
 	v3httppb "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	v3tlspb "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	wrapperspb "github.com/golang/protobuf/ptypes/wrappers"
+
+	rpb "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 )
 
 const (
@@ -460,7 +462,7 @@ func ServerListenerWithInterestingRouteConfiguration(host string, port uint32) *
 
 // for i -> n, same as fault
 
-func ServerListenerWithRBACHTTPFilters (host string, port uint32, rbacCfgs []*envoy_config_rbac_v3.RBAC) *v3listenerpb.Listener {
+func ServerListenerWithRBACHTTPFilters (host string, port uint32, rbacCfgs []*rpb.RBAC) *v3listenerpb.Listener {
 	// Rather than declare typed config inline, take the HCM proto and put it the RBAC Filters there.
 	hcm := &v3httppb.HttpConnectionManager{
 		RouteSpecifier: &v3httppb.HttpConnectionManager_RouteConfig{
