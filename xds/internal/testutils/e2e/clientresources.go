@@ -20,6 +20,7 @@ package e2e
 
 import (
 	"fmt"
+	envoy_config_rbac_v3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	"net"
 	"strconv"
 
@@ -453,6 +454,111 @@ func ServerListenerWithInterestingRouteConfiguration(host string, port uint32) *
 		},
 	}
 }
+
+// ServerListenerWithRBACHTTPFilters
+// []RBACFilter
+
+// for i -> n, same as fault
+
+func ServerListenerWithRBACHTTPFilters (host string, port uint32, rbacCfgs []*envoy_config_rbac_v3.RBAC) *v3listenerpb.Listener {
+	// Rather than declare typed config inline, take the HCM proto and put it the RBAC Filters there.
+	hcm := &v3httppb.HttpConnectionManager{
+		RouteSpecifier: &v3httppb.HttpConnectionManager_RouteConfig{
+			RouteConfig: &v3routepb.RouteConfiguration{
+				Name: "routeName",
+				VirtualHosts: []*v3routepb.VirtualHost{{
+					Domains: []string{"127.0.0.1"},
+					Routes: []*v3routepb.Route{{
+						Match: &v3routepb.RouteMatch{
+							PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: "/"},
+						},
+						Action: &v3routepb.Route_NonForwardingAction{},
+					}}}}},
+		},
+	}
+	hcm.HttpFilters = nil
+	for i, cfg := range rbacCfgs {
+		hcm.HttpFilters = append(hcm.HttpFilters, HTTPFilter(fmt.Sprintf("rbac%d", i), cfg))
+	}
+	// testutils.MarshalAny(hcm) // put this inline as
+
+	return &v3listenerpb.Listener{
+		Name: fmt.Sprintf(ServerListenerResourceNameTemplate, net.JoinHostPort(host, strconv.Itoa(int(port)))),
+		Address: &v3corepb.Address{
+			Address: &v3corepb.Address_SocketAddress{
+				SocketAddress: &v3corepb.SocketAddress{
+					Address: host,
+					PortSpecifier: &v3corepb.SocketAddress_PortValue{
+						PortValue: port,
+					},
+				},
+			},
+		},
+		FilterChains: []*v3listenerpb.FilterChain{
+			{
+				Name: "v4-wildcard",
+				FilterChainMatch: &v3listenerpb.FilterChainMatch{
+					PrefixRanges: []*v3corepb.CidrRange{
+						{
+							AddressPrefix: "0.0.0.0",
+							PrefixLen: &wrapperspb.UInt32Value{
+								Value: uint32(0),
+							},
+						},
+					},
+					SourceType: v3listenerpb.FilterChainMatch_SAME_IP_OR_LOOPBACK,
+					SourcePrefixRanges: []*v3corepb.CidrRange{
+						{
+							AddressPrefix: "0.0.0.0",
+							PrefixLen: &wrapperspb.UInt32Value{
+								Value: uint32(0),
+							},
+						},
+					},
+				},
+				Filters: []*v3listenerpb.Filter{
+					{
+						Name: "filter-1",
+						ConfigType: &v3listenerpb.Filter_TypedConfig{
+							TypedConfig: testutils.MarshalAny(hcm),
+						},
+					},
+				},
+			},
+			{
+				Name: "v6-wildcard",
+				FilterChainMatch: &v3listenerpb.FilterChainMatch{
+					PrefixRanges: []*v3corepb.CidrRange{
+						{
+							AddressPrefix: "::",
+							PrefixLen: &wrapperspb.UInt32Value{
+								Value: uint32(0),
+							},
+						},
+					},
+					SourceType: v3listenerpb.FilterChainMatch_SAME_IP_OR_LOOPBACK,
+					SourcePrefixRanges: []*v3corepb.CidrRange{
+						{
+							AddressPrefix: "::",
+							PrefixLen: &wrapperspb.UInt32Value{
+								Value: uint32(0),
+							},
+						},
+					},
+				},
+				Filters: []*v3listenerpb.Filter{
+					{
+						Name: "filter-1",
+						ConfigType: &v3listenerpb.Filter_TypedConfig{
+							TypedConfig: testutils.MarshalAny(hcm),
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 
 // HTTPFilter constructs an xds HttpFilter with the provided name and config.
 func HTTPFilter(name string, config proto.Message) *v3httppb.HttpFilter {

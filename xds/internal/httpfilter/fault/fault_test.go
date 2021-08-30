@@ -512,7 +512,7 @@ func (s) TestFaultInjection_Unary(t *testing.T) {
 			routerFilter := hcm.HttpFilters[len(hcm.HttpFilters)-1]
 
 			hcm.HttpFilters = nil
-			for i, cfg := range tc.cfgs {
+			for i, cfg := range tc.cfgs { // How he plumbed in these filters client side
 				hcm.HttpFilters = append(hcm.HttpFilters, e2e.HTTPFilter(fmt.Sprintf("fault%d", i), cfg))
 			}
 			hcm.HttpFilters = append(hcm.HttpFilters, routerFilter)

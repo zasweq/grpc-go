@@ -147,6 +147,7 @@ func (builder) ParseFilterConfig(cfg proto.Message) (httpfilter.FilterConfig, er
 }
 
 func (builder) ParseFilterConfigOverride(override proto.Message) (httpfilter.FilterConfig, error) {
+	// This is an RBAC Per Route configuration override, thus need to look into it for RBAC
 	return parseConfig(override) // Look into it somehow for RBAC?
 }
 
