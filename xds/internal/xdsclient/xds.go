@@ -166,7 +166,10 @@ func validateHTTPFilterConfig(cfg *anypb.Any, lds, optional bool) (httpfilter.Fi
 		}
 		return nil, nil, fmt.Errorf("no filter implementation found for %q", typeURL)
 	}
-	parseFunc := filterBuilder.ParseFilterConfig
+
+	// This error returned goes all the way up to nack the lis, add tests for the rbac case in this scenario
+
+	parseFunc := filterBuilder.ParseFilterConfig // Parse filter/filter override gets called in validate
 	if !lds {
 		parseFunc = filterBuilder.ParseFilterConfigOverride
 	}

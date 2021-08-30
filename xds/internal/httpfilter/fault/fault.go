@@ -103,6 +103,7 @@ func (builder) ParseFilterConfigOverride(override proto.Message) (httpfilter.Fil
 
 var _ httpfilter.ClientInterceptorBuilder = builder{}
 
+// Optional interface builder implements in order to signify it works client side.
 func (builder) BuildClientInterceptor(cfg, override httpfilter.FilterConfig) (iresolver.ClientInterceptor, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("fault: nil config provided")
@@ -123,7 +124,7 @@ func (builder) BuildClientInterceptor(cfg, override httpfilter.FilterConfig) (ir
 	}
 
 	icfg := c.config
-	if (icfg.GetMaxActiveFaults() != nil && icfg.GetMaxActiveFaults().GetValue() == 0) ||
+	if (icfg.GetMaxActiveFaults() != nil && icfg.GetMaxActiveFaults().GetValue() == 0) || // Perhaps this logically represents a no-op?
 		(icfg.GetDelay() == nil && icfg.GetAbort() == nil) {
 		return nil, nil
 	}

@@ -101,7 +101,7 @@ type engine struct {
 func newEngine(config *v3rbacpb.RBAC) (*engine, error) {
 	a := *config.Action.Enum()
 	if a != v3rbacpb.RBAC_ALLOW && a != v3rbacpb.RBAC_DENY {
-		return nil, fmt.Errorf("unsupported action %s", config.Action)
+		return nil, fmt.Errorf("unsupported action %s", config.Action) // Also, if present LOG acts as a no op - "If RBAC.action is Action.LOG then the policy will be completly ignored, as if RBAC was not configurated."
 	}
 
 	policies := make(map[string]*policyMatcher, len(config.Policies))
