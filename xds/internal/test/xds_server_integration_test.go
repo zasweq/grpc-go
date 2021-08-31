@@ -41,7 +41,10 @@ import (
 	testpb "google.golang.org/grpc/test/grpc_testing"
 	xdstestutils "google.golang.org/grpc/xds/internal/testutils"
 
+	v3rbacpb "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
+	v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	rpb "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
+	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 )
 
 const (
@@ -428,98 +431,131 @@ func (s) TestServerSideXDS_RouteConfiguration(t *testing.T) {
 	}
 }
 
-// Could do a t test here where test is rbac configurations
-
+// TestRBACHTTPFilter tests the xds configured RBAC HTTP Filter. It sets up the
+// full end to end flow, and makes sure certain RPC's are successful and proceed
+// as normal and certain RPC's are denied by the RBAC HTTP Filter which gets
+// called by hooked xds interceptors.
 func (s) TestRBACHTTPFilter(t *testing.T) {
-	lis, cleanup := setupGRPCServer(t)
-	defer cleanup()
-
-	host, port, err := hostPortFromListener(lis)
-	if err != nil {
-		t.Fatalf("failed to retrieve host and port of server: %v", err)
-	}
-	const serviceName = "my-service-fallback"
-	resources := e2e.DefaultClientResources(e2e.ResourceParams{
-		DialTarget: serviceName,
-		NodeID:     xdsClientNodeID,
-		Host:       host,
-		Port:       port,
-		SecLevel:   e2e.SecurityLevelNone,
-	})
-
-	// Create an inbound xDS listener resource with route configuration which
-	// selectively will allow RPC's through or not.
-	// inboundLis := e2e.DefaultServerListener(host, port, e2e.SecurityLevelNone) // Switch this to default, and then append HTTP Filters to it
-
-	// variable variables in t test:
-	// []rpb.RBAC
-
-	// Also where do I put this in in regards to voerrides
-	// override per route/vh this thing is wrapped inside something else
-	rpb.RBAC{
-		// TODO once returned: fill this out  - figure out how you can map this to knobs you can turn of incoming RPC's
-		Rules: /**/
-	}
-
-	inboundLis := e2e.ServerListenerWithRBACHTTPFilters(host, port, /*list of rbac configurations - perhaps from a t test*/)
-	resources.Listeners = append(resources.Listeners, inboundLis)
-
-	// Setup the management server with client and server-side resources.
-	if err := managementServer.Update(resources); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
-	defer cancel()
-	cc, err := grpc.DialContext(ctx, fmt.Sprintf("xds:///%s", serviceName), grpc.WithInsecure(), grpc.WithResolvers(xdsResolverBuilder))
-	if err != nil {
-		t.Fatalf("failed to dial local test server: %v", err)
-	}
-	defer cc.Close()
-
-	client := testpb.NewTestServiceClient(cc)
-
-
-
-
-
-
-
-	// VV Not really applicable, have it match to a route
-
-	// This Empty Call should match to a route with a correct action
-	// (NonForwardingAction). Thus, this RPC should proceed as normal.
-	if _, err = client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil {
-		t.Fatalf("rpc EmptyCall() failed: %v", err)
-	}
-
-	// This Unary Call should match to a route with an incorrect action. Thus,
-	// this RPC should not go through as per A36, and this call should receive
-	// an error with codes.Unavailable.
-	if _, err = client.UnaryCall(ctx, &testpb.SimpleRequest{}); status.Code(err) != codes.Unavailable {
-		t.Fatalf("client.UnaryCall() = _, %v, want _, error code %s", err, codes.Unavailable)
-	}
-
-	// This Streaming Call should match to a route with an incorrect action.
-	// Thus, this RPC should not go through as per A36, and this call should
-	// receive an error with codes.Unavailable.
-	stream, err := client.StreamingInputCall(ctx)
-	if err != nil {
-		t.Fatalf("StreamingInputCall(_) = _, %v, want <nil>", err)
-	}
-	_, err = stream.CloseAndRecv()
-	if status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "the incoming RPC matched to a route that was not of action type non forwarding") {
-		t.Fatalf("streaming RPC should have been denied")
+	tests := []struct {
+		name string
+		rbacCfg *rpb.RBAC
+		allowEmptyCall bool
+		allowUnaryCall bool
+	}{
+		// This test tests an RBAC HTTP Filter which is configured to allow any RPC.
+		// Any RPC passing through this RBAC HTTP Filter should proceed as normal.
+		{
+			name: "allow-anything",
+			rbacCfg: &rpb.RBAC{
+				Rules: &v3rbacpb.RBAC{
+					Action: v3rbacpb.RBAC_ALLOW,
+					Policies: map[string]*v3rbacpb.Policy{
+						"anyone": {
+							Permissions: []*v3rbacpb.Permission{
+								{Rule: &v3rbacpb.Permission_Any{Any: true}},
+							},
+							Principals: []*v3rbacpb.Principal{
+								{Identifier: &v3rbacpb.Principal_Any{Any: true}},
+							},
+						},
+					},
+				},
+			},
+			allowEmptyCall: true,
+			allowUnaryCall: true,
+		},
+		// This test tests an RBAC HTTP Filter which is configured to allow only
+		// RPC's with certain paths ("UnaryCall"). Only unary calls passing
+		// through this RBAC HTTP Filter should proceed as normal, and any
+		// others should be denied.
+		{
+			name: "allow-certain-path",
+			rbacCfg: &rpb.RBAC{
+				Rules: &v3rbacpb.RBAC{
+					Action: v3rbacpb.RBAC_ALLOW,
+					Policies: map[string]*v3rbacpb.Policy{
+						"certain-path": {
+							Permissions: []*v3rbacpb.Permission{
+								{Rule: &v3rbacpb.Permission_UrlPath{UrlPath: &v3matcherpb.PathMatcher{Rule: &v3matcherpb.PathMatcher_Path{Path: &v3matcherpb.StringMatcher{MatchPattern: &v3matcherpb.StringMatcher_Exact{Exact: "/grpc.testing.TestService/UnaryCall"}}}}}},
+							},
+							Principals: []*v3rbacpb.Principal{
+								{Identifier: &v3rbacpb.Principal_Any{Any: true}},
+							},
+						},
+					},
+				},
+			},
+			allowEmptyCall: false,
+			allowUnaryCall: true,
+		},
+		// This test tests that the RBAC HTTP Filter hard codes the :method
+		// header to POST. Since the RBAC Configuration says to deny every RPC
+		// with a method :POST, every RPC tried should be denied.
+		{
+			name: "deny-post",
+			rbacCfg: &rpb.RBAC{
+				Rules: &v3rbacpb.RBAC{
+					Action: v3rbacpb.RBAC_DENY,
+					Policies: map[string]*v3rbacpb.Policy{
+						"post-method": {
+							Permissions: []*v3rbacpb.Permission{
+								{Rule: &v3rbacpb.Permission_Header{Header: &v3routepb.HeaderMatcher{Name: ":method", HeaderMatchSpecifier: &v3routepb.HeaderMatcher_ExactMatch{ExactMatch: "POST"}}}},
+							},
+							Principals: []*v3rbacpb.Principal{
+								{Identifier: &v3rbacpb.Principal_Any{Any: true}},
+							},
+						},
+					},
+				},
+			},
+			allowEmptyCall: false,
+			allowUnaryCall: false,
+		},
 	}
 
-	// This Full Duplex should not match to a route, and thus should return an
-	// error and not proceed.
-	dStream, err := client.FullDuplexCall(ctx)
-	if err != nil {
-		t.Fatalf("FullDuplexCall(_) = _, %v, want <nil>", err)
-	}
-	_, err = dStream.Recv()
-	if status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "the incoming RPC did not match a configured Route") {
-		t.Fatalf("streaming RPC should have been denied")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			func() {
+				lis, cleanup := setupGRPCServer(t)
+				defer cleanup()
+
+				host, port, err := hostPortFromListener(lis)
+				if err != nil {
+					t.Fatalf("failed to retrieve host and port of server: %v", err)
+				}
+				const serviceName = "my-service-fallback"
+				resources := e2e.DefaultClientResources(e2e.ResourceParams{
+					DialTarget: serviceName,
+					NodeID:     xdsClientNodeID,
+					Host:       host,
+					Port:       port,
+					SecLevel:   e2e.SecurityLevelNone,
+				})
+				inboundLis := e2e.ServerListenerWithRBACHTTPFilters(host, port, []*rpb.RBAC{test.rbacCfg})
+				resources.Listeners = append(resources.Listeners, inboundLis)
+				// Setup the management server with client and server-side resources.
+				if err := managementServer.Update(resources); err != nil {
+					t.Fatal(err)
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+				defer cancel()
+				cc, err := grpc.DialContext(ctx, fmt.Sprintf("xds:///%s", serviceName), grpc.WithInsecure(), grpc.WithResolvers(xdsResolverBuilder))
+				if err != nil {
+					t.Fatalf("failed to dial local test server: %v", err)
+				}
+				defer cc.Close()
+
+				client := testpb.NewTestServiceClient(cc)
+
+				if _, err := client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); (err == nil) != test.allowEmptyCall {
+					t.Fatalf("EmptyCall() returned err: %v, allowEmptyCall: %v", err, test.allowEmptyCall)
+				}
+
+				if _, err := client.UnaryCall(ctx, &testpb.SimpleRequest{}); (err == nil) != test.allowUnaryCall {
+					t.Fatalf("UnaryCall() returned err: %v, allowUnaryCall: %v", err, test.allowUnaryCall)
+				}
+			}()
+		})
 	}
 }

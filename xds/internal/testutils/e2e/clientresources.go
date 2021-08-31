@@ -20,7 +20,7 @@ package e2e
 
 import (
 	"fmt"
-	envoy_config_rbac_v3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
+	//envoy_config_rbac_v3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	"net"
 	"strconv"
 
