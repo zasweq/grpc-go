@@ -112,11 +112,19 @@ func (builder) ParseFilterConfig(cfg proto.Message) (httpfilter.FilterConfig, er
 
 func (builder) ParseFilterConfigOverride(override proto.Message) (httpfilter.FilterConfig, error) {
 	// This is an RBAC Per Route configuration override, thus need to look into it for RBAC
-
+	any, ok := override.(*anypb.Any)
+	if !ok {
+		return nil, fmt.Errorf("rbac: error parsing override config %v: unknown type %T", override, override)
+	}
 	// TODO: Look into proto.Message here, it's RBACPerRoute.RBAC
+	// typecast it into RBAC, override
+	msg := new(rpb.RBACPerRoute)
+	if err := ptypes.UnmarshalAny(any, msg); err != nil {
+		return nil, fmt.Errorf("rbac: error parsing override config %v: %v", override, err)
+	}
 
 	// Generic parseConfig(VVV)
-	return parseConfig(override) // Look into it somehow for RBAC?
+	return parseConfig(msg.Rbac) // Look into it somehow for RBAC?
 }
 
 var _ httpfilter.ServerInterceptorBuilder = builder{}
