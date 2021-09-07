@@ -328,15 +328,17 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 	go t.keepalive()
 	return t, nil
 }
-
+// Does each RPC send settings frame...connection error vs. RPC error, granularity of error...
 // operateHeader takes action on the decoded headers.
 func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(*Stream), traceCtx func(context.Context, string) context.Context) (fatal bool) {
+	// Across all streams
 	streamID := frame.Header().StreamID
 
 	// frame.Truncated is set to true when framer detects that the current header
 	// list size hits MaxHeaderListSize limit.
 	if frame.Truncated {
-		t.controlBuf.put(&cleanupStream{
+		// This is definitely what I'm putting
+		t.controlBuf.put(&cleanupStream{ // RST_STREAM with HTTP/2 error code PROTOCOL_ERROR, this transport is tied to the TCP connection
 			streamID: streamID,
 			rst:      true,
 			rstCode:  http2.ErrCodeFrameSize,
@@ -346,7 +348,7 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 	}
 
 	buf := newRecvBuffer()
-	s := &Stream{
+	s := &Stream{ // Creates a new stream on operateHeaders, this context is what the metadata gets piped into
 		id:  streamID,
 		st:  t,
 		buf: buf,
@@ -366,7 +368,9 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 		timeout    time.Duration
 	)
 
-	for _, hf := range frame.Fields {
+	// RPC Comes in ->, denied with HTTP status code 400
+	var seenAuthority, seenHost bool
+	for _, hf := range frame.Fields { // Is this the atomic headers (i.e. all combine into one)?
 		switch hf.Name {
 		case "content-type":
 			contentSubtype, validContentType := grpcutil.ContentSubtype(hf.Value)
@@ -388,6 +392,57 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 			if timeout, err = decodeTimeout(hf.Value); err != nil {
 				headerError = true
 			}
+		// "Transports must consider requests containing the Connection header as malformed" - A41
+		case "connection": // "must treat as malformed" does this logically equal sending a fatal error backward?
+			// "Transports must consider requests containing the Connection Header as malformed", we have an example of this client side....
+			// What does - "treat as malformed" logically lead to
+			// I pinged Eric about this, Doug mentioned Invalid RPC with status Internal
+			// "Must be treated as a stream error of type PROTOCOL_ERROR" - HTTP/2 spec
+			// http2.ErrCodeProtocol:           codes.Internal,
+
+			// Stream error of type PROTOCOL_ERROR here
+			t.controlBuf.put(&cleanupStream{
+			streamID: streamID,
+			rst: true,
+			rstCode: http2.ErrCodeProtocol,
+			onWrite: func() {},
+			})
+			return false
+		// "If multiple Host headers or multiple :authority headers are present,
+		// the request must be rejected by RST_STREAM with HTTP/2 error code
+		// PROTOCOL_ERROR." - A41
+		case ":authority":
+			if seenAuthority {
+				t.controlBuf.put(&cleanupStream{
+					streamID: streamID,
+					rst:      true, // Is this RST_STREAM?
+					rstCode:  http2.ErrCodeProtocol,
+					onWrite:  func() {},
+				})
+				return false
+			}
+			seenAuthority = true
+		// Seems like it's A: B
+		// A: C, how could we verify that it's A: B, C - if mulitple values after HPACK, then this logic would look a little different, do it at the case {/*Here*/} level
+		case "host":
+			if seenHost {
+				t.controlBuf.put(&cleanupStream{
+					streamID: streamID,
+					rst:      true, // Is this RST_STREAM?
+					rstCode:  http2.ErrCodeProtocol,
+					onWrite:  func() {},
+				})
+				return false
+			}
+			seenHost = true
+		// "If multiple Host headers or multiple :authority headers are present, the
+		// VVVVV I think you choose one from here, figure out how this happens logically...
+		// request must be rejected with an HTTP status code 400, (<-- figure out how this happens)
+		// gRPC status code INTERNAL, (<-- figure out how this happens)
+		// or RST_STREAM with HTTP/2 error code PROTOCOL_ERROR. (<-- figure out how this happens)
+
+		// Literally all I'm trying to do is figure out how to send an HTTP status 400 back...
+		// might affect this conditional logic (send back)
 		default:
 			if isReservedHeader(hf.Name) && !isWhitelistedHeader(hf.Name) {
 				break
@@ -401,9 +456,35 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 			mdata[hf.Name] = append(mdata[hf.Name], v)
 		}
 	}
+	// mdata is a map[string][]string
+	// After looping through all the headers - "If :authority is missing, Host must be renamed to authority"
+	// "If :authority is missing, Host must be renamed to :authority." - A41
+	if !seenAuthority {
+		// Rename host to authority - what if it doesn't exist - noop
+		// mdata["host"] // -> authority
+		if host, ok := mdata["host"]; ok {
+			mdata["authority"] = host
+			delete(mdata, "host")
+		}
+		delete(mdata, "host")
+	}
+	// Also this - "If authority is present, host must be discarded"
+	// "If :authority is present, Host must be discarded" - A41
+	if seenAuthority {
+
+		// Discard host
+		// delete host from map
+		delete(mdata, "host")
+	}
+	// What happens if no authority at the end of this logic, is this an error? Or is this already assumed?
+	// Maybe have a count of Both authority and host
+	// Or even a boolean seenAuthority and seenHost
+	// Loop through, once you hit either an authority or host set boolean, if already seen error RST_STREAM
+
+
 
 	if !isGRPC || headerError {
-		t.controlBuf.put(&cleanupStream{
+		t.controlBuf.put(&cleanupStream{ // Test RBAC Configuration...also will need to test any addition here manually with certain headers
 			streamID: streamID,
 			rst:      true,
 			rstCode:  http2.ErrCodeProtocol,
@@ -431,7 +512,7 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 	s.ctx = peer.NewContext(s.ctx, pr)
 	// Attach the received metadata to the context.
 	if len(mdata) > 0 {
-		s.ctx = metadata.NewIncomingContext(s.ctx, mdata)
+		s.ctx = metadata.NewIncomingContext(s.ctx, mdata) // Pipes the metadata into the context
 		if statsTags := mdata["grpc-tags-bin"]; len(statsTags) > 0 {
 			s.ctx = stats.SetIncomingTags(s.ctx, []byte(statsTags[len(statsTags)-1]))
 		}

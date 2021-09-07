@@ -1369,7 +1369,7 @@ func (t *http2Client) operateHeaders(frame *http2.MetaHeadersFrame) {
 			}
 			v, err := decodeMetadataHeader(hf.Name, hf.Value)
 			if err != nil {
-				headerError = fmt.Sprintf("transport: malformed %s: %v", hf.Name, err)
+				headerError = fmt.Sprintf("transport: malformed %s: %v", hf.Name, err) // Example of malformed
 				logger.Warningf("Failed to decode metadata header (%q, %q): %v", hf.Name, hf.Value, err)
 				break
 			}
