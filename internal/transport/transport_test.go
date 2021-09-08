@@ -1663,10 +1663,10 @@ func (s) TestReadGivesSameErrorAfterAnyErrorOccurs(t *testing.T) {
 	}
 }
 
-// HeadersCausingStreamError tests headers that should cause a stream protocol
+// TestHeadersCausingStreamError tests headers that should cause a stream protocol
 // error, which would end up with a RST_STREAM being sent to the client and also
 // the server closing the stream.
-func (s) HeadersCausingStreamError(t *testing.T) {
+func (s) TestHeadersCausingStreamError(t *testing.T) {
 	tests := []struct {
 		name string
 		// Key value pairs.
