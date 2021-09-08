@@ -1669,53 +1669,77 @@ func (s) TestReadGivesSameErrorAfterAnyErrorOccurs(t *testing.T) {
 func (s) TestHeadersCausingStreamError(t *testing.T) {
 	tests := []struct {
 		name string
-		// Key value pairs.
-		headers map[string][]string
+		headers []struct{
+			name   string
+			values []string
+		}
 	}{
 		// If the client sends an HTTP/2 request with a :method header with a
 		// value other than POST, as specified in the gRPC over HTTP/2
 		// specification, the server should close the stream.
 		{
 			name: "ClientSendingWrongMethod",
-			headers: map[string][]string{
-				":method": {"PUT"},
-				":path": {"foo"},
-				":authority": {"localhost"},
-				"content-type": {"application/grpc"},
+			headers: []struct{
+				name   string
+				values []string
+			}{
+				{name: ":method", values: []string{"PUT"}},
+				{name: ":path", values: []string{"foo"}},
+				{name: ":authority", values: []string{"localhost"}},
+				{name: "content-type", values: []string{"application/grpc"}},
 			},
 		},
 		// "Transports must consider requests containing the Connection header as malformed" - A41
 		// Malformed requests map to a stream error of type PROTOCOL_ERROR.
 		{
 			name: "Connection header present",
-			headers: map[string][]string{
-				":method": {"POST"},
-				":path": {"foo"},
-				":authority": {"localhost"},
-				"content-type": {"application/grpc"},
-				":connection": {"not-supported"},
+			headers: []struct{
+				name   string
+				values []string
+			}{
+				{name: ":method", values: []string{"POST"}},
+				{name: ":path", values: []string{"foo"}},
+				{name: ":authority", values: []string{"localhost"}},
+				{name: "content-type", values: []string{"application/grpc"}},
+				{name: "connection", values: []string{"not-supported"}},
 			},
 		},
-		// multiple :authority and Host headers would make the eventual
+		// multiple :authority or multiple Host headers would make the eventual
 		// :authority ambiguous as per A41.
 		{
-			name: "Multiple authority and host headers",
-			headers: map[string][]string{
-				":method": {"POST"},
-				":path": {"foo"},
-				"content-type": {"application/grpc"},
-				":authority": {"localhost", "localhost2"},
-				":host": {"localhost", "localhost2"},
+			name: "Multiple authority headers",
+			headers: []struct{
+				name   string
+				values []string
+			}{
+				{name: ":method", values: []string{"POST"}},
+				{name: ":path", values: []string{"foo"}},
+				{name: ":authority", values: []string{"localhost", "localhost2"}}, // This already gets taken care of
+				{name: "content-type", values: []string{"application/grpc"}},
+				{name: "host", values: []string{"localhost"}},
 			},
 		},
-
+		{
+			name: "Multiple host headers",
+			headers: []struct{
+				name   string
+				values []string
+			}{
+				{name: ":method", values: []string{"POST"}},
+				{name: ":path", values: []string{"foo"}},
+				{name: ":authority", values: []string{"localhost"}},
+				{name: "content-type", values: []string{"application/grpc"}},
+				{name: "host", values: []string{"localhost", "localhost2"}},
+			},
+		},
 	}
 	for _, test := range tests {
-		func () {
+		t.Run(test.name, func(t *testing.T) {
+			print("running test casee")
 			server := setUpServerOnly(t, 0, &ServerConfig{}, suspended)
 			defer server.stop()
 			// Create a client directly to not tie what you can send to API of
-			// http2_client.go.
+			// http2_client.go (i.e. control headers being sent).
 			mconn, err := net.Dial("tcp", server.lis.Addr().String())
 			if err != nil {
 				t.Fatalf("Client failed to dial: %v", err)
@@ -1764,14 +1788,14 @@ func (s) TestHeadersCausingStreamError(t *testing.T) {
 			henc := hpack.NewEncoder(&buf)
 
 			// ^^^ Switch this to loop through map of key value pairs and building it that way.
-			for name, values := range test.headers {
-				for _, value := range values {
-					if err := henc.WriteField(hpack.HeaderField{Name: name, Value: value}); err != nil {
+			// Needs to build headers deterministically to conform to gRPC over HTTP/2 spec.
+			for _, header := range test.headers {
+				for _, value := range header.values {
+					if err := henc.WriteField(hpack.HeaderField{Name: header.name, Value: value}); err != nil {
 						t.Fatalf("Error while encoding header: %v", err)
 					}
 				}
 			}
-
 
 			if err := framer.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: buf.Bytes(), EndHeaders: true}); err != nil {
 				t.Fatalf("Error while writing headers: %v", err)
@@ -1780,12 +1804,39 @@ func (s) TestHeadersCausingStreamError(t *testing.T) {
 			// Certain logic in regards to each one
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 			defer cancel()
-			if e, err := success.Receive(ctx); e != nil || err != nil {
+			if e, err := success.Receive(ctx); e != nil || err != nil { // MAKE SURE THIS IS FAILING AT CORRECT PLACE - PUT LOGS
 				t.Fatalf("Error in frame server should send: %v. Error receiving from channel: %v", e, err)
 			}
-		}()
+		})
 	}
 }
+
+// If there's no authority, will this even pass?
+
+// TestAuthorityHeader tests what :authority ends up being on the server side in specific
+// cases described in A41.
+func (s) TestAuthorityHeader(t *testing.T) {
+	tests := []struct {
+		name string
+		headers []struct{
+			name string
+			values []string
+			wantAuthority string
+		}
+	}{
+		// If :authority is missing, Host must be renamed to :authority.
+
+		// If :authority is present, Host must be discarded.
+	}
+
+	// Stream handler somehow sends back what :authority ends up being
+}
+
+// Have stream handler write back (add new case) what :authority ended up being
+
+// All we're doing is testing
+
+// TODO when get back: Hardcode test cases ^^^ to test below VVV and see if it induces correct behavior
 
 // TODO WHEN GET BACK: CLEANUP + MERGE IF ANY THIS WHOLE PR, FIGURE OUT VVV HOW DO WE TEST STREAMS HEADERS?
 // This is just touching transport.go and transport_test.go, so should be able to rebase fairly easily
@@ -1795,6 +1846,96 @@ func (s) TestHeadersCausingStreamError(t *testing.T) {
 // at the headers piped into the context.
 
 // handleStream(s), handleStream is an argument passed into function call
+
+// If :authority is missing, Host must be renamed to :authority.
+
+// If :authority is present, Host must be discarded.
+
+// Clean this up before writing second test
+
+
+func (s) TestServerWithClientSendingConnection(t *testing.T) {
+	server := setUpServerOnly(t, 0, &ServerConfig{}, suspended)
+	defer server.stop()
+	// Create a client directly to not couple what you can send to API of http2_client.go.
+	mconn, err := net.Dial("tcp", server.lis.Addr().String()) // gets accepted on server side then passed to transport
+	if err != nil {
+		t.Fatalf("Client failed to dial: %v", err)
+	}
+	defer mconn.Close()
+
+	if n, err := mconn.Write(clientPreface); err != nil || n != len(clientPreface) {
+		t.Fatalf("mconn.Write(clientPreface) = %d, %v, want %d, <nil>", n, err, len(clientPreface))
+	}
+
+	framer := http2.NewFramer(mconn, mconn)
+	if err := framer.WriteSettings(); err != nil {
+		t.Fatalf("Error while writing settings: %v", err)
+	}
+
+	// success chan indicates that reader received a RSTStream from server.
+	// An error will be passed on it if any other frame is received.
+	success := testutils.NewChannel()
+
+	// Launch a reader goroutine.
+	go func() {
+		for {
+			frame, err := framer.ReadFrame()
+			if err != nil {
+				return
+			}
+			switch frame := frame.(type) {
+			case *http2.SettingsFrame:
+				// Do nothing. A settings frame is expected from server preface.
+			case *http2.RSTStreamFrame:
+				if frame.Header().StreamID != 1 || http2.ErrCode(frame.ErrCode) != http2.ErrCodeProtocol {
+					// Client only created a single stream, so RST Stream should be for that single stream.
+					t.Errorf("RST stream received with streamID: %d and code %v, want streamID: 1 and code: http.ErrCodeFlowControl", frame.Header().StreamID, http2.ErrCode(frame.ErrCode))
+				}
+				// Records that client successfully received RST Stream frame.
+				success.Send(nil)
+				return
+			default:
+				// The server should send nothing but a single RST Stream frame.
+				success.Send(errors.New("The client received a frame other than RST Stream"))
+			}
+		}
+	}()
+
+	// Done with HTTP/2 setup - now create a stream with a bad method header.
+	var buf bytes.Buffer
+	henc := hpack.NewEncoder(&buf)
+	// Method is required to be POST in a gRPC call.
+	if err := henc.WriteField(hpack.HeaderField{Name: "connection", Value: "not supported"}); err != nil {
+		t.Fatalf("Error while encoding header: %v", err)
+	}
+	if err := henc.WriteField(hpack.HeaderField{Name: ":method", Value: "POST"}); err != nil { // Make these variable based on the t test knob
+		t.Fatalf("Error while encoding header: %v", err)
+	}
+	// Have the rest of the headers be ok and within the gRPC over HTTP/2 spec.
+	if err := henc.WriteField(hpack.HeaderField{Name: ":path", Value: "foo"}); err != nil {
+		t.Fatalf("Error while encoding header: %v", err)
+	}
+	if err := henc.WriteField(hpack.HeaderField{Name: ":authority", Value: "localhost"}); err != nil {
+		t.Fatalf("Error while encoding header: %v", err)
+	}
+	if err := henc.WriteField(hpack.HeaderField{Name: "content-type", Value: "application/grpc"}); err != nil {
+		t.Fatalf("Error while encoding header: %v", err)
+	}
+
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: buf.Bytes(), EndHeaders: true}); err != nil {
+		t.Fatalf("Error while writing headers: %v", err)
+	}
+	// This tests a single case of an RPC with certain headers ^^^, is there a way to generalize this
+	// with a t test?
+	// Knobs turned in regards to headers in a certain RPC: ":connection", ":authority" and "Host"
+	// Certain logic in regards to each one
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if e, err := success.Receive(ctx); e != nil || err != nil {
+		t.Fatalf("Error in frame server should send: %v. Error receiving from channel: %v", e, err)
+	}
+}
 
 // If the client sends an HTTP/2 request with a :method header with a value other than POST, as specified in
 // the gRPC over HTTP/2 specification, the server should close the stream.
