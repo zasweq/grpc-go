@@ -24,6 +24,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/metadata"
 	"io"
 	"math"
 	"net"
@@ -97,7 +98,45 @@ const (
 	invalidHeaderField
 	delayRead
 	pingpong
+	checkHostAndAuthority
 )
+
+// Two logical behaviors needed to happen:
+// 1. Verify host header is no longer present
+// 2. Send back what :authority header turned out to be
+func (h *testStreamHandler) checkHostAndAuthority(t *testing.T, s *Stream) {
+	print("checking host and authority")
+	// Fail directly on the closed t if present
+	// Should never be a host header in header map, should either get renamed to authority or deleted.
+	md, ok := metadata.FromIncomingContext(s.ctx)
+	if !ok {
+		// Shouldn't happen
+		t.Fatalf("Missing metadata from streams context")
+	}
+	// Should never be a host header in header map, should either get renamed to
+	// authority or deleted.
+	if len(md.Get("host")) != 0 {
+		t.Fatalf("Host header present creating an ambigious authority.")
+	}
+	authorityValues := md.Get(":authority")
+	// Authority header should always be unambiguous.
+	if len(authorityValues) > 1 {
+		t.Fatalf(":authority header should be unambiguous and only have one value")
+	}
+	// Test RPC will always hardcode permutations of logic to end up being localhost.
+	if authorityValues[0] != "localhost" {
+		t.Fatalf(":authority header should be set to localhost.")
+	}
+	// Send an RPC with headers, stream handler will take it and pipe it up here.
+	/*
+	// Respond with the :authority value - stick it either in response or in trailers
+	h.t.Write(s, )
+
+	// See how other tests verify the responses
+	h.t.WriteStatus()*/
+	// h.t.WriteStatus(s, status.New(codes.OK, ""))
+	close(h.notify)
+}
 
 func (h *testStreamHandler) handleStreamAndNotify(s *Stream) {
 	if h.notify == nil {
@@ -132,7 +171,7 @@ func (h *testStreamHandler) handleStream(t *testing.T, s *Stream) {
 	// send a response back to the client.
 	h.t.Write(s, nil, resp, &Options{})
 	// send the trailer to end the stream.
-	h.t.WriteStatus(s, status.New(codes.OK, ""))
+	h.t.WriteStatus(s, status.New(codes.OK, "")) // Could put host header validation in the status...
 }
 
 func (h *testStreamHandler) handleStreamPingPong(t *testing.T, s *Stream) {
@@ -380,6 +419,12 @@ func (s *server) start(t *testing.T, port int, serverConfig *ServerConfig, ht hT
 		case pingpong:
 			go transport.HandleStreams(func(s *Stream) {
 				go h.handleStreamPingPong(t, s)
+			}, func(ctx context.Context, method string) context.Context {
+				return ctx
+			})
+		case checkHostAndAuthority:
+			go transport.HandleStreams(func(s *Stream) {
+				go h.checkHostAndAuthority(t, s)
 			}, func(ctx context.Context, method string) context.Context {
 				return ctx
 			})
@@ -1811,6 +1856,8 @@ func (s) TestHeadersCausingStreamError(t *testing.T) {
 	}
 }
 
+// TODO WHEN GET BACK: VVVVV THIS DOESN'T EVEN INDUCE THE OPERATE HEADERS IN THE TRANSPORT LAYER...
+
 // If there's no authority, will this even pass?
 
 // TestAuthorityHeader tests what :authority ends up being on the server side in specific
@@ -1821,15 +1868,109 @@ func (s) TestAuthorityHeader(t *testing.T) {
 		headers []struct{
 			name string
 			values []string
-			wantAuthority string
 		}
+		wantAuthority string
 	}{
 		// If :authority is missing, Host must be renamed to :authority.
-
+		/*{
+			name: "Missing authority with host present",
+			headers: []struct{
+				name   string
+				values []string
+			}{
+				{name: ":method", values: []string{"POST"}},
+				{name: ":path", values: []string{"foo"}},
+				{name: "content-type", values: []string{"application/grpc"}},
+				{name: "host", values: []string{"localhost"}}, // Needs to verify this no longer exists
+			},
+			wantAuthority: "localhost",
+		},*/
 		// If :authority is present, Host must be discarded.
+		{
+			name: "Present authority should discard host",
+			headers: []struct{
+				name   string
+				values []string
+			}{
+				{name: ":method", values: []string{"POST"}},
+				{name: ":path", values: []string{"foo"}},
+				{name: ":authority", values: []string{"localhost"}},
+				{name: "content-type", values: []string{"application/grpc"}},
+				{name: "host", values: []string{"localhost2"}}, // Also need to verify this no longer exists
+			},
+			wantAuthority: "localhost",
+		},
 	}
 
 	// Stream handler somehow sends back what :authority ends up being
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := setUpServerOnly(t, 0, &ServerConfig{}, checkHostAndAuthority)
+			defer server.stop()
+			// Create a client directly to not tie what you can send to API of
+			// http2_client.go (i.e. control headers being sent).
+			mconn, err := net.Dial("tcp", server.lis.Addr().String())
+			if err != nil {
+				t.Fatalf("Client failed to dial: %v", err)
+			}
+			defer mconn.Close()
+
+			if n, err := mconn.Write(clientPreface); err != nil || n != len(clientPreface) {
+				t.Fatalf("mconn.Write(clientPreface) = %d, %v, want %d, <nil>", n, err, len(clientPreface))
+			}
+
+			framer := http2.NewFramer(mconn, mconn)
+			if err := framer.WriteSettings(); err != nil {
+				t.Fatalf("Error while writing settings: %v", err)
+			}
+
+			// Launch a reader goroutine.
+			go func() {
+				for {
+					frame, err := framer.ReadFrame()
+					if err != nil {
+						return
+					}
+					switch frame.(type) {
+					case *http2.HeadersFrame: // Got trailers sent to it, successful RPC
+						return
+					default:
+					}
+				}
+			}()
+
+			// I don't think we're sending anything back...so I don't think we need to read anything either
+			// Encode headers, send it, verifies in stream handler.
+			var buf bytes.Buffer
+			henc := hpack.NewEncoder(&buf)
+			// Needs to build headers deterministically to conform to gRPC over HTTP/2 spec.
+			for _, header := range test.headers {
+				for _, value := range header.values {
+					if err := henc.WriteField(hpack.HeaderField{Name: header.name, Value: value}); err != nil {
+						t.Fatalf("Error while encoding header: %v", err)
+					}
+				}
+			}
+			notifyChan := make(chan struct{})
+			server.mu.Lock()
+			server.h.notify = notifyChan
+			server.mu.Unlock()
+			if err := framer.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: buf.Bytes(), EndHeaders: true}); err != nil {
+				t.Fatalf("Error while writing headers: %v", err)
+			}
+			<-notifyChan
+		})
+		// Same thing
+
+		// Put it inside a frame...
+		// Framer level, so still sending a raw data frame, and getting responded with frames...
+
+
+		// Reader verifies frame being sent
+
+		// Stream handler needs to do two things: 1. Verify host header is no longer present
+		// 2. Send back what :authority header turned out to be
+	}
 }
 
 // Have stream handler write back (add new case) what :authority ended up being
