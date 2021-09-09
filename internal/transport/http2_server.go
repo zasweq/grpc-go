@@ -612,6 +612,7 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 func (t *http2Server) HandleStreams(handle func(*Stream), traceCtx func(context.Context, string) context.Context) {
 	defer close(t.readerDone)
 	for {
+		print("Started to handle streams")
 		t.controlBuf.throttle()
 		frame, err := t.framer.fr.ReadFrame()
 		atomic.StoreInt64(&t.lastRead, time.Now().UnixNano())
@@ -647,6 +648,7 @@ func (t *http2Server) HandleStreams(handle func(*Stream), traceCtx func(context.
 		}
 		switch frame := frame.(type) {
 		case *http2.MetaHeadersFrame:
+			print("Got a headers frame")
 			if t.operateHeaders(frame, handle, traceCtx) {
 				t.Close()
 				break

@@ -1759,7 +1759,7 @@ func (s) TestHeadersCausingStreamError(t *testing.T) {
 			}{
 				{name: ":method", values: []string{"POST"}},
 				{name: ":path", values: []string{"foo"}},
-				{name: ":authority", values: []string{"localhost", "localhost2"}}, // This already gets taken care of
+				{name: ":authority", values: []string{"localhost", "localhost2"}}, // This already gets taken care of, doesn't hit :authority header
 				{name: "content-type", values: []string{"application/grpc"}},
 				{name: "host", values: []string{"localhost"}},
 			},
