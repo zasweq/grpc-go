@@ -338,7 +338,7 @@ func (h *testStreamHandler) handleStreamDelayRead(t *testing.T, s *Stream) {
 }
 
 // start starts server. Other goroutines should block on s.readyChan for further operations.
-func (s *server) start(t *testing.T, port int, serverConfig *ServerConfig, ht hType) {
+func (s *server) start(t *testing.T, port int, serverConfig *ServerConfig, ht hType) { // This isn't even grpc server, this is a test server which accepts a connection and immmedialely uses it to create transport
 	var err error
 	if port == 0 {
 		s.lis, err = net.Listen("tcp", "localhost:0")
@@ -1759,7 +1759,7 @@ func (s) TestHeadersCausingStreamError(t *testing.T) {
 			}{
 				{name: ":method", values: []string{"POST"}},
 				{name: ":path", values: []string{"foo"}},
-				{name: ":authority", values: []string{"localhost", "localhost2"}}, // This already gets taken care of, doesn't hit :authority header
+				{name: ":authority", values: []string{"localhost", "localhost2"}}, // This already gets taken care of, doesn't hit :authority header, or does this not get encoded right
 				{name: "content-type", values: []string{"application/grpc"}},
 				{name: "host", values: []string{"localhost"}},
 			},
@@ -1781,7 +1781,7 @@ func (s) TestHeadersCausingStreamError(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			print("running test casee")
-			server := setUpServerOnly(t, 0, &ServerConfig{}, suspended)
+			server := setUpServerOnly(t, 0, &ServerConfig{}, suspended) // Creates a transport per test
 			defer server.stop()
 			// Create a client directly to not tie what you can send to API of
 			// http2_client.go (i.e. control headers being sent).
@@ -1846,7 +1846,7 @@ func (s) TestHeadersCausingStreamError(t *testing.T) {
 				t.Fatalf("Error while writing headers: %v", err)
 			}
 			// Knobs turned in regards to headers in a certain RPC: ":connection", ":authority" and "Host"
-			// Certain logic in regards to each one
+			// Certain logic in regards to each one...you'll need to log in transport anyway regardless of if you do e2e or transport level test
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 			defer cancel()
 			if e, err := success.Receive(ctx); e != nil || err != nil { // MAKE SURE THIS IS FAILING AT CORRECT PLACE - PUT LOGS

@@ -331,7 +331,7 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 
 // operateHeader takes action on the decoded headers.
 func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(*Stream), traceCtx func(context.Context, string) context.Context) (fatal bool) {
-	print("Operating headers")
+	print("Operating headers.")
 	streamID := frame.Header().StreamID
 
 	// frame.Truncated is set to true when framer detects that the current header
@@ -390,6 +390,12 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 			if timeout, err = decodeTimeout(hf.Value); err != nil {
 				headerError = true
 			}
+		// I think ordering should be this:
+		// Finish this PR, figure out why it's not getting to operateHeaders (for single authority and second test in all cases with custom stream handler)
+		// Print at each stage of server transport level
+		// Add :method: POST to next PR - use same stream handler to verify it's working
+		// Fix the breaking tests from adding :method: POST to other PR
+
 		// "Transports must consider requests containing the Connection header as malformed" - A41
 		case "connection":
 			print("connection header present")
@@ -610,6 +616,7 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 // typically run in a separate goroutine.
 // traceCtx attaches trace to ctx and returns the new context.
 func (t *http2Server) HandleStreams(handle func(*Stream), traceCtx func(context.Context, string) context.Context) {
+	print("HandleStreams called")
 	defer close(t.readerDone)
 	for {
 		print("Started to handle streams")
@@ -617,6 +624,7 @@ func (t *http2Server) HandleStreams(handle func(*Stream), traceCtx func(context.
 		frame, err := t.framer.fr.ReadFrame()
 		atomic.StoreInt64(&t.lastRead, time.Now().UnixNano())
 		if err != nil {
+			print("Got an error ") // So gets a stream error on multiple authorities
 			if se, ok := err.(http2.StreamError); ok {
 				if logger.V(logLevel) {
 					logger.Warningf("transport: http2Server.HandleStreams encountered http2.StreamError: %v", se)
@@ -666,12 +674,22 @@ func (t *http2Server) HandleStreams(handle func(*Stream), traceCtx func(context.
 		case *http2.GoAwayFrame:
 			// TODO: Handle GoAway from the client appropriately.
 		default:
+			print("Hit default")
 			if logger.V(logLevel) {
 				logger.Errorf("transport: http2Server.HandleStreams found unhandled frame type %v.", frame)
 			}
 		}
 	}
 }
+
+// Fully protect with ENV VAR
+// Protect processing of fields with Env Var
+// 1.41 should protect everything related authz
+// If td sends something related to authz, it shouldn't do anything at all and not trigger
+// functionality. Server should ignore RDS Config
+// If given any functionality related to authz
+// Coordinate with C++ in regards to route configuration and HTTP Filters, NACKING because security configuration, check with mark and keep it same
+// What C++ is doing in this area
 
 func (t *http2Server) getStream(f http2.Frame) (*Stream, bool) {
 	t.mu.Lock()

@@ -834,7 +834,7 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 	rawConn.SetDeadline(time.Now().Add(s.opts.connectionTimeout))
 
 	// Finish handshaking (HTTP2)
-	st := s.newHTTP2Transport(rawConn)
+	st := s.newHTTP2Transport(rawConn) // Gets a rawconn, wraps a transport around it
 	rawConn.SetDeadline(time.Time{})
 	if st == nil {
 		return
@@ -844,7 +844,8 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 		return
 	}
 	go func() {
-		s.serveStreams(st)
+		s.serveStreams(st) // After the server transport is successfully created, this is when you serve streams
+		// Serve streams logically means to be able to take headers frames
 		s.removeConn(lisAddr, st)
 	}()
 }
@@ -899,7 +900,8 @@ func (s *Server) serveStreams(st transport.ServerTransport) {
 	var wg sync.WaitGroup
 
 	var roundRobinCounter uint32
-	st.HandleStreams(func(stream *transport.Stream) {
+					// The function in this argument is a callback passed from server.go to transport layer to handle a stream whenever operateHeaders finishes and successfully parses frames which will create a request/response message stream
+	st.HandleStreams(func(stream *transport.Stream) { // Handles incoming headers frames that may create streams
 		wg.Add(1)
 		if s.opts.numServerWorkers > 0 {
 			data := &serverWorkerData{st: st, wg: &wg, stream: stream}
