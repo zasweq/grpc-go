@@ -366,8 +366,8 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 		timeoutSet bool
 		timeout    time.Duration
 	)
-
-	var seenAuthority, seenHost bool
+	// You'll also have this to reference for both attempted e2e test and attempted transport level tests
+	var seenAuthority, seenHost bool // Get this PR to a state where you can send it out for review minus the stream test, branch it off master and copy VVV this logic + stream error test
 	for _, hf := range frame.Fields {
 		switch hf.Name {
 		case "content-type":
