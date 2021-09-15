@@ -7819,3 +7819,144 @@ func (s) TestStreamingServerInterceptorGetsConnection(t *testing.T) {
 		t.Fatalf("ss.Client.StreamingInputCall(_) = _, %v, want _, %v", err, io.EOF)
 	}
 }
+
+// Need a test here where you have knobs over the RPC going to server, and then same thing as POST Header except you verify authority,
+// Authority is a variable to be tested, so either send it back using a channel or in the error msg, or send it to the interceptor?
+// I think sending it back through the error msg makes sense
+
+// VV This needs knobs to turn in regards to :authority and host headers, set it manually rather than the xds client API?
+// Write raw HTTP/2 frames to the wire? This was broken in transport tests, but we can still log in handleStreams and
+// operateHeaders to see if it works...
+// ->    (Server) -> (interceptor)
+
+// interceptor here that has some way of verifying what the :authority header passed into it was
+
+func unaryInterceptorVerifyAuthority(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	// Get metadata from context
+	md, ok := metadata.FromIncomingContext(ctx)
+	// Get
+	if !ok {
+		return nil, status.Error(codes.NotFound, "metadata was not in context")
+	}
+	authority := md.Get(":authority")
+	if len(authority) != 1 { // Should be an unambiguous authority.
+		return nil, status.Error(codes.NotFound, ":authority value had more than one value")
+	}
+	// Also need to verify that HOST isn't present
+	return nil, status.Error(codes.OK, authority[0])
+}
+
+// TestEventualAuthorityHeader tests the eventual authority header that makes it to an interceptor based on A41.
+// This is based on what :authority and host are defined
+func (s) TestEventualAuthorityHeader(t *testing.T) {
+	// Knobs:
+	// Name, obviously
+	// Header map
+	// eventual authority
+	tests := []struct {
+		name string
+		headers []struct{
+			name string
+			values []string
+		}
+		wantAuthority string
+	}{
+		// "If :authority is missing, Host must be renamed to :authority." - A41
+		{
+			name: "Missing authority with host present",
+			headers: []struct{
+				name string
+				values []string
+			}{
+				{
+					// This needs to align with the spec defined for grpc
+
+				},
+			},
+			wantAuthority: "localhost",
+		},
+		// "If :authority is present, Host must be discarded." - A41
+		{
+			name: "Present authority should discard host",
+			headers: []struct{
+				name string
+				values []string
+			}{
+
+			},
+		},
+	}
+
+	// Set up normal gRPC server with an interceptor hooked into it, can we just do this with normal interceptor
+	lis, err := net.Listen("tcp", "localhost:0") // <--- make sure this is right
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	s := grpc.NewServer(grpc.UnaryInterceptor(unaryInterceptorVerifyAuthority))
+
+	// Ugh, need to link a logical service into this thing
+
+	// Set up a raw conn writing directly onto wire here with preamble and knobs of headers
+	// Set up normal gRPC server with an interceptor hooked into it, can we just do this with normal interceptor
+
+	// Send request (through client preface + raw http frames)...request gets plumbed up into interceptor (has to logically make it's way up to the interceptor level with no errors, check metadata from that),
+	// does this equal a full HTTP message?
+
+	// Is there any other way of controlling what headers get sent on the wire...?
+	// Composition of primitives
+	// (Header + data + trailers...) Fully fledged RPC -> makes its way up to interceptor
+	// If you ping it just headers, does it makes it's way to the interceptor?
+	// "Request-Headers *Length-Prefixed-Message EOS" <- might be able to do it except also with an EOS, what is an EOS?
+
+	// Setup gRPC server with listener and interceptor hooked in
+	// Directly connect to it with an mconn
+	mconn, err := net.Dial("tcp", server.lis.Addr().String())
+	if err != nil {
+		t.Fatalf("Client failed to dial: %v", err)
+	}
+	defer mconn.Close()
+
+
+	// framer
+	framer := http2.NewFramer(mconn, mconn)
+	// Frame level of abstraction, so will be reading HTTP 2 frames, would have to pieces them together
+	// Read headers, data, what frame is the error sent back actually contained in, this will contain :authority
+	go func() {
+		for {
+			frame, err := framer.ReadFrame()
+			// Settings is expected as part of preamble
+			if err != nil {
+				return
+			}
+			// Once read the final trailers frame, can verify authority in the trailer message
+			switch frame.(type) {
+			case *http2.HeadersFrame:
+				// Verify this frame is authority, maybe send what error msg is back
+				// to the test goroutine
+				frame.(*http2.HeadersFrame).HeaderBlockFragment()
+				frame.(*http2.HeadersFrame).
+			default: // Settings frames expected from the client
+			}
+		}
+	}()
+
+	// "Check out servertester.go, maybe you can use that"
+	// In a normal grpc client/server, expect take the call, break it down to it's atoms, and control headers being sent
+
+	// Need to do knobs in context of reg RPC call for error return logic
+
+	// Directly write onto the wire
+	clientPreface := []byte(http2.ClientPreface)
+	mconn.Write(clientPreface)
+
+	// Write the settings frame
+	// Finish writing onto wire - logically represents a full RPC
+
+	// ^^^ There's gotta be a better way than this...perhaps doing in the framework of UnaryRPC
+}
+
+// In order for this to get to interceptor...has to be a valid fully constructed RPC
+// If I test with a stream handler, has to be valid enough headers to actually create a stream and that's it...seems to be easier
+
+// Finish this test and fix breaking POST and you're done

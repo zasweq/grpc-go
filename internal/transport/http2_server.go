@@ -624,7 +624,8 @@ func (t *http2Server) HandleStreams(handle func(*Stream), traceCtx func(context.
 		frame, err := t.framer.fr.ReadFrame()
 		atomic.StoreInt64(&t.lastRead, time.Now().UnixNano())
 		if err != nil {
-			print("Got an error ") // So gets a stream error on multiple authorities
+			// Not valid HTTP frames...
+			print("Got an error in transport") // So gets a stream error on multiple authorities
 			if se, ok := err.(http2.StreamError); ok {
 				if logger.V(logLevel) {
 					logger.Warningf("transport: http2Server.HandleStreams encountered http2.StreamError: %v", se)

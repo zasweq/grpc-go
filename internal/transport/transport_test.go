@@ -103,7 +103,8 @@ const (
 
 // Two logical behaviors needed to happen:
 // 1. Verify host header is no longer present
-// 2. Send back what :authority header turned out to be
+// 2. Send back what :authority header turned out to be - switched to not sending back, switched to
+// hardcoded localhost.
 func (h *testStreamHandler) checkHostAndAuthority(t *testing.T, s *Stream) {
 	print("checking host and authority")
 	// Fail directly on the closed t if present
@@ -422,7 +423,8 @@ func (s *server) start(t *testing.T, port int, serverConfig *ServerConfig, ht hT
 			}, func(ctx context.Context, method string) context.Context {
 				return ctx
 			})
-		case checkHostAndAuthority:
+		case checkHostAndAuthority: // Need to have it blocking on reader goroutine
+			print("about to start to handle streams")
 			go transport.HandleStreams(func(s *Stream) {
 				go h.checkHostAndAuthority(t, s)
 			}, func(ctx context.Context, method string) context.Context {
@@ -1872,19 +1874,20 @@ func (s) TestAuthorityHeader(t *testing.T) {
 		wantAuthority string
 	}{
 		// If :authority is missing, Host must be renamed to :authority.
-		/*{
+		{
 			name: "Missing authority with host present",
 			headers: []struct{
 				name   string
 				values []string
 			}{
+				// Make this a valid HTTP/2 headers frame
 				{name: ":method", values: []string{"POST"}},
 				{name: ":path", values: []string{"foo"}},
 				{name: "content-type", values: []string{"application/grpc"}},
-				{name: "host", values: []string{"localhost"}}, // Needs to verify this no longer exists
+				// {name: "host", values: []string{"localhost"}}, // Needs to verify this no longer exists
 			},
 			wantAuthority: "localhost",
-		},*/
+		},
 		// If :authority is present, Host must be discarded.
 		{
 			name: "Present authority should discard host",
@@ -1896,7 +1899,7 @@ func (s) TestAuthorityHeader(t *testing.T) {
 				{name: ":path", values: []string{"foo"}},
 				{name: ":authority", values: []string{"localhost"}},
 				{name: "content-type", values: []string{"application/grpc"}},
-				{name: "host", values: []string{"localhost2"}}, // Also need to verify this no longer exists
+				// {name: "host", values: []string{"localhost2"}}, // Also need to verify this no longer exists
 			},
 			wantAuthority: "localhost",
 		},
@@ -1905,6 +1908,7 @@ func (s) TestAuthorityHeader(t *testing.T) {
 	// Stream handler somehow sends back what :authority ends up being
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			print("Starting test case")
 			server := setUpServerOnly(t, 0, &ServerConfig{}, checkHostAndAuthority)
 			defer server.stop()
 			// Create a client directly to not tie what you can send to API of
@@ -1923,6 +1927,9 @@ func (s) TestAuthorityHeader(t *testing.T) {
 			if err := framer.WriteSettings(); err != nil {
 				t.Fatalf("Error while writing settings: %v", err)
 			}
+			print("about to launch reader goroutine")
+
+			success := testutils.NewChannel()
 
 			// Launch a reader goroutine.
 			go func() {
@@ -1932,7 +1939,11 @@ func (s) TestAuthorityHeader(t *testing.T) {
 						return
 					}
 					switch frame.(type) {
+					// Just creates a stream and that's it, close this with a channel send at the end of this test
 					case *http2.HeadersFrame: // Got trailers sent to it, successful RPC
+						// Needs to block on trailers being sent after sending the data frame
+						// It's a valid header according to protocol
+						success.Send(nil)
 						return
 					default:
 					}
@@ -1951,14 +1962,16 @@ func (s) TestAuthorityHeader(t *testing.T) {
 					}
 				}
 			}
-			notifyChan := make(chan struct{})
+			/*notifyChan := make(chan struct{})
 			server.mu.Lock()
 			server.h.notify = notifyChan
-			server.mu.Unlock()
+			server.mu.Unlock()*/
 			if err := framer.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: buf.Bytes(), EndHeaders: true}); err != nil {
 				t.Fatalf("Error while writing headers: %v", err)
 			}
-			<-notifyChan
+
+			// Data frame with EOS
+			// <-notifyChan
 		})
 		// Same thing
 
