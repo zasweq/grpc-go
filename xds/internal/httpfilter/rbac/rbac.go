@@ -174,6 +174,12 @@ func (builder) BuildServerInterceptor(cfg httpfilter.FilterConfig, override http
 		return nil, nil
 	}
 
+	// "At this time, if the RBAC.action is Action.LOG then the policy will be
+	// completely ignored, as if RBAC was not configurated." - A41
+	if icfg.Rules.Action == v3rbacpb.RBAC_LOG {
+		return nil, nil
+	}
+
 	ce, err := rbac.NewChainEngine([]*v3rbacpb.RBAC{icfg.Rules})
 	if err != nil {
 		return nil, fmt.Errorf("error constructing matching engine: %v", err)

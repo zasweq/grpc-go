@@ -183,9 +183,12 @@ func matchersFromPrincipals(principals []*v3rbacpb.Principal) ([]matcher, error)
 			// The source ip principal identifier is deprecated. Thus, a
 			// principal typed as a source ip in the identifier will be a no-op.
 			// The config should use DirectRemoteIp instead.
-		case *v3rbacpb.Principal_RemoteIp: // Allow equating RBAC's direct_remote_ip...do we need this?
-			// Not supported in gRPC RBAC currently - a principal typed as
-			// Remote Ip in the initial config will be a no-op.
+		case *v3rbacpb.Principal_RemoteIp: // "...allow equating RBAC's direct_remote_ip and remote_ip" - A41
+			m, err := newSourceIPMatcher(principal.GetDirectRemoteIp())
+			if err != nil {
+				return nil, err
+			}
+			matchers = append(matchers, m)
 		case *v3rbacpb.Principal_Metadata:
 			// Not supported in gRPC RBAC currently - a principal typed as
 			// Metadata in the initial config will be a no-op.
@@ -412,5 +415,11 @@ func (am *authenticatedMatcher) match(data *rpcData) bool {
 			return true
 		}
 	}
-	return am.stringMatcher.Match(cert.Subject.String())
+	if am.stringMatcher.Match(cert.Subject.String()) {
+		return true
+	}
+	// "If there is no client certificate (thus no SAN nor Subject), check if ""
+	// (empty string) matches. If it matches, the principal_name is said to
+	// match" - A41
+	return am.stringMatcher.Match("")
 }

@@ -776,14 +776,38 @@ func (s) TestRBACHTTPFilter(t *testing.T) {
 			wantStatusEmptyCall: codes.PermissionDenied,
 			wantStatusUnaryCall: codes.OK,
 		},
-		// This test that a RBAC Config with nil rules means that every RPC is
-		// allowed. This maps to the line "If absent, no enforcing RBAC policy
-		// will be applied" from the RBAC Proto documentation for the Rules
-		// field.
+		// This test tests that a RBAC Config with nil rules means that every
+		// RPC is allowed. This maps to the line "If absent, no enforcing RBAC
+		// policy will be applied" from the RBAC Proto documentation for the
+		// Rules field.
 		{
 			name: "absent-rules",
 			rbacCfg: &rpb.RBAC{
 				Rules: nil,
+			},
+			wantStatusEmptyCall: codes.OK,
+			wantStatusUnaryCall: codes.OK,
+		},
+		// This test tests that an RBAC Config with Action.LOG configured allows
+		// every RPC through. This maps to the line "At this time, if the
+		// RBAC.action is Action.LOG then the policy will be completely ignored,
+		// as if RBAC was not configurated." from A41
+		{
+			name: "action-log",
+			rbacCfg: &rpb.RBAC{
+				Rules: &v3rbacpb.RBAC{
+					Action: v3rbacpb.RBAC_LOG,
+					Policies: map[string]*v3rbacpb.Policy{
+						"anyone": {
+							Permissions: []*v3rbacpb.Permission{
+								{Rule: &v3rbacpb.Permission_Any{Any: true}},
+							},
+							Principals: []*v3rbacpb.Principal{
+								{Identifier: &v3rbacpb.Principal_Any{Any: true}},
+							},
+						},
+					},
+				},
 			},
 			wantStatusEmptyCall: codes.OK,
 			wantStatusUnaryCall: codes.OK,
