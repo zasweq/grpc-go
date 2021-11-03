@@ -68,6 +68,32 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 				}},
 			}
 		}
+		goodRouteConfigWithClusterSpecifierPlugins = func(csps []*v3routepb.ClusterSpecifierPlugin, cspReferences []string) *v3routepb.RouteConfiguration {
+			var rs []*v3routepb.Route
+
+			for i, cspReference := range cspReferences {
+				rs := append(rs, &v3routepb.Route{
+					Match: &v3routepb.RouteMatch{PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: string(i + 1)}},
+					Action: &v3routepb.Route_Route{
+						Route: &v3routepb.RouteAction{
+							ClusterSpecifier: &v3routepb.RouteAction_ClusterSpecifierPlugin{ClusterSpecifierPlugin: cspReference},
+						},
+					},
+
+				})
+			}
+
+			rc := &v3routepb.RouteConfiguration{
+				Name: routeName,
+				VirtualHosts: []*v3routepb.VirtualHost{{
+					Domains: []string{ldsTarget},
+					Routes: rs,
+				}},
+				ClusterSpecifierPlugins: csps,
+			}
+
+			return rc
+		} // Gets converted to V
 		goodUpdateWithFilterConfigs = func(cfgs map[string]httpfilter.FilterConfig) RouteConfigUpdate {
 			return RouteConfigUpdate{
 				VirtualHosts: []*VirtualHost{{
@@ -124,6 +150,18 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			}
 			return goodUpdateWithRetryPolicy(nil, nil)
 		}
+
+		// good update with knobs on top level cluster specifier plugins, but route actions need to be knobs as well since they refer
+		// API: ([]ClusterSpecifierPlugin{{name, config}, {name, config}} <- puts in top level, []name <- iterates through this, builds it dynamically based on length)
+		goodUpdateWithClusterSpecifierPlugins = func(csps []*v3routepb.ClusterSpecifierPlugin, cspReferences []string) RouteConfigUpdate {
+			rcu := RouteConfigUpdate{
+
+			}
+			// Loop through cspReferences, build out routes, prefix needs to be variable as well
+		}
+	}
+
+		// Update you just specify manually
 	)
 
 	tests := []struct {
@@ -576,6 +614,44 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			wantUpdate: goodUpdateIfRetryDisabled(),
 			wantError:  env.RetrySupport,
 		},
+		// Error codepaths:
+		// No plugin is registered (NACKED)
+		{
+			name: "cluster-specifier-declared-which-not-present",
+			rc: , // A resource which wouldn't usually get NACKED outside of the route specifier not present.
+			wantError: true,
+		},
+		// NACK - If a plugin is found, if an error is encountered in cluster specifier plugin conversion method (need a mock cluster specifier and also need to register this mock cluster specifier)
+		{
+			name: "error-in-cluster-specifier-plugin",
+			rc: ,
+			wantError: true,
+		},
+		// NACK - If an individual route action references a cluster specifier that isn't in top level cluster specifier.
+		{
+			name: "route-with-undeclared-cluster-specifier-plugin",
+			rc: ,
+			wantError: true,
+		},
+
+		// Both above and below require a regular ok route configuration + the csp additions which we are testing
+
+		// Successful codepaths:
+
+		// Normal map provided to xdsclient's consumers
+		{
+			name: "emitted-cluster-specifier-plugins",
+
+		},
+
+		// A map with deleted entries due to being present in route action
+		// ABC, AB
+		{
+			name: "deleted-cluster-specifier-plugins-not-referenced",
+			rc: ,
+			wantUpdate: ,
+		},
+
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -590,6 +666,8 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 		})
 	}
 }
+
+// Mock cluster specifier here, see mock HTTP Filters for guidance
 
 func (s) TestUnmarshalRouteConfig(t *testing.T) {
 	const (
@@ -1469,7 +1547,7 @@ func (s) TestRoutesProtoToSlice(t *testing.T) {
 	defer func() { env.RingHashSupport = oldRingHashSupport }()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := routesProtoToSlice(tt.routes, nil, false)
+			got, _, err := routesProtoToSlice(tt.routes, nil, nil, false)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("routesProtoToSlice() error = %v, wantErr %v", err, tt.wantErr)
 			}

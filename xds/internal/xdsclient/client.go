@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/serviceconfig"
 	"regexp"
 	"sync"
 	"time"
@@ -260,6 +261,8 @@ type InboundListenerConfig struct {
 // of interest to the registered RDS watcher.
 type RouteConfigUpdate struct {
 	VirtualHosts []*VirtualHost
+	// ClusterSpecifierPlugins are...
+	ClusterSpecifierPlugins map[string]serviceconfig.LoadBalancingConfig // This scales up the update already present and all the logic is localized, so just scale up the existing tests
 	// Raw is the resource from the xds response.
 	Raw *anypb.Any
 }
