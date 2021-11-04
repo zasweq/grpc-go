@@ -21,8 +21,6 @@ package xdsclient
 import (
 	"errors"
 	"fmt"
-	"github.com/golang/protobuf/proto"
-	"google.golang.org/grpc/xds/internal/clusterspecifier"
 	"regexp"
 	"testing"
 	"time"
@@ -32,6 +30,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/internal/xds/env"
+	"google.golang.org/grpc/xds/internal/clusterspecifier"
 	"google.golang.org/grpc/xds/internal/httpfilter"
 	"google.golang.org/grpc/xds/internal/version"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -42,6 +41,7 @@ import (
 	v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	v3typepb "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/golang/protobuf/proto"
 	anypb "github.com/golang/protobuf/ptypes/any"
 	wrapperspb "github.com/golang/protobuf/ptypes/wrappers"
 )
@@ -96,7 +96,7 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			}
 
 			return rc
-		} // Gets converted to V
+		}
 		goodUpdateWithFilterConfigs = func(cfgs map[string]httpfilter.FilterConfig) RouteConfigUpdate {
 			return RouteConfigUpdate{
 				VirtualHosts: []*VirtualHost{{
@@ -110,9 +110,8 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 				}},
 			}
 		}
-		// Switch this to var later
-		goodUpdateWithClusterSpecifierPlugins = func() RouteConfigUpdate { // Fixed at just cspA
-			// Same thing without WeightedClusters
+		// Switch this to var later - fixed at just cspA
+		goodUpdateWithClusterSpecifierPlugins = func() RouteConfigUpdate {
 			return RouteConfigUpdate{
 				VirtualHosts: []*VirtualHost{{
 					Domains: []string{ldsTarget},
@@ -123,8 +122,7 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 				}},
 				ClusterSpecifierPlugins: map[string]clusterspecifier.BalancerConfig{
 					"cspA": nil,
-					// If you want variablility it will be here
-				},/*map[cspA]nil*/
+				},
 			}
 		}
 		goodRouteConfigWithRetryPolicy = func(vhrp *v3routepb.RetryPolicy, rrp *v3routepb.RetryPolicy) *v3routepb.RouteConfiguration {
@@ -170,17 +168,6 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			}
 			return goodUpdateWithRetryPolicy(nil, nil)
 		}
-
-		// good update with knobs on top level cluster specifier plugins, but route actions need to be knobs as well since they refer
-		// API: ([]ClusterSpecifierPlugin{{name, config}, {name, config}} <- puts in top level, []name <- iterates through this, builds it dynamically based on length)
-		/*goodUpdateWithClusterSpecifierPlugins = func(csps []*v3routepb.ClusterSpecifierPlugin, cspReferences []string) RouteConfigUpdate {
-			rcu := RouteConfigUpdate{
-
-			}
-			// Loop through cspReferences, build out routes, prefix needs to be variable as well
-		}*/
-
-		// Update you just specify manually
 	)
 
 	tests := []struct {
@@ -633,7 +620,7 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			wantUpdate: goodUpdateIfRetryDisabled(),
 			wantError:  env.RetrySupport,
 		},
-		// Error codepaths:
+		// Error codepaths: (put quotes for these tests)
 		// No plugin is registered (NACKED)
 		{
 			name: "cluster-specifier-declared-which-not-present",
@@ -644,7 +631,7 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 						TypedConfig: configOfClusterSpecifierDoesntExist,
 					},
 				},
-			}, []string{"cspA"}), // A resource which wouldn't usually get NACKED outside of the route specifier not present.
+			}, []string{"cspA"}), // A resource which wouldn't usually get NACKED outside of the route specifier not present, make sure this doesn't always error.
 			wantError: true,
 		},
 		// NACK - If a plugin is found, if an error is encountered in cluster specifier plugin conversion method (need a mock cluster specifier and also need to register this mock cluster specifier)
@@ -694,7 +681,7 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			wantUpdate: goodUpdateWithClusterSpecifierPlugins(), // Same as below - Can declare a var up ^^^
 		},
 
-		// cspB should be kept from the xdsclient update due to this line from
+		// cspB should be deleted from the xdsclient update due to this line from
 		// RLS in xDS design doc: "For any entry in the
 		// RouteConfiguration.cluster_specifier_plugins not referenced by an
 		// enclosed RouteAction's cluster_specifier_plugin, the xDS client

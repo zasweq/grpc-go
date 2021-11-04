@@ -21,8 +21,6 @@ package xdsclient
 import (
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/serviceconfig"
-	"google.golang.org/grpc/xds/internal/clusterspecifier"
 	"net"
 	"regexp"
 	"strconv"
@@ -51,6 +49,7 @@ import (
 	"google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/internal/xds/env"
 	"google.golang.org/grpc/xds/internal"
+	"google.golang.org/grpc/xds/internal/clusterspecifier"
 	"google.golang.org/grpc/xds/internal/httpfilter"
 	"google.golang.org/grpc/xds/internal/version"
 )
@@ -380,55 +379,40 @@ func unmarshalRouteConfigResource(r *anypb.Any, logger *grpclog.PrefixLogger) (s
 // we are looking for.
 func generateRDSUpdateFromRouteConfiguration(rc *v3routepb.RouteConfiguration, logger *grpclog.PrefixLogger, v2 bool) (RouteConfigUpdate, error) {
 	vhs := make([]*VirtualHost, 0, len(rc.GetVirtualHosts()))
-	// This gets called for both client and server side Listeners
-	// []{{name, typed_config}, {name, typed_config}}
-	csps := make(map[string]clusterspecifier.BalancerConfig) // Change this type too to clusterspecifier.LoadBalancingConfig
-	// This gets called from client and server side, but server side won't have ClusterSpecifier plugins
-	// What to do about this server side...?
-
+	csps := make(map[string]clusterspecifier.BalancerConfig)
 	// "The xDS client will inspect all elements of the
 	// cluster_specifier_plugins field looking up a plugin based on the
 	// extension.typed_config of each." - RLS in xDS design
 	for _, csp := range rc.ClusterSpecifierPlugins {
 		cs := clusterspecifier.Get(csp.GetExtension().GetTypedConfig().GetTypeUrl())
 		if cs == nil {
-			// NACK - If no plugin is registered
+			// "If no plugin is registered for it, the resource will be NACKed."
+			// - RLS in xDS design
 			return RouteConfigUpdate{}, fmt.Errorf("received route is invalid, cluster specifier %v of type %v was not found", csp.GetExtension().GetName(), csp.GetExtension().GetTypedConfig().GetTypeUrl())
 		}
-		lbCfg, err := cs.ParseClusterSpecifierConfig(csp.GetExtension().GetTypedConfig()) // Change the type of this lb config
+		lbCfg, err := cs.ParseClusterSpecifierConfig(csp.GetExtension().GetTypedConfig())
 		if err != nil {
-			// NACK - If a plugin is found, the value of the typed_config field
-			// will be passed to it's conversion method, and if an error is
-			// encountered, the resource will be NACKED.
+			// "If a plugin is found, the value of the typed_config field will
+			// be passed to it's conversion method, and if an error is
+			// encountered, the resource will be NACKED." - RLS in xDS design
 			return RouteConfigUpdate{}, fmt.Errorf("received route is invalid, error: %v parsing config %v for cluster specifier %v of type %v", err, csp.GetExtension().GetTypedConfig(), csp.GetExtension().GetName(), csp.GetExtension().GetTypedConfig().GetTypeUrl())
 		}
-		// Will be "cluster_specifier_plugin:name below"
-		csps[csp.GetExtension().GetName()] = lbCfg // All you need to pass into function below is the values of this
+		// "If all cluster specifiers are valid, the xDS client will store the
+		// configurations in a map keyed by the name of the extension instance." -
+		// RLS in xDS Design
+		csps[csp.GetExtension().GetName()] = lbCfg
 	}
-
-
-	// "If all cluster specifiers are valid, the xDS client will store the
-	// configurations in a map keyed by the name of the extension instance." -
-	// RLS in xDS Design
-
-	// Start a set here
-	// Represents all the cluster specifiers referenced by Route Actions - any
-	// cluster specifiers not specified by Route Actions can be ignored
-
 	// cspNames represents all the cluster specifiers referenced by Route
-	// Actions - any cluster specifiers not specified by Route Actions can be
-	// ignored.
+	// Actions - any cluster specifiers not referenced by a Route Action can be
+	// ignored and not emitted by the xdsclient.
 	var cspNames = make(map[string]bool)
 
 	for _, vh := range rc.GetVirtualHosts() {
-		// This is the multiple one, each vh has routes
-		// Multiple vh's ^^ that iteration, with multiple routes, iterated vv here, thus
-		// can have multiple route actions linked to a string
-		routes, cspNs, err := routesProtoToSlice(vh.Routes, csps, logger, v2) // Pass in the cluster specifier plugins here? is this client or server side?
+		routes, cspNs, err := routesProtoToSlice(vh.Routes, csps, logger, v2)
 		if err != nil {
 			return RouteConfigUpdate{}, fmt.Errorf("received route is invalid: %v", err)
 		}
-		for n, _ := range cspNs { // Merging the set
+		for n, _ := range cspNs {
 			cspNames[n] = true
 		}
 		rc, err := generateRetryConfig(vh.GetRetryPolicy())
@@ -463,25 +447,6 @@ func generateRDSUpdateFromRouteConfiguration(rc *v3routepb.RouteConfiguration, l
 
 	return RouteConfigUpdate{VirtualHosts: vhs, ClusterSpecifierPlugins: csps}, nil
 }
-
-// How to test this...?
-// A lot of codepaths to be NACKED - test case 1 (No plugin is registered), test case 2 ("// NACK - If a plugin is found, the value of the typed_config field
-// will be passed to it's conversion method, and if an error is
-// encountered, the resource will be NACKED.")
-
-// Test case 3:
-// Also NACK if the individual route actions reference a cluster specifier that isn't in top level cluster specifier plugins
-
-// Also need a mock cluster specifier plugin (See mock HTTP Filters for how they tested this)
-
-// VVVV if passes all the nack possibilities
-// Test the end result - "what the xdsclient provides to its consumers", including that of not providing unused entries to consumers, and just normal code paths
-// map[name of the extension instance]LBConfig
-
-// Two branches of logic...all from the entrance function of generateRDSUpdateFromRouteConfiguration
-
-// wantErr where the error is anything from an NACK
-// wantUpdate map[name of the extension instance]LBConfig
 
 func generateRetryConfig(rp *v3routepb.RetryPolicy) (*RetryConfig, error) {
 	if !env.RetrySupport || rp == nil {

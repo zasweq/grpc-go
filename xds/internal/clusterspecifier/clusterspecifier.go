@@ -37,35 +37,8 @@ type ClusterSpecifier interface {
 
 	// "The plugin will consist of a single method to convert from the TypedConfig
 	// instance to an LB policy configuration, with the ability to signal an error."
-	ParseClusterSpecifierConfig(proto.Message) (BalancerConfig, error)
+	ParseClusterSpecifierConfig(proto.Message) (BalancerConfig, error) // This will call RLS parse whatever
 }
-
-// Do we need a specific one for RLS, or do we just implement a mock one for testing?
-
-// How does this get plumbed in?
-
-
-// "The xDS client will inspect all elements of the cluster_specifier_plugins field, looking up a plugin
-// based on the extension.typed_config of each. If no plugin is registered for it, the resource will be NACKED.
-// Like calling into HTTP Filters
-// If a plugin is found, the value of the typed_config field will be passed to its conversion method. If an error is encountered,
-// the resource will be NACKED.
-
-
-// Top level is a []ClusterSpecifierPlugin in RouteConfiguration - in Route Configuration
-// VVV If not in a RouteAction's cluster_specifier_plugin, don't provide it to its consumers (just not providing it, not NACKING it)
-
-
-// ^^^ If not in this, NACK
-// Lower nodes are a name which points to that array ^^^^ in RouteAction
-
-// What is persisted in the xdsclient: map[string]LoadBalancingConfig...where is this persisted
-// So it seems like this is part of route configuration...does the route configuration configure all this stuff
-
-
-// So for the RouteAction, construct a cluster specifier???
-// The end result in the xdsclient is a map from the name of the extension instance
-// to the LB policy which will be used for that instance
 
 var (
 	// m is a map from scheme to filter.
