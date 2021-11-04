@@ -24,7 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/serviceconfig"
+	"google.golang.org/grpc/xds/internal/clusterspecifier"
 	"regexp"
 	"sync"
 	"time"
@@ -262,7 +262,7 @@ type InboundListenerConfig struct {
 type RouteConfigUpdate struct {
 	VirtualHosts []*VirtualHost
 	// ClusterSpecifierPlugins are...
-	ClusterSpecifierPlugins map[string]serviceconfig.LoadBalancingConfig // This scales up the update already present and all the logic is localized, so just scale up the existing tests
+	ClusterSpecifierPlugins map[string]clusterspecifier.BalancerConfig // This scales up the update already present and all the logic is localized, so just scale up the existing tests
 	// Raw is the resource from the xds response.
 	Raw *anypb.Any
 }

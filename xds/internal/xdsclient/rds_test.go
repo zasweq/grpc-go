@@ -19,7 +19,10 @@
 package xdsclient
 
 import (
+	"errors"
 	"fmt"
+	"github.com/golang/protobuf/proto"
+	"google.golang.org/grpc/xds/internal/clusterspecifier"
 	"regexp"
 	"testing"
 	"time"
@@ -72,7 +75,7 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			var rs []*v3routepb.Route
 
 			for i, cspReference := range cspReferences {
-				rs := append(rs, &v3routepb.Route{
+				rs = append(rs, &v3routepb.Route{
 					Match: &v3routepb.RouteMatch{PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: string(i + 1)}},
 					Action: &v3routepb.Route_Route{
 						Route: &v3routepb.RouteAction{
@@ -105,6 +108,23 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 					}},
 					HTTPFilterConfigOverride: cfgs,
 				}},
+			}
+		}
+		// Switch this to var later
+		goodUpdateWithClusterSpecifierPlugins = func() RouteConfigUpdate { // Fixed at just cspA
+			// Same thing without WeightedClusters
+			return RouteConfigUpdate{
+				VirtualHosts: []*VirtualHost{{
+					Domains: []string{ldsTarget},
+					Routes: []*Route{{
+						Prefix: newStringP("1"),
+						RouteAction: RouteActionRoute,
+					}},
+				}},
+				ClusterSpecifierPlugins: map[string]clusterspecifier.BalancerConfig{
+					"cspA": nil,
+					// If you want variablility it will be here
+				},/*map[cspA]nil*/
 			}
 		}
 		goodRouteConfigWithRetryPolicy = func(vhrp *v3routepb.RetryPolicy, rrp *v3routepb.RetryPolicy) *v3routepb.RouteConfiguration {
@@ -153,13 +173,12 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 
 		// good update with knobs on top level cluster specifier plugins, but route actions need to be knobs as well since they refer
 		// API: ([]ClusterSpecifierPlugin{{name, config}, {name, config}} <- puts in top level, []name <- iterates through this, builds it dynamically based on length)
-		goodUpdateWithClusterSpecifierPlugins = func(csps []*v3routepb.ClusterSpecifierPlugin, cspReferences []string) RouteConfigUpdate {
+		/*goodUpdateWithClusterSpecifierPlugins = func(csps []*v3routepb.ClusterSpecifierPlugin, cspReferences []string) RouteConfigUpdate {
 			rcu := RouteConfigUpdate{
 
 			}
 			// Loop through cspReferences, build out routes, prefix needs to be variable as well
-		}
-	}
+		}*/
 
 		// Update you just specify manually
 	)
@@ -618,19 +637,41 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 		// No plugin is registered (NACKED)
 		{
 			name: "cluster-specifier-declared-which-not-present",
-			rc: , // A resource which wouldn't usually get NACKED outside of the route specifier not present.
+			rc: goodRouteConfigWithClusterSpecifierPlugins([]*v3routepb.ClusterSpecifierPlugin{
+				{
+					Extension: &v3corepb.TypedExtensionConfig{
+						Name: "cspA",
+						TypedConfig: configOfClusterSpecifierDoesntExist,
+					},
+				},
+			}, []string{"cspA"}), // A resource which wouldn't usually get NACKED outside of the route specifier not present.
 			wantError: true,
 		},
 		// NACK - If a plugin is found, if an error is encountered in cluster specifier plugin conversion method (need a mock cluster specifier and also need to register this mock cluster specifier)
 		{
 			name: "error-in-cluster-specifier-plugin",
-			rc: ,
-			wantError: true,
+			rc: goodRouteConfigWithClusterSpecifierPlugins([]*v3routepb.ClusterSpecifierPlugin{
+				{
+					Extension: &v3corepb.TypedExtensionConfig{
+						Name: "cspA",
+						TypedConfig: errorClusterSpecifierConfig,
+					},
+				},
+			}, []string{"cspA"}),
+			wantError: true, // How to check which error is being returned
 		},
 		// NACK - If an individual route action references a cluster specifier that isn't in top level cluster specifier.
+		// A, AB
 		{
 			name: "route-with-undeclared-cluster-specifier-plugin",
-			rc: ,
+			rc: goodRouteConfigWithClusterSpecifierPlugins([]*v3routepb.ClusterSpecifierPlugin{
+				{
+					Extension: &v3corepb.TypedExtensionConfig{
+						Name: "cspA",
+						TypedConfig: mockClusterSpecifierConfig,
+					},
+				},
+			}, []string{"cspA", "cspB"}),
 			wantError: true,
 		},
 
@@ -639,20 +680,49 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 		// Successful codepaths:
 
 		// Normal map provided to xdsclient's consumers
+		// A, A
 		{
 			name: "emitted-cluster-specifier-plugins",
-
+			rc: goodRouteConfigWithClusterSpecifierPlugins([]*v3routepb.ClusterSpecifierPlugin{
+				{
+					Extension: &v3corepb.TypedExtensionConfig{
+						Name: "cspA",
+						TypedConfig: mockClusterSpecifierConfig,
+					},
+				},
+			}, []string{"cspA"}),
+			wantUpdate: goodUpdateWithClusterSpecifierPlugins(), // Same as below - Can declare a var up ^^^
 		},
 
+		// cspB should be kept from the xdsclient update due to this line from
+		// RLS in xDS design doc: "For any entry in the
+		// RouteConfiguration.cluster_specifier_plugins not referenced by an
+		// enclosed RouteAction's cluster_specifier_plugin, the xDS client
+		// should not provide it to its consumers."
+
 		// A map with deleted entries due to being present in route action
-		// ABC, AB
+		// AB, A
 		{
 			name: "deleted-cluster-specifier-plugins-not-referenced",
-			rc: ,
-			wantUpdate: ,
+			rc: goodRouteConfigWithClusterSpecifierPlugins([]*v3routepb.ClusterSpecifierPlugin{
+				{
+					Extension: &v3corepb.TypedExtensionConfig{
+						Name: "cspA",
+						TypedConfig: mockClusterSpecifierConfig,
+					},
+				},
+				{
+					Extension: &v3corepb.TypedExtensionConfig{
+						Name: "cspB",
+						TypedConfig: mockClusterSpecifierConfig,
+					},
+				},
+			}, []string{"cspA"}),
+			wantUpdate: goodUpdateWithClusterSpecifierPlugins(),
 		},
 
 	}
+	// Get this to compile and run
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			gotUpdate, gotError := generateRDSUpdateFromRouteConfiguration(test.rc, nil, false)
@@ -667,7 +737,49 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 	}
 }
 
+var configOfClusterSpecifierDoesntExist = &anypb.Any{
+	TypeUrl: "does.not.exist",
+	Value: []byte{1, 2, 3},
+}
+
+var mockClusterSpecifierConfig = &anypb.Any{
+	TypeUrl: "mock.cluster.specifier.plugin",
+	Value: []byte{1, 2, 3},// Will get taken and passed to proto, will be a no op though
+}
+
+var errorClusterSpecifierConfig = &anypb.Any{
+	TypeUrl: "error.cluster.specifier.plugin",
+	Value: []byte{1, 2, 3},
+}
+
+func init() {
+	clusterspecifier.Register(mockClusterSpecifierPlugin{})
+	clusterspecifier.Register(errorClusterSpecifierPlugin{})
+}
+
 // Mock cluster specifier here, see mock HTTP Filters for guidance
+type mockClusterSpecifierPlugin struct {
+}
+
+func (mockClusterSpecifierPlugin) TypeURLs() []string { return []string{"mock.cluster.specifier.plugin"} }
+
+// Need an error cluster specifier plugin
+func (mockClusterSpecifierPlugin) ParseClusterSpecifierConfig(proto.Message) (clusterspecifier.BalancerConfig, error) {
+	// Spits out a config - this will get persisted in xdsclients emission,
+	// Json config
+	return nil, nil // Map will just have nil value, just test the emitted update as nil
+}
+
+
+// Error Cluster Specifier Plugin here - error returned from parser, should NACK all the way up
+type errorClusterSpecifierPlugin struct {}
+
+func (errorClusterSpecifierPlugin) TypeURLs() []string { return []string{"error.cluster.specifier.plugin"} }
+
+func (errorClusterSpecifierPlugin) ParseClusterSpecifierConfig(proto.Message) (clusterspecifier.BalancerConfig, error) {
+	return nil, errors.New("error from cluster specifier conversion function")
+}
+
 
 func (s) TestUnmarshalRouteConfig(t *testing.T) {
 	const (
