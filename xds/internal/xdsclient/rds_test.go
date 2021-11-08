@@ -535,6 +535,11 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			wantUpdate: goodUpdateWithFilterConfigs(nil),
 		},
 		{
+			name: "good-route-config-with-bad-rbac-http-filter-configuration",
+			rc: , // After LDS response, take the bad rbac config, and put it here in RDS response
+			wantError: true,
+		},
+		{
 			name: "good-route-config-with-retry-policy",
 			rc: goodRouteConfigWithRetryPolicy(
 				&v3routepb.RetryPolicy{RetryOn: "cancelled"},

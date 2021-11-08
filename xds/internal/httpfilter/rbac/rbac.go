@@ -64,7 +64,8 @@ type builder struct {
 
 type config struct {
 	httpfilter.FilterConfig
-	config *rpb.RBAC
+	config *rpb.RBAC // Keep for validation reasons
+	ce *rbac.ChainEngine
 }
 
 func (builder) TypeURLs() []string {
@@ -105,8 +106,51 @@ func parseConfig(rbacCfg *rpb.RBAC) (httpfilter.FilterConfig, error) {
 				}
 			}
 		}
+		// Add validations here...?
 	}
-	return config{config: rbacCfg}, nil
+
+	// Constructing the chain engines, which also serves the function of validating
+	// (validating + constructing)
+	ce, err := rbac.NewChainEngine([]*v3rbacpb.RBAC{rbacCfg.Rules})
+	if err != nil {
+		// Eventually NACK's the config.
+		return nil, fmt.Errorf("rbac: error constructing matching engine: %v", err)
+	}
+
+	// ^^^ biggest difference, errors come from NACK now, now from filter construction
+
+	// Main test you need to do is e2e test, and make sure the error arises from NACKing
+
+	// TODO when get back: find an e2e test (or a unit test) that makes sure the resource gets NACKed. I think e2e would make the most sense.
+
+
+
+	// "Envoy aliases :authority and Host in its header map implementation, so
+	// they should be treated equivalent for the RBAC matchers; there must be no
+	// behavior change depending on which of the two header names is used in the
+	// RBAC policy." - A41. Loop through config's principals and policies, change
+	// any header matcher with value "host" to :authority", as that is what
+	// grpc-go shifts both headers to in transport layer.
+	for _, policy := range rbacCfg.Rules.GetPolicies() {
+		for _, principal := range policy.Principals {
+			if principal.GetHeader() != nil {
+				name := principal.GetHeader().GetName()
+				if name == "host" {
+					principal.GetHeader().Name = ":authority"
+				}
+			}
+		}
+		for _, permission := range policy.Permissions {
+			if permission.GetHeader() != nil {
+				name := permission.GetHeader().GetName()
+				if name == "host" {
+					permission.GetHeader().Name = ":authority"
+				}
+			}
+		}
+	}
+
+	return config{config: rbacCfg, ce: ce}, nil
 }
 
 func (builder) ParseFilterConfig(cfg proto.Message) (httpfilter.FilterConfig, error) {
@@ -166,6 +210,12 @@ func (builder) BuildServerInterceptor(cfg httpfilter.FilterConfig, override http
 		}
 	}
 
+
+
+
+
+
+	// These two code blocks just return nil so can check the config
 	icfg := c.config
 	// "If absent, no enforcing RBAC policy will be applied" - RBAC
 	// Documentation for Rules field.
@@ -179,13 +229,18 @@ func (builder) BuildServerInterceptor(cfg httpfilter.FilterConfig, override http
 		return nil, nil
 	}
 
+
+
+	// VVV this block of code needs to get moved up, as this changes the config
+	// which would then change the chain engine created from the config.
+
 	// "Envoy aliases :authority and Host in its header map implementation, so
 	// they should be treated equivalent for the RBAC matchers; there must be no
 	// behavior change depending on which of the two header names is used in the
 	// RBAC policy." - A41. Loop through config's principals and policies, change
 	// any header matcher with value "host" to :authority", as that is what
 	// grpc-go shifts both headers to in transport layer.
-	for _, policy := range icfg.Rules.GetPolicies() {
+	/*for _, policy := range icfg.Rules.GetPolicies() {
 		for _, principal := range policy.Principals {
 			if principal.GetHeader() != nil {
 				name := principal.GetHeader().GetName()
@@ -202,13 +257,18 @@ func (builder) BuildServerInterceptor(cfg httpfilter.FilterConfig, override http
 				}
 			}
 		}
-	}
+	}*/ // What do we do about these code blocks ^^^?
 
-	ce, err := rbac.NewChainEngine([]*v3rbacpb.RBAC{icfg.Rules})
-	if err != nil {
+
+
+
+
+
+	/*ce, err := rbac.NewChainEngine([]*v3rbacpb.RBAC{icfg.Rules})
+	if err != nil { // All Eric is saying is add this validation to the top
 		return nil, fmt.Errorf("error constructing matching engine: %v", err)
-	}
-	return &interceptor{chainEngine: ce}, nil
+	}*/
+	return &interceptor{chainEngine: c.ce}, nil // Put the interceptor here
 }
 
 type interceptor struct {

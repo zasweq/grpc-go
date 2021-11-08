@@ -20,6 +20,7 @@ package xdsclient
 
 import (
 	"fmt"
+	envoy_config_rbac_v3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/internal/xds/env"
 	"google.golang.org/grpc/xds/internal/httpfilter"
+	_ "google.golang.org/grpc/xds/internal/httpfilter/rbac"
 	_ "google.golang.org/grpc/xds/internal/httpfilter/router"
 	"google.golang.org/grpc/xds/internal/testutils/e2e"
 	"google.golang.org/grpc/xds/internal/version"
@@ -44,6 +46,7 @@ import (
 	v2listenerpb "github.com/envoyproxy/go-control-plane/envoy/config/listener/v2"
 	v3listenerpb "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	v3rbacpb "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	v3httppb "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	v3tlspb "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	anypb "github.com/golang/protobuf/ptypes/any"
@@ -584,7 +587,7 @@ func (s) TestUnmarshalListener_ClientSide(t *testing.T) {
 		// or zero and HttpConnectionManager.original_ip_detection_extensions
 		// must be empty." - A41
 		{
-			name:      "rbac-allow-equating-direct-remote-ip-and-remote-ip-valid",
+			name:      "rbac-allow-equating-direct-remote-ip-and-remote-ip-valid", // Why do I have these client side at all? These should all get NACKED because these filters aren't supported client side?
 			resources: []*anypb.Any{v3LisToTestRBAC(0, nil)},
 			wantUpdate: map[string]ListenerUpdateErrTuple{
 				v3LDSTarget: {Update: ListenerUpdate{
@@ -991,6 +994,58 @@ func (s) TestUnmarshalListener_ServerSide(t *testing.T) {
 			},
 		})
 	}
+	// rbacCfg needs a bad regex in it...see what errors in unit tests and put it there
+	v3LisWithBadRBACConfigurationTopLevel := func(rbacCfg *v3rbacpb.RBAC) *anypb.Any {
+		return testutils.MarshalAny(&v3listenerpb.Listener{
+			Name:    v3LDSTarget,
+			Address: localSocketAddress,
+			FilterChains: []*v3listenerpb.FilterChain{
+				{
+					Name: "filter-chain-1",
+					Filters: []*v3listenerpb.Filter{
+						{
+							Name: "filter-1",
+							ConfigType: &v3listenerpb.Filter_TypedConfig{
+								TypedConfig: testutils.MarshalAny(&v3httppb.HttpConnectionManager{
+									RouteSpecifier: &v3httppb.HttpConnectionManager_RouteConfig{ // Both test top level and that in RouteSpecifier
+										RouteConfig: routeConfig,
+									},
+									HttpFilters:                   []*v3httppb.HttpFilter{e2e.HTTPFilter("rbac", rbacCfg), e2e.RouterHTTPFilter}, // This needs an RBAC Filter
+								}),
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	v3LisWithBadRBACConfigurationRouteLevel := func(rbacCfg *v3rbacpb.RBAC) *anypb.Any {
+		// Take RBAC Config, valid top level, invalid at route level, or do we test this at Route level granularity?
+		return testutils.MarshalAny(&v3listenerpb.Listener{
+			Name:    v3LDSTarget,
+			Address: localSocketAddress,
+			FilterChains: []*v3listenerpb.FilterChain{
+				{
+					Name: "filter-chain-1",
+					Filters: []*v3listenerpb.Filter{
+						{
+							Name: "filter-1",
+							ConfigType: &v3listenerpb.Filter_TypedConfig{
+								TypedConfig: testutils.MarshalAny(&v3httppb.HttpConnectionManager{
+									RouteSpecifier: &v3httppb.HttpConnectionManager_RouteConfig{ // Both test top level and that in RouteSpecifier
+										RouteConfig: routeConfig,
+									},
+									HttpFilters:                   []*v3httppb.HttpFilter{e2e.HTTPFilter("rbac", rbacCfg), e2e.RouterHTTPFilter}, // This needs an RBAC Filter
+								}),
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
 
 	tests := []struct {
 		name       string
@@ -1441,11 +1496,43 @@ func (s) TestUnmarshalListener_ServerSide(t *testing.T) {
 		},
 		{
 			name:       "rbac-allow-equating-direct-remote-ip-and-remote-ip-invalid-original-ip-detection-extension",
-			resources:  []*anypb.Any{v3LisToTestRBAC(0, []*v3corepb.TypedExtensionConfig{{Name: "something"}})},
+			resources:  []*anypb.Any{v3LisToTestRBAC(0, []*v3corepb.TypedExtensionConfig{{Name: "something"}})}, // Will need to scale up this API
 			wantUpdate: map[string]ListenerUpdateErrTuple{v3LDSTarget: {Err: cmpopts.AnyError}},
 			wantMD:     errMD,
 			wantErr:    "original_ip_detection_extensions must be empty",
 		},
+		// Maybe fix the client side one as well?
+		// RBAC with an invalid Regex
+		{
+			name: "rbac-with-invalid-regex",
+			resources: []*anypb.Any{v3LisWithBadRBACConfigurationTopLevel(/*RBAC Configuration*/)},
+			wantUpdate: map[string]ListenerUpdateErrTuple{v3LDSTarget: {Err: cmpopts.AnyError}},
+			wantMD: errMD,
+			wantErr: /**/,
+		},
+		// RBAC with another problem? I think do it! Test this first before filling in regex above
+		{
+			name: "rbac-with-invalid-destination-ip-matcher",
+			resources: []*anypb.Any{v3LisWithBadRBACConfigurationTopLevel(&v3rbacpb.RBAC{
+				Rules: &envoy_config_rbac_v3.RBAC{
+					Action: envoy_config_rbac_v3.RBAC_ALLOW,
+					Policies: map[string]*envoy_config_rbac_v3.Policy{
+						"certain-destination-ip": {
+							Permissions: []*envoy_config_rbac_v3.Permission{
+								{Rule: &envoy_config_rbac_v3.Permission_DestinationIp{DestinationIp: &v3corepb.CidrRange{AddressPrefix: "not a correct address", PrefixLen: &wrapperspb.UInt32Value{Value: uint32(10)}}}},
+							},
+							Principals: []*envoy_config_rbac_v3.Principal{
+								{Identifier: &envoy_config_rbac_v3.Principal_Any{Any: true}},
+							},
+						},
+					},
+				},
+			})},
+			wantUpdate: map[string]ListenerUpdateErrTuple{v3LDSTarget: {Err: cmpopts.AnyError}},
+			wantMD: errMD,
+			wantErr: /*HTTP Filter error*/,
+		}, // Try this first
+		// I need to rebase all of this onto master
 		{
 			name: "unsupported validation context in transport socket",
 			resources: []*anypb.Any{testutils.MarshalAny(&v3listenerpb.Listener{
