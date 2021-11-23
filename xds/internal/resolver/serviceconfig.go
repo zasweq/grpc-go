@@ -86,13 +86,13 @@ func (r *xdsResolver) pruneActiveClusters() {
 // serviceConfigJSON produces a service config in JSON format representing all
 // the clusters referenced in activeClusters.  This includes clusters with zero
 // references, so they must be pruned first.
-func serviceConfigJSON(activeClusters map[string]*clusterInfo, clusterSpecifierPlugins map[string]clusterspecifier.BalancerConfig) ([]byte, error) {
+func serviceConfigJSON(activeClusters map[string]*clusterInfo, clusterSpecifierPlugins map[string]clusterspecifier.BalancerConfig) ([]byte, error) { // clusterSpecifierPlugins comes in from xds...
 	// Generate children (all entries in activeClusters).
 	children := make(map[string]xdsChildConfig)
 	for cluster := range activeClusters {
 		// Look into cluster specifier plugins, which hasn't had any prefix attached to it's cluster specifier plugin names,
 		// to determine the LB Config if the cluster is a CSP.
-		cspCfg, ok := clusterSpecifierPlugins[strings.TrimPrefix(cluster, clusterSpecifierPluginPrefix)]
+		cspCfg, ok := clusterSpecifierPlugins[strings.TrimPrefix(cluster, clusterSpecifierPluginPrefix)] // Won't have this on a new xds update, need to persist like active clusters, remember config from previous update, an rpc needs to complete on it
 		if ok {
 			children[cluster] = xdsChildConfig{
 				ChildPolicy: balancerConfig(cspCfg),
@@ -101,7 +101,7 @@ func serviceConfigJSON(activeClusters map[string]*clusterInfo, clusterSpecifierP
 			// Will now have "cluster:" prefixing the cluster name...CDS policy
 			// will now have to trim this off when it queries CDS.
 			children[cluster] = xdsChildConfig{
-				ChildPolicy: newBalancerConfig(cdsName, cdsBalancerConfig{Cluster: cluster}),
+				ChildPolicy: newBalancerConfig(cdsName, cdsBalancerConfig{Cluster: cluster}), // trim it here
 			}
 		}
 	}
@@ -118,6 +118,11 @@ func serviceConfigJSON(activeClusters map[string]*clusterInfo, clusterSpecifierP
 	}
 	return bs, nil
 }
+
+// Three things all related to this function:
+// 1. Trim the name of cluster: from the child configuration (fix this + tests) first
+// 2. Correctness issue in branching to determine if cluster specifier plugin or not (but theoretically, if a cluster has that prefix, what then?)
+// 3. (the hardest, by far) - need to persist all the clusters that an RPC is using before getting a new config, UNTIL AN RPC IS COMPLETE, parallel tests already in codebase
 
 type virtualHost struct {
 	// map from filter name to its config

@@ -20,6 +20,7 @@ package xdsresource
 import (
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/xds/internal/clusterspecifier/rls"
 	"regexp"
 	"testing"
 	"time"
@@ -123,6 +124,31 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 				"cspA": nil,
 			},
 		}
+		/*goodUpdateWithRLSClusterSpecifierPlugin = RouteConfigUpdate{
+			VirtualHosts: []*VirtualHost{{
+				Domains: []string{ldsTarget},
+				Routes: []*Route{{
+					Prefix:                 newStringP("1"),
+					ActionType:             RouteActionRoute,
+					ClusterSpecifierPlugin: "rlscsp",
+				}},
+			}},
+			ClusterSpecifierPlugins: map[string]clusterspecifier.BalancerConfig{
+				"rlscsp": []map[string]interface{}{{"rls_experimental": nil/*interface{} - where interface is a struct containing those three fields}}, // Two ways this is done in serviceconfig.go: balancerConfig(cspCfg), newBalancerConfig(cdsName, cdsBalancerConfig{Cluster: cluster})
+				// []map[string]interface{}
+				// [{
+				//  "rls_experimental": {
+				//    // this config is now hardcoded to only have one part of service
+				//    LookupService: "rls-specifier",
+				//    "routeLookupConfig": <JSON form of RouteLookupClusterSpecifier.config>, (Has a knob based on the config specified)
+				//    "childPolicy": [ (Hardcoded)
+				//      {"cds_experimental": {}}
+				//    ],
+				//    "childPolicyConfigTargetFieldName": "cluster" (Hardcoded)
+				//  },
+				// }]
+			},
+		}*/
 		clusterSpecifierPlugin = func(name string, config *anypb.Any) *v3routepb.ClusterSpecifierPlugin {
 			return &v3routepb.ClusterSpecifierPlugin{
 				Extension: &v3corepb.TypedExtensionConfig{
@@ -671,10 +697,30 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			}, []string{"cspA"}),
 			wantUpdate: goodUpdateWithClusterSpecifierPluginA,
 		},
+		// Error in RLS (maybe mismatched proto messages - doesn't marshal correctly) - I don't even know if you can induce this error path
+		/*{
+			name: "error-in-rls-cluster-specifier-plugin",
+			rc: goodRouteConfigWithClusterSpecifierPlugins([]*v3routepb.ClusterSpecifierPlugin{
+				clusterSpecifierPlugin("rlscsp", /*config you can have knobs over for rls - have this fail - unmatched protos?),
+			}, []string{"rlscsp"}),
+			wantError: true,
+		},*/
+		// Successful RLS case - map with []map[string]interface{} (<- has a lot of steps to get here) as the value of it
+		{
+			name: "successful-rls-cluster-specifier-plugin",
+			rc: goodRouteConfigWithClusterSpecifierPlugins([]*v3routepb.ClusterSpecifierPlugin{
+				clusterSpecifierPlugin("rlscsp", rlsClusterSpecifierConfig),
+			}, []string{"rlscsp"}),
+			// wantUpdate: goodUpdateWithRLSClusterSpecifierPlugin,
+			wantError: true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			gotUpdate, gotError := generateRDSUpdateFromRouteConfiguration(test.rc, nil, false)
+			if gotError != nil {
+				print("GOT ERROR: %v", gotError.Error())
+			}
 			if (gotError != nil) != test.wantError ||
 				!cmp.Equal(gotUpdate, test.wantUpdate, cmpopts.EquateEmpty(),
 					cmp.Transformer("FilterConfig", func(fc httpfilter.FilterConfig) string {
@@ -726,6 +772,30 @@ func (errorClusterSpecifierPlugin) TypeURLs() []string {
 func (errorClusterSpecifierPlugin) ParseClusterSpecifierConfig(proto.Message) (clusterspecifier.BalancerConfig, error) {
 	return nil, errors.New("error from cluster specifier conversion function")
 }
+
+// Skip the validation section...and see what you receive from the []map[string]interface{}
+
+/*var rlsClusterSpecifierConfig = &anypb.Any{
+	TypeUrl: "error.cluster.specifier.plugin",
+	Value:   []byte{1, 2, 3}, // <- need knobs on this
+}*/ // <- helper function MarshalAny()?...if you marshal you can also see if it really matches the type, it'll also show it in test log
+
+var rlsClusterSpecifierConfig = testutils.MarshalAny(&rls.RouteLookupClusterSpecifier{
+	// Or fields that would pass validation...but Easwar is rewriting lots of code
+	RouteLookupConfig: &rls.RouteLookupConfig{
+		LookupService: "rls-specifier",
+	},
+})
+
+// []map[string]interface{}...what do we want this to be? We have those three fields
+
+// Now we have RLS Cluster Specifier Plugin
+
+// TypeUrls() - can hardcode this - or see if what you marshal is correct
+
+// ParseCLusterSpecifierConfig - unmarshals into rls config, makes json, validates, etc.
+
+// Circular dependency if I import?
 
 func (s) TestUnmarshalRouteConfig(t *testing.T) {
 	const (

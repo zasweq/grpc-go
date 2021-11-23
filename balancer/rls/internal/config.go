@@ -123,6 +123,7 @@ type lbConfigJSON struct {
 //   - must be set and non-empty
 func (*rlsBB) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	cfgJSON := &lbConfigJSON{}
+	// 01010101 -> Golang representation of JSON - no unmarshaler interface so follows rules
 	if err := json.Unmarshal(c, cfgJSON); err != nil {
 		return nil, fmt.Errorf("rls: json unmarshal failed for service config {%+v}: %v", string(c), err)
 	}
@@ -130,7 +131,8 @@ func (*rlsBB) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig,
 	// Unmarshal and validate contents of the RLS proto.
 	m := jsonpb.Unmarshaler{AllowUnknownFields: true}
 	rlsProto := &rlspb.RouteLookupConfig{}
-	if err := m.Unmarshal(bytes.NewReader(cfgJSON.RouteLookupConfig), rlsProto); err != nil {
+	// Still cfgJSON.01010101
+	if err := m.Unmarshal(bytes.NewReader(cfgJSON.RouteLookupConfig), rlsProto); err != nil { // Why not protojson? Maybe ping Easwar about this
 		return nil, fmt.Errorf("rls: bad RouteLookupConfig proto {%+v}: %v", string(cfgJSON.RouteLookupConfig), err)
 	}
 	lbCfg, err := parseRLSProto(rlsProto)
