@@ -18,7 +18,6 @@
 package xdsresource
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -30,10 +29,8 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/internal/envconfig"
-	"google.golang.org/grpc/internal/proto/grpc_lookup_v1"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/xds/internal/clusterspecifier"
-	"google.golang.org/grpc/xds/internal/clusterspecifier/rls"
 	"google.golang.org/grpc/xds/internal/httpfilter"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -125,28 +122,6 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			ClusterSpecifierPlugins: map[string]clusterspecifier.BalancerConfig{
 				"cspA": nil,
 			},
-		}
-		goodUpdateWithRLSClusterSpecifierPlugin = func() RouteConfigUpdate {
-			rlcJSON, _ := json.Marshal(&grpc_lookup_v1.RouteLookupConfig{
-				LookupService: "rls-specifier",
-			})
-			return RouteConfigUpdate{
-				VirtualHosts: []*VirtualHost{{
-					Domains: []string{ldsTarget},
-					Routes: []*Route{{
-						Prefix:                 newStringP("1"),
-						ActionType:             RouteActionRoute,
-						ClusterSpecifierPlugin: "rlscsp",
-					}},
-				}},
-				ClusterSpecifierPlugins: map[string]clusterspecifier.BalancerConfig{
-					"rlscsp": []map[string]interface{}{{"rls_experimental": &rls.LBConfigJSON{
-						RouteLookupConfig:                rlcJSON,
-						ChildPolicy:                      []map[string]interface{}{{"cds_experimental": struct{}{}}},
-						ChildPolicyConfigTargetFieldName: "cluster",
-					}}},
-				},
-			}
 		}
 		clusterSpecifierPlugin = func(name string, config *anypb.Any) *v3routepb.ClusterSpecifierPlugin {
 			return &v3routepb.ClusterSpecifierPlugin{
@@ -696,13 +671,6 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			}, []string{"cspA"}),
 			wantUpdate: goodUpdateWithClusterSpecifierPluginA,
 		},
-		{
-			name: "successful-rls-cluster-specifier-plugin",
-			rc: goodRouteConfigWithClusterSpecifierPlugins([]*v3routepb.ClusterSpecifierPlugin{
-				clusterSpecifierPlugin("rlscsp", rlsClusterSpecifierConfig),
-			}, []string{"rlscsp"}),
-			wantUpdate: goodUpdateWithRLSClusterSpecifierPlugin(),
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -758,15 +726,6 @@ func (errorClusterSpecifierPlugin) TypeURLs() []string {
 func (errorClusterSpecifierPlugin) ParseClusterSpecifierConfig(proto.Message) (clusterspecifier.BalancerConfig, error) {
 	return nil, errors.New("error from cluster specifier conversion function")
 }
-
-var rlsClusterSpecifierConfig = testutils.MarshalAny(&grpc_lookup_v1.RouteLookupClusterSpecifier{
-	// Once Easwar merges the RLS LB implementation and the rls csp actually
-	// calls into it for validation, this config will have to be scaled up to
-	// pass the validations present in the RLS LB implementation.
-	RouteLookupConfig: &grpc_lookup_v1.RouteLookupConfig{
-		LookupService: "rls-specifier",
-	},
-})
 
 func (s) TestUnmarshalRouteConfig(t *testing.T) {
 	const (
