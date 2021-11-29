@@ -18,7 +18,6 @@
 package xdsresource
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -36,6 +35,7 @@ import (
 	"google.golang.org/grpc/xds/internal/clusterspecifier/rls"
 	"google.golang.org/grpc/xds/internal/httpfilter"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	v2xdspb "github.com/envoyproxy/go-control-plane/envoy/api/v2"
@@ -127,7 +127,7 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 			},
 		}
 		goodUpdateWithRLSClusterSpecifierPlugin = func() RouteConfigUpdate {
-			rlcJSON, _ := json.Marshal(&grpc_lookup_v1.RouteLookupConfig{
+			rlcJSON, _ := protojson.Marshal(&grpc_lookup_v1.RouteLookupConfig{
 				LookupService: "rls-specifier",
 			})
 			return RouteConfigUpdate{
@@ -140,9 +140,9 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 					}},
 				}},
 				ClusterSpecifierPlugins: map[string]clusterspecifier.BalancerConfig{
-					"rlscsp": []map[string]interface{}{{"rls_experimental": &rls.LBConfigJSON{
+					"rlscsp": []map[string]interface{}{{"rls_experimental": &rls.LBConfigJSON{ // Switch []map[string]interface{} to lbConfig
 						RouteLookupConfig:                rlcJSON,
-						ChildPolicy:                      []map[string]interface{}{{"cds_experimental": struct{}{}}},
+						ChildPolicy:                      []map[string]interface{}{{"cds_experimental": nil}},
 						ChildPolicyConfigTargetFieldName: "cluster",
 					}}},
 				},
@@ -758,6 +758,13 @@ func (errorClusterSpecifierPlugin) TypeURLs() []string {
 func (errorClusterSpecifierPlugin) ParseClusterSpecifierConfig(proto.Message) (clusterspecifier.BalancerConfig, error) {
 	return nil, errors.New("error from cluster specifier conversion function")
 }
+
+// DOUG COMMENT
+// "I'm not sure this is this is the right way to test this.
+
+// The xdsclient tests shouldn't rely on any specific plugins (seperation of
+// concerns), and the tests fort any specific plugins should not be done in the xdsclient tests.
+// the rls plugin's tests should be done in xds/internal/clusterspecifier/rls.
 
 var rlsClusterSpecifierConfig = testutils.MarshalAny(&grpc_lookup_v1.RouteLookupClusterSpecifier{
 	// Once Easwar merges the RLS LB implementation and the rls csp actually

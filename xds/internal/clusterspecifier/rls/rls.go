@@ -27,6 +27,7 @@ import (
 	"github.com/golang/protobuf/ptypes"
 	"google.golang.org/grpc/internal/proto/grpc_lookup_v1"
 	"google.golang.org/grpc/xds/internal/clusterspecifier"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -43,12 +44,15 @@ func (rls) TypeURLs() []string {
 // LBConfigJSON is the RLS LB Policies configuration in JSON format.
 // RouteLookupConfig will be a raw JSON string from the passed in proto
 // configuration, and the other fields will be hardcoded.
+
+// Unexport after seeing if tests pass
 type LBConfigJSON struct {
-	RouteLookupConfig                interface{}              `json:"routeLookupConfig"`
+	RouteLookupConfig                json.RawMessage/*interface{}*/             `json:"routeLookupConfig"`
 	ChildPolicy                      []map[string]interface{} `json:"childPolicy"`
 	ChildPolicyConfigTargetFieldName string                   `json:"childPolicyConfigTargetFieldName"`
 }
 
+// proto message (rls cluster specifier plugin{rls config}) -> RLS Config...{json form of proto (from looking into it)}, childConfigs, childname}
 func (rls) ParseClusterSpecifierConfig(cfg proto.Message) (clusterspecifier.BalancerConfig, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("rls_csp: nil configuration message provided")
@@ -63,8 +67,8 @@ func (rls) ParseClusterSpecifierConfig(cfg proto.Message) (clusterspecifier.Bala
 		return nil, fmt.Errorf("rls_csp: error parsing config %v: %v", cfg, err)
 	}
 	// Do we use protojson or regular marshal function - see if Marshal produces correct results?
-	// rlcJSON, err := protojson.Marshal(rlcs.GetRouteLookupConfig())
-	rlcJSON, err := json.Marshal(rlcs.GetRouteLookupConfig())
+	rlcJSON, err := protojson.Marshal(rlcs.GetRouteLookupConfig())
+	// rlcJSON, err := json.Marshal(rlcs.GetRouteLookupConfig())
 	if err != nil {
 		return nil, fmt.Errorf("rls_csp: error marshaling route lookup config: %v: %v", rlcs.GetRouteLookupConfig(), err)
 	}
@@ -73,7 +77,7 @@ func (rls) ParseClusterSpecifierConfig(cfg proto.Message) (clusterspecifier.Bala
 		RouteLookupConfig: rlcJSON, // "JSON form of RouteLookupClusterSpecifier.config" - RLS in xDS Design Doc
 		ChildPolicy: []map[string]interface{}{
 			{
-				"cds_experimental": struct{}{}, // Is this right? {} in design doc
+				"cds_experimental": nil, // Is this right? {} in design doc
 			},
 		},
 		ChildPolicyConfigTargetFieldName: "cluster",
@@ -91,5 +95,5 @@ func (rls) ParseClusterSpecifierConfig(cfg proto.Message) (clusterspecifier.Bala
 	// return nil, fmt.Errorf("error: %v", err)
 	// }
 
-	return []map[string]interface{}{{"rls_experimental": lbCfgJSON}}, nil
+	return clusterspecifier.BalancerConfig{{"rls_experimental": lbCfgJSON}}, nil
 }
