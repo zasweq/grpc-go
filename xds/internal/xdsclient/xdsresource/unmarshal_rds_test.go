@@ -142,7 +142,7 @@ func (s) TestRDSGenerateRDSUpdateFromRouteConfiguration(t *testing.T) {
 				ClusterSpecifierPlugins: map[string]clusterspecifier.BalancerConfig{
 					"rlscsp": []map[string]interface{}{{"rls_experimental": &rls.LBConfigJSON{ // Switch []map[string]interface{} to lbConfig
 						RouteLookupConfig:                rlcJSON,
-						ChildPolicy:                      []map[string]interface{}{{"cds_experimental": nil}},
+						ChildPolicy:                      []map[string]interface{}{{"cds_experimental": []byte(`{},`)}},
 						ChildPolicyConfigTargetFieldName: "cluster",
 					}}},
 				},

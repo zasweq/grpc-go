@@ -22,6 +22,9 @@ package rls
 import (
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/balancer"
+	_ "google.golang.org/grpc/balancer/rls"
+	_ "google.golang.org/grpc/xds/internal/balancer/cdsbalancer"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -77,7 +80,7 @@ func (rls) ParseClusterSpecifierConfig(cfg proto.Message) (clusterspecifier.Bala
 		RouteLookupConfig: rlcJSON, // "JSON form of RouteLookupClusterSpecifier.config" - RLS in xDS Design Doc
 		ChildPolicy: []map[string]interface{}{
 			{
-				"cds_experimental": nil, // Is this right? {} in design doc
+				"cds_experimental": []byte(`{},`), // Is this right? {} in design doc
 			},
 		},
 		ChildPolicyConfigTargetFieldName: "cluster",
@@ -85,15 +88,23 @@ func (rls) ParseClusterSpecifierConfig(cfg proto.Message) (clusterspecifier.Bala
 
 	// Will be uncommented once RLS LB Policy completed
 
-	// rawJSON, err := json.Marshal(lbCfgJSON)
-	// if err != nil {
-	//	return nil, fmt.Errorf("rls_csp: error marshaling load balancing config %v: %v", lbCfgJSON, err)
-	// }
+	rawJSON, err := json.Marshal(lbCfgJSON) // This stuff might all break too
+	if err != nil {
+		return nil, fmt.Errorf("rls_csp: error marshaling load balancing config %v: %v", lbCfgJSON, err)
+	}
 
-	// _, err := rls.ParseConfig(rawJSON) (will this function need to change its logic at all?)
-	// if err != nil {
-	// return nil, fmt.Errorf("error: %v", err)
-	// }
+	// How do we get this - need to expose this somehow - but use of internal package is not allowed so need to get rid of /internal
+	rlsBB := balancer.Get("rls") // How to actually get this...need to expose and register the balancer
+	if rlsBB == nil {
+		return nil, fmt.Errorf("RLS LB policy not registered")
+	}
+	_, err = rlsBB.(balancer.ConfigParser).ParseConfig(rawJSON)
+	//_, err := ParseConfig(rawJSON) // (will this function need to change its logic at all?)
+	if err != nil {
+		return nil, fmt.Errorf("rls_csp: validation error from rls lb policy parsing %v", err)
+	}
+
+
 
 	return clusterspecifier.BalancerConfig{{"rls_experimental": lbCfgJSON}}, nil
 }
