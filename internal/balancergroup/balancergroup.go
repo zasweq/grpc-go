@@ -30,6 +30,10 @@ import (
 	"google.golang.org/grpc/resolver"
 )
 
+// e2e test for this, Easwar test for fake RLS Server except configured through xDS - can come in a follow up PR
+
+// Making an xds client conn with an xds target fake xds server that gives you configuration for RLS - test comes after RLS is completed
+
 // subBalancerWrapper is used to keep the configurations that will be used to start
 // the underlying balancer. It can be called to start/stop the underlying
 // balancer.
@@ -38,7 +42,7 @@ import (
 // if it exists.
 //
 // TODO: move to a separate file?
-type subBalancerWrapper struct {
+type subBalancerWrapper struct { // What we have currently, do we a. add functionality to this or b. wrap this with a|b
 	// subBalancerWrapper is passed to the sub-balancer as a ClientConn
 	// wrapper, only to keep the state and picker.  When sub-balancer is
 	// restarted while in cache, the picker needs to be resent.
@@ -52,7 +56,7 @@ type subBalancerWrapper struct {
 	group *BalancerGroup
 
 	mu    sync.Mutex
-	state balancer.State
+	state balancer.State // Connectivity state and picker (picks a subconn for an rpc)
 
 	// The static part of sub-balancer. Keeps balancerBuilders and addresses.
 	// To be used when restarting sub-balancer.
@@ -64,19 +68,21 @@ type subBalancerWrapper struct {
 	// and is set to nil at init, so when the balancer is built for the first
 	// time (not a restart), it won't receive an empty update. Note that this
 	// isn't reset to nil when the underlying balancer is closed.
-	ccState *balancer.ClientConnState
+	ccState *balancer.ClientConnState // Persists ccState as well as the other director
 	// The dynamic part of sub-balancer. Only used when balancer group is
 	// started. Gets cleared when sub-balancer is closed.
 	balancer balancer.Balancer
 }
 
 // UpdateState overrides balancer.ClientConn, to keep state and picker.
-func (sbc *subBalancerWrapper) UpdateState(state balancer.State) {
-	sbc.mu.Lock()
-	sbc.state = state
+func (sbc *subBalancerWrapper) UpdateState(state balancer.State) { // Update
+	sbc.mu.Lock() // But this only has one balancer it holds onto
+	sbc.state = state // Just persists it
 	sbc.group.updateBalancerState(sbc.id, state)
 	sbc.mu.Unlock()
 }
+
+// Wrapper - direct child of xds_cluster_manager...can we wrap this subbalancer wrapper itself? What is the functionality of this balancer wrapper?
 
 // NewSubConn overrides balancer.ClientConn, so balancer group can keep track of
 // the relation between subconns and sub-balancers.
@@ -93,11 +99,11 @@ func (sbc *subBalancerWrapper) updateBalancerStateWithCachedPicker() {
 }
 
 func (sbc *subBalancerWrapper) startBalancer() {
-	b := sbc.builder.Build(sbc, sbc.buildOpts)
+	b := sbc.builder.Build(sbc, sbc.buildOpts) // sbc is the client conn, so this is how it talks backward towards it (subconn -> balancer -> client conn)
 	sbc.group.logger.Infof("Created child policy %p of type %v", b, sbc.builder.Name())
 	sbc.balancer = b
 	if sbc.ccState != nil {
-		b.UpdateClientConnState(*sbc.ccState)
+		b.UpdateClientConnState(*sbc.ccState) // Using the balancer API, updates the balancer that this holds onto
 	}
 }
 
@@ -130,7 +136,7 @@ func (sbc *subBalancerWrapper) updateSubConnState(sc balancer.SubConn, state bal
 }
 
 func (sbc *subBalancerWrapper) updateClientConnState(s balancer.ClientConnState) error {
-	sbc.ccState = &s
+	sbc.ccState = &s // Persists state
 	b := sbc.balancer
 	if b == nil {
 		// This sub-balancer was closed. This should never happen because
@@ -294,7 +300,7 @@ func (bg *BalancerGroup) Add(id string, builder balancer.Builder) {
 	// If outgoingStarted is true, search in the cache. Otherwise, cache is
 	// guaranteed to be empty, searching is unnecessary.
 	if bg.outgoingStarted {
-		if old, ok := bg.balancerCache.Remove(id); ok {
+		if old, ok := bg.balancerCache.Remove(id); ok { // On new children that come in
 			sbc, _ = old.(*subBalancerWrapper)
 			if sbc != nil && sbc.builder != builder {
 				// If the sub-balancer in cache was built with a different
@@ -315,9 +321,9 @@ func (bg *BalancerGroup) Add(id string, builder balancer.Builder) {
 	if sbc == nil {
 		sbc = &subBalancerWrapper{
 			ClientConn: bg.cc,
-			id:         id,
+			id:         id, // name
 			group:      bg,
-			builder:    builder,
+			builder:    builder, // builder from the registered builders in balancer
 			buildOpts:  bg.buildOpts,
 		}
 		if bg.outgoingStarted {
@@ -389,7 +395,10 @@ func (bg *BalancerGroup) cleanupSubConns(config *subBalancerWrapper) {
 // corresponding balancer and forwards the update.
 func (bg *BalancerGroup) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
 	bg.incomingMu.Lock()
-	config, ok := bg.scToSubBalancer[sc]
+	config, ok := bg.scToSubBalancer[sc] // subconn to subbalancer
+	// "name:a" will link to a, and "name:b" will link to b
+	// name is constant in my specific case, so don't need name:subbalancer
+	// (name:a): a (b c), (name:b) d (e f) <- b and c will link to a, e and f will link to d
 	if !ok {
 		bg.incomingMu.Unlock()
 		return
@@ -407,10 +416,10 @@ func (bg *BalancerGroup) UpdateSubConnState(sc balancer.SubConn, state balancer.
 
 // UpdateClientConnState handles ClientState (including balancer config and
 // addresses) from resolver. It finds the balancer and forwards the update.
-func (bg *BalancerGroup) UpdateClientConnState(id string, s balancer.ClientConnState) error {
+func (bg *BalancerGroup) UpdateClientConnState(id string, s balancer.ClientConnState) error { // Because intended to be used by high level balancer, does not implement any interface
 	bg.outgoingMu.Lock()
 	defer bg.outgoingMu.Unlock()
-	if config, ok := bg.idToBalancerConfig[id]; ok {
+	if config, ok := bg.idToBalancerConfig[id]; ok { // Splits it on the name, then forwards the child balancer the updated state
 		return config.updateClientConnState(s)
 	}
 	return nil
@@ -419,7 +428,7 @@ func (bg *BalancerGroup) UpdateClientConnState(id string, s balancer.ClientConnS
 // ResolverError forwards resolver errors to all sub-balancers.
 func (bg *BalancerGroup) ResolverError(err error) {
 	bg.outgoingMu.Lock()
-	for _, config := range bg.idToBalancerConfig {
+	for _, config := range bg.idToBalancerConfig { // All the varaibles, iterates over the whole config
 		config.resolverError(err)
 	}
 	bg.outgoingMu.Unlock()

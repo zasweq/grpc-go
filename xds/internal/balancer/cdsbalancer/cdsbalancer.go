@@ -545,3 +545,11 @@ func (ccw *ccWrapper) UpdateAddresses(sc balancer.SubConn, addrs []resolver.Addr
 	}
 	ccw.ClientConn.UpdateAddresses(sc, newAddrs)
 }
+
+// Until the next one reports READY...how is that
+
+// When is this balancer "READY"? How does it communicate the fact that it is ready?
+
+// Is it the collection of the whole thing downward that causes it to be ready?
+
+// Does it communicate upward using client conn api?

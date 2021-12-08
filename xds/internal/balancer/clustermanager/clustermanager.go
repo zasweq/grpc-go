@@ -92,12 +92,14 @@ func (b *bal) updateChildren(s balancer.ClientConnState, newConfig *lbConfig) {
 			// If this is a new sub-balancer, add it to the picker map.
 			b.stateAggregator.add(name)
 			// Then add to the balancer group.
-			b.bg.Add(name, balancer.Get(newT.ChildPolicy.Name))
+
+			// On an update, builds the balancer ONLY if bg has started
+			b.bg.Add(name, balancer.Get(newT.ChildPolicy.Name)) // Switch to the balancer that supports graceful switch
 		}
 		// TODO: handle error? How to aggregate errors and return?
 		_ = b.bg.UpdateClientConnState(name, balancer.ClientConnState{
 			ResolverState: resolver.State{
-				Addresses:     addressesSplit[name],
+				Addresses:     addresseseSplit[name], // Address to (addresses for a, addresses for b)
 				ServiceConfig: s.ResolverState.ServiceConfig,
 				Attributes:    s.ResolverState.Attributes,
 			},
@@ -111,7 +113,7 @@ func (b *bal) updateChildren(s balancer.ClientConnState, newConfig *lbConfig) {
 	}
 }
 
-func (b *bal) UpdateClientConnState(s balancer.ClientConnState) error {
+func (b *bal) UpdateClientConnState(s balancer.ClientConnState) error { // Just send it the recent config
 	newConfig, ok := s.BalancerConfig.(*lbConfig)
 	if !ok {
 		return fmt.Errorf("unexpected balancer config with type: %T", s.BalancerConfig)
