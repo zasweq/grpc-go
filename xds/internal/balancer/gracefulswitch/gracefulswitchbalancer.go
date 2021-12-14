@@ -21,6 +21,7 @@ package gracefulswitch
 
 import (
 	"encoding/json"
+	"fmt"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/resolver"
@@ -41,46 +42,75 @@ type bb struct{}
 // Then constantly update it with new configuration
 
 func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
-	// A and B are nil still - is there anything else we need to setup here?
+	b := gracefulSwitchBalancer{
+		cc: cc,
+		bOpts: opts,
+	}
+
+	// go b.run() - Do we really need this now that no channel receive? I think not because events all come from API call
+	return b
 }
 
 func (bb) Name() string {
 	return balancerName
 }
 
-func (bb) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	return nil, nil
+// Does this need to implement json.Unmarshaler interface?
+type lbConfig struct {
+	serviceconfig.LoadBalancingConfig // This is a "opaque data type"...which one do you use? There's two config pieces of data now...
+	ChildBalancerType string
+	// Raw JSON First...what is the child?
+	Config serviceconfig.LoadBalancingConfig // Should this unmarshal into json.RawMessage
 }
 
+/*type BalancerConfig struct { - A type already defined in the codebase
+	Name   string
+	Config serviceconfig.LoadBalancingConfig
+}*/
+
+func (bb) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
+	// This is an actual LB policy so needs to support parsing the config
+	var cfg lbConfig // json problem: needs an intermediate here that has a rawJSON as one of it's fields
+	if err := json.Unmarshal(c, &cfg); err != nil {
+		return nil, fmt.Errorf("graceful switch: unable to unmarshal lbconfig: %s, error: %v", string(c), err)
+	}
+	// This right here parses the config
+	// balancer.Get(lb name)...
+	// send the raw JSON to that parsed config
+	builder := balancer.Get(cfg.ChildBalancerType)
+	if builder == nil {
+		return nil, fmt.Errorf("balancer of type %v not supported", cfg.ChildBalancerType)
+	}
+	// Do you convert the lbConfig.Config into just JSON for that level of json.Unmarshal?
+	parsedCfg, err := builder.(balancer.ConfigParser).ParseConfig(cfg.Config/*json.RawMessage*/)
+	if err != nil {
+		return nil, fmt.Errorf()
+	}
+	cfg.LoadBalancingConfig = parsedCfg // Stick this emitted parsed lbCfg and stick it in the config to return
+	// Does this persist anything?...I still don't get how Doug thinks this will persist something
+	return &cfg, nil
+}
+
+// From the highest level - what does this balancer do?
 
 // Gracefully switch from A to B
+
+// Functionally, what is the point of a balancer
 
 type gracefulSwitchBalancer struct {
 	// "it should just have two children and the LB policy configs for them I think"
 
-	// LBConfig?
-
-	// scToBalancer map - balancer group uses subbalancer
-
-	// Two things - current config, balancer object, "pending" config and balancer object
-
-	// static part
-
-	// This builder is literally balancer.Get(name builder is registered on)
-	builderCurrent balancer.Builder // Is this the right thing to hold onto for builder?
-	buildOptsCurrent balancer.BuildOptions // Are these two logically equivalent to a config?
+	builderCurrent balancer.Builder // Is there any reason to hold onto this?
+	// buildOptsCurrent balancer.BuildOptions // Do we just get this from top level?
 	// builder.Build(sbc, sbc.buildOpts)
-	balancerCurrent balancer.Balancer // This is going to be nil? Represents the balancer object itself...
-
-	// When do you pass these in to persist? When do you actually build with these?
+	balancerCurrent balancer.Balancer
 
 	builderPending balancer.Builder
-	buildOptsPending balancer.BuildOptions // Do we need these two above?
+	// buildOptsPending balancer.BuildOptions // Do we need these two above?
 	balancerPending balancer.Balancer
 
+	// "Only used when balancer group is started. Gets cleared when sub-balancer is closed." - For dynamic balancers
 
-
-	// What other state do we need here? (besides (config, balancer) and (config, balancer))
 
 	// Java state -
 	// pendingState, pendingPicker, bool currentLbIsReady
@@ -88,92 +118,56 @@ type gracefulSwitchBalancer struct {
 	// C++ state -
 	// Nothing else
 
-	// This is handled by the user I believe
-	// idToBalancerConfig map[string]*subBalancerWrapper
+	// idToBalancerConfig map[string]*subBalancerWrapper - I really don't think
+	// we will need this, as the logic for current vs. pending configs are
+	// handled just on UpdateClientConnState.
 
+	// How do we plumb in new build options? // Are these build options constant
+	// for both balancers? Persisted at graceful switch balancer build time, do
+	// we update both balancers with this? Yes, cluster manager updates all it's children with
+	// these build options, thus you can use these to udpate both child balancers.
+	bOpts          balancer.BuildOptions
 
 	// Subconn to subbalancer map (populate it same way)...
 	scToSubBalancer map[balancer.SubConn]*balancer.Balancer // How to branch these two?
-	// Used for: figuring out where to forward subconn updates to
+	// Populated by: intercepting upward calls on AddSubConn()
 
+	// Used for: figuring out where to forward subconn updates to - also
+	// cleaning up this component after it gets closed(). Also, "removing
+	// SubConns it created" from the specific child balancer when the child gets
+	// deleted by pending.
 
-	// Mutexes on the outflow and inflow
+	cc balancer.ClientConn // Passed in on construction...from grpc?
+	// Used for: forwarding updateState() calls upward
+
+	// Mutexes on the outflow and inflow - actually...seems like you just need
+	// one mutex to protect this...do you need to grab it on both inflow and
+	// outflow? Or are these separate? Both of these codepaths def touch same
+	// state. But remember, there's also UpdateSubConnState, which also reads from the map
 }
 
-// Main difference is switching over after a set time limit use a timer and
-// channel? - Have this be state and configurable at build time
+// Once the channel is in a state other than READY, the event is you switch over to the second one
+// if it hasn't been instantiated yet - from Java implementation, which again Doug views as the basis.
+// I'm assuming this comes from LB policy in UpdateState, since this determines ClientConn state
 
-// Once the channel expires, the event is you switch over to the second one
-// if it hasn't been instantiated yet.
-
-
-// Or switch over once the second is ready
-
-// Starts off with what...then what...then what
-
-// What events can happen at each state of the state machine?
-
-//
+// What events can happen at each state of the state machine? - draw this out
 
 
-
-
-
-// METHOD HERE REPRESENTING GETTING AN SERVICE CONFIG FROM ANOTHER PLACE
-
-// Definitely persists the config itself, but does it actually build the balancer?
-
-// What gets passed in, a balancer builder or a LB Config itself
-
-// cluster manager gets the builder from the name of the config passed in...
-
-// serviceconfig.LoadBalancingConfig
-
-func (b *gracefulSwitchBalancer) ServiceConfigUpdate(/**/) {
-	// if b.currentConfig = nil
-	// 	Populate current config
-	//  Do you build this?
-	// else
-	//  Populate future config
-	//  Do you build this?
-}
-
-
-// run loop, but really only make it
-
-func (b *gracefulSwitchBalancer) run() {
-	// select
-
-	// case child balancer becomes ready - if its current no op
-
-	// what if current child is filled but not ready? *** big question
-
-
-
-	// In the specific scenario child balancer is populated but there's pending
-
-	// both of these events move pending into current:
-
-	// fixed timer running out...(<-timer.C)
-
-	// or LB transitioning into ready (how is this signaled - UpdateState right()...except you'd need to know what balancer it's for...
-}
-
-// Most of this flow is just pass throughs
-
-// UpdateState( LB Policy State ) <-- Needs to branch - something about subconns
-
-// Ah, on the flow downward
+// what if current child is filled but not ready? *** big question I think you're fine
 
 
 
 // (Put these API defs in design document)
 // Main functions VVV, UpdateState goes from child upward, needs to know
-// Balancer (->) ClientConn
-func (b *gracefulSwitchBalancer) UpdateState(state balancer.State) { // Only overwrites
+func (b *gracefulSwitchBalancer) UpdateState(state balancer.State) { // Once it gets here - already parsed config
+	// Java and C have pretty solid implementations of this
+
+	// What connectivity.State do LB's start out at? It seems like they start
+	// out at CONNECTING?
+
 	// Couldn't this be called by either or?
 	// How do you update state?
-	state.ConnectivityState
+	// state.ConnectivityState
 	// TODO: Figure out how to branch this into correct balancer
 	// c does CalledByPendingChild() child_
 	// child_ == parent_->pending_child_policy_.get();
@@ -189,43 +183,154 @@ func (b *gracefulSwitchBalancer) UpdateState(state balancer.State) { // Only ove
 	// How do LB policies logically report ready?
 
 
-	state.Picker // Do I need to do anything with this? Java has pending picker
+	// state.Picker // Do I need to do anything with this? Java has pending picker
 
 	// "UpdateState overrides balancer.ClientConn, to keep state and picker."
 	// Definitely needs this because this determines when to gracefully switch over
-	state.ConnectivityState // Enum across IDLE, CONNECTING, READY, TRANSIENT_FAILURE, SHUTDOWN
+	// state.ConnectivityState // Enum across IDLE, CONNECTING, READY, TRANSIENT_FAILURE, SHUTDOWN
+
+
+
+	// Switches over once new one is ready...except this is what signifies the
+	// event that second LB policy is ready, so simply forward the update
+	// (connectivity state and new picker) up to the Client Conn.
+
+	// There is some logic on what picker and connectivity state sent up to the ClientConn
+	// and how you get there (i.e. State persisted and A vs B)
+
+
+	// if branch on lb == pendingLB - I still don't get how we'd determine which
+	// lower level balancer called - see Java and C for reference?
+	if /*lb == pendingLB*/ { // TODO: figure out how to know which balancer an update from Balancer came from...
+
+		if state.ConnectivityState == connectivity.Ready { // Event - second LB policy switches to READY
+			// Close() and also "remove subconns it created", loop through map?
+
+			// Swap the pending to current
+			b.balancerCurrent = b.balancerPending // Switches over
+			b.balancerPending = nil
+			// Do we even need builder and build opts?
+
+			// Def update the Client Conn so that the Client Conn can use the new picker
+		}
+	} // Java has an else branch on switches over to pending (similar to timer) on the current lb policy exiting READY - do we even need this? I think we should support this because Doug views Java as the reference
+
+
+	// On an update from either current or pending, you can update the client
+	// conn to use new state and new picker - I don't think there's a codepath
+	// where you don't send this up to the ClientConn.
+	b.cc.UpdateState(state)
+
+
+
+	// from Build()...you have ClientConn
+	// b.cc.UpdateState(/*State - {connectivity.State and Picker} - what do I send here*/)
 }
+
+// ^^^
+// both of these lb policies interact with the same state, so need a mutex lock
+// and unlock on both methods
+// vvv
+
+// This will be used by cluster manager
+
+// How do we use LB policies traditionally? Maybe that will give me a better picture
 
 // API definitions (implementation):
 // Causes it to implement balancer.Balancer
 // ClientConn (->) Balancer -> Subbalancer
 // config A to config B
 func (b *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientConnState) error {
-	// Needs this to forward to the two children
-	// compare config a to config b - if it's a whole different type or not
 
-	// We don't know precedence though...
-	// if no current - persist config and build current
+	// lbCfg.ChildBalancerType // Now have the logic based on type ("name" in c-core)
 
-	// if same config as current (and current instantiated)
-	// send config down to instantiated balancer
-
-	// if config is different than current (implies current is instantiated)
-	// persist config and build in pending
+	// lbCfg.LoadBalancingConfig // And config to use...is this the right
+	// thing...this is an interface. Is it json.RawMessage? This is anonomyous
+	// field, but is logically the same type.
 
 
-	// Does it even persist a builder?
-	// newT comes from lb config (in cluster manager state.BalancerConfig.(*lbConfig)
-	// balancer.Get(newT.ChildPolicy.Name) -> spits out a builder, use that builder
-	// state.ResolverState. // where is the LB Config...what do we store?
+	// Need some way to compare the lbCfg.ChildBalancerType to the current and pending
 
-	// lbCfg, ok := state.BalancerConfig.(*lbConfig) <- touches the
-	// BalancerConfig (for cds and higher level balancers)
+	// I think you get a JSON version of LB type: json.RawMessage, use this to
+	// build a config in this LB policies ParseConfig, that gets to this method,
+	// it's already parsed, so you just send it to the built balancers
+	// .UpdateClientConnState(state).
 
-	state.BalancerConfig./*lbConfig <- can't just typecast this to anything*/
-	// Unmarshals into ChildPolicy.Name, or Unmarshals into lbconfig with children, gets the name for that
-	// Adds a builder with a name to the balancer group...
-	// Uses this type of lbConfig - sepcific to the balancer
+	// the balancer you just built with the builder which was pulled from the lb
+	// type from the global registry now takes this config, and Parses it
+	// (ParseConfig), no, this happens in this own balancers ParseConfig().
+
+
+	// First case described in c-core: we have no existing child policy, in this
+	// case, create a new child policy and store it in current child policy.
+
+
+	// Second case described in c-core:
+	// Existing Child Policy (i.e. BalancerConfig == nil) but no pending
+
+	// a. If config is same type...simply pass update down to existing policy
+
+	// b. If config is different type...create a new policy and store in pending
+	// child policy. This will be swapped into child policy once the new child
+	// transitions into state READY.
+
+
+
+	// Third case described in c-core:
+	// We have an existing child policy nad a pending child policy from a previous update (i.e. Pending not transitioned into state READY)
+
+	// a. If going from current config to new config does not require a new policy, update existing pending child policy.
+
+	// b. If going from current to new does require a new, create a new policy, and replace the pending policy.
+
+
+	// I feel like they missed a case...what if it's same policy as current? - Ping Mark with a line link in c core
+	lbCfg, ok := state.BalancerConfig.(*lbConfig) // Or could just make this the internal data type...BalancerConfig?
+	if !ok {
+		// b.logger.Warningf("xds: unexpected LoadBalancingConfig type: %T", state.BalancerConfig)
+		// But I don't have a logger...
+		return balancer.ErrBadResolverState
+	}
+
+
+	buildPolicy := b.balancerCurrent == nil || true /*Some way of comparing the LB policy type of this specific update to the most recent config sent - persist the config, along with the type of config (most recent config received, just store the whole thing which will have type)*/
+	var balToUpdate balancer.Balancer
+	if buildPolicy {
+		// Build the LB
+		builder := balancer.Get(lbCfg.ChildBalancerType) // ChildBalancerType but balancer.Get() will be called on certain conditions anyway...but I think you can just fill this in
+		if builder == nil {
+			return fmt.Errorf("balancer of type %v not supported", lbCfg.ChildBalancerType)
+		}
+		bal := builder.Build(b, b.bOpts) // Make sure this is accurate - are build options per both?
+		// Set either current or pending
+		if b.balancerCurrent == nil {
+			balToUpdate = b.balancerCurrent
+		} else {
+			balToUpdate = b.balancerPending
+		}
+		balToUpdate = bal
+		// Send update to that LB
+	} else {
+		// balToUpdate is either current or pending...
+		if b.balancerPending != nil {
+			balToUpdate = b.balancerPending
+		} else {
+			balToUpdate = b.balancerCurrent
+		}
+	}
+
+	// Does this need to use pointers in order to not make a copy? I'm pretty sure it does
+	balToUpdate.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: state.ResolverState, // I don't think there's anything else you need to add...
+		BalancerConfig: lbCfg.LoadBalancingConfig, // Loses child balancer type
+	})
+	// This block of code plus the unmarshaling into a config is all I need I think for this function
+
+	// from resolver state passed in, Doug mentioned you might need to update
+	// both child balancers. Resolver State (like Resolver Error) is relevant to
+	// both balancers.
+
+	// return nil?
 }
 
 func (b *gracefulSwitchBalancer) ResolverError(err error) {
@@ -275,6 +380,34 @@ func (b *gracefulSwitchBalancer) UpdateSubConnState(sc balancer.SubConn, state b
 
 func (b *gracefulSwitchBalancer) Close() {
 	// Does this need to do anything? Is there a start for this?
+
+	// Logically a destructor...? Think of this as cleaning up resources?
+
+	// I'm assuming it means to Close() both balancers - look at cluster manager and other balancers for inspiration
+
+
+	// BalancerGroup Close() is (when I come back...implement this)
+
+
+	// Incoming flow - loop through the persisted subbalancer data structure and tell ClientConn to remove it
+	// and delete from map. Is removing subconn equivalent to closing subconn?
+
+	// Either one or two mutex grabs...either have one protecting all or protecting inflow and outflow
+
+	for sc := range b.scToSubBalancer {
+		b.cc.RemoveSubConn(sc)
+		delete(b.scToSubBalancer, sc)
+		// This is it in BalancerGroup, is there anything else I need to do here?
+	}
+
+	// Outgoing flow: Stop/delete both balancers if applicable (i.e. not nil)...
+	// Mutex grab if needed
+	if b.balancerCurrent != nil {
+		b.balancerCurrent.Close()
+	}
+	if b.balancerPending != nil {
+		b.balancerCurrent.Close()
+	}
 }
 
 // Overwrites balancer.ClientConn...
@@ -286,37 +419,51 @@ func (b *gracefulSwitchBalancer) Close() {
 // NewSubConn()? Forwards upward to parent load balancer...or can you skip this part of the flow? I.e. pass a client conn down the lb tree and have the lower level load balancers call that
 
 func NewSubConn([]resolver.Address, balancer.NewSubConnOptions) (balancer.SubConn, error) {
-	// This one is in c++
+	// This one is in c++, doesn't look like it's in Java
 
 	// What are the functions in the different balancers?
 
-	// SubBalancerWrapper - "NewSubConn overrides balancer.ClientConn, so balancer group can keep track of
-	// the relation between subconns and sub-balancers."
+	// SubBalancerWrapper - "NewSubConn overrides balancer.ClientConn, so
+	// balancer group can keep track of the relation between subconns and
+	// sub-balancers." - intercepts new subconn call and persists that
+	// relationship for future use.
 }
 
 // RemoveSubConn() Forwards upward to Parents Load Balancer...or can you skip this part of the flow?
 func RemoveSubConn(balancer.SubConn) {
-	// Do we need this?
+	// Do we need this? Yeah, probably, use this to delete the created subconn
+	// from the map on a RemoveSubConn call from a lower level balancer.
 }
 
 // ResolveNow()
 
 // Target()
 
-// ^^^ do you need these two?
+// ^^^ do you need these two? to implement balancer.balancer? Even
+// UpdateAddresses() for balancer.ClientConn. SubBalancerWrapper embeds
+// balancer.ClientConn but only "overrides" UpdateState() and NewSubConn()
 
-/*func (b *gracefulSwitchBalancer) UpdateState(state balancer.State) { // Only overwrites
-	// "UpdateState overrides balancer.ClientConn, to keep state and picker."
-	state.ConnectivityState
-	// Definitely needs this because this determines when to gracefully switch over
-	state.ConnectivityState // Enum across IDLE, CONNECTING, READY, TRANSIENT_FAILURE, SHUTDOWN
-}*/
 
-// "If the channel is currently in a state other than READY, the new policcy will be swapped to place immediately".
-// How does channel communicate what state its in?
 
-// "If the old policy is not READY at the moment" - swap to the new one...will need to persist
-// old state somehow.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// "If the channel is currently in a state other than READY, the new policy will be swapped to place immediately".
+// How does channel communicate what state its in? This is set by the balancer...so UpdateState()?
+
+// "If the old policy is not READY at the moment" - swap to the new one
 
 // Java comment: "A load balancer that gracefully swaps to a new lb policy. If the channel is in a state other than ready, the new policy will be swapped into place immediately.
 // Otherwise, the channel will keep using the old policy until the new policy reports READY or the old policy exits READY"
@@ -369,3 +516,38 @@ func RemoveSubConn(balancer.SubConn) {
 // Can both of the children UpdateState?
 
 // Uses similar logic to balancer group where UpdateSubConn needs to find the correct one to forward to
+
+
+
+
+// Things I need to do (I don't know if needed in order):
+
+// 1. Figure out which methods of balancer.Balancer and
+// balancer.ClientConn to implement...and which to leave to the embedded
+// interface (also figure out what happens to missing methods)
+
+// 2. Finish cleaning up UpdateClientConnState(), also implement the logic of
+// persisting the recent config and using that to determine whether there is
+// delta in type for a new update) also is c core right? It's Mark though and he
+// explained..."which balancers to forward updates to." **This when I get back
+
+// 3. UpdateState()...figure out big challenge of how to figure out which subbalancer
+// it's sent from...do we need to keep it consistent with Java...looks like it does from
+// what Doug said. There's a lot of code to still write here.
+
+// 4. Intercept Subconn Call and build out map which is used to know which balancer to forward updates to.
+
+
+// 5. Protect certain state shared across multiple methods with mutexes...one or two (maybe do this at the end)
+
+
+
+// 6. Close() and what to do for that...also adding close certain subconns to UpdateState()
+
+// Done I think outside of adding a mutex lock
+
+
+// 7. ParseConfig() and the question of LoadBalancingConfig()...raw JSON gets spit out from that so you can just send that, returns IsLoadBalancingConfig()
+// This gets called before UpdateClientConnState()...so that will receive the parsed type: parsedConfig (IsLoadBalancingConfig())
+
+// * Done outside of rawJSON problem
