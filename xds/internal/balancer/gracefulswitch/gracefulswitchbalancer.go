@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/internal/buffer"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 	"sync"
@@ -138,6 +139,8 @@ type gracefulSwitchBalancer struct {
 	// SubConns it created" from the specific child balancer when the child gets
 	// deleted by pending.
 
+	// Instead of mutexes...use this
+	updateCh *buffer.Unbounded // Channel for gRPC and child balancer updates.
 }
 
 // Once the channel is in a state other than READY, the event is you switch over to the second one
@@ -380,6 +383,63 @@ func (gsb *gracefulSwitchBalancer) Close() {
 	}
 }
 
+type ccUpdate struct { // neccesary data from UpdateClientConnState()
+	state *balancer.ClientConnState // We sure we want a pointer? I think we should remove pointer
+}
+
+type reUpdate struct { // neccesary data from ResolverError()
+	err error
+}
+
+type scUpdate struct { // neccesary data from UpdateSubConnState
+	subConn balancer.SubConn
+	state balancer.SubConnState
+}
+
+type sbsUpdate struct { // neccesary data from updateState - subBalancerState update
+	bal balancer.Balancer
+	state balancer.State
+}
+
+type nscUpdate struct { // necessary data from newSubConn
+	bal balancer.Balancer
+	addrs []resolver.Address
+	opts balancer.NewSubConnOptions
+}
+
+func (gsb *gracefulSwitchBalancer) run() {
+	for {
+		select {
+		// CDS groups (UpdateClientConnState, ResolverError), and UpdateSubConnState into one
+		// Close is an event (seperate, from a done channel receive or event firing)
+		// updateState and newSubConn...can inline newSubConn?
+
+		// I like idea of doing 5 types (in a buffer.Unbounded, each of the 5 types needs a struct
+		case u := <- gsb.updateCh.Get():
+			gsb.updateCh.Load()
+			switch update := u.(type) {
+			// ALL 5 OF THESE NEED CLOSE() GUARDS (DON'T DO ANYTHING AFTER BALANCER IS CLOSED)
+			case *ccUpdate:
+				// gsb.handleStruct1(data relevant pulled from UpdateClientConnState)
+			case *reUpdate:
+				// gsb.handleStruct2(data relevant pulled from ResolverError) <- small enough to inline
+			case *scUpdate:
+				// gsb.handleStruct3(data relevant pulled from UpdateSubConnState)
+			case *sbsUpdate:
+				// gsb.handleStruct4(data relevant pulled from UpdateState) <- small enough to inline
+				// already has a check for if it's even in group
+				gsb.updateState(update.bal, update.state)
+			case *nscUpdate:
+				// gsb.handleStruct5(data relevant pulled from NewSubconn) <- small enough to inline
+				// Needs a check to see if the balancer is even in the group
+
+				// this is a return, so perhaps just grab a mutex for subconn map...
+			}
+		// Close
+		}
+	}
+}
+
 // removeSubconn() Menghan mentions you don't really need this, as only delete from map when changed state to connectivity.Shutdown
 
 // "If the old policy is not READY at the moment" - swap to the new one what is this from?
@@ -478,10 +538,12 @@ type clientConnWrapper struct {
 
 func (ccw *clientConnWrapper) UpdateState(state balancer.State) {
 	ccw.gsb.updateState(ccw.bal, state)
+	// switch to putting an update (struct 4) on gsb.UpdateChannel
 }
 
 func (ccw *clientConnWrapper) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
 	return ccw.gsb.newSubConn(ccw.bal, addrs, opts)
+	// switch to putting an update (struct 5) on gsb.NewUpdateChannel
 }
 
 // The rest of these methods (balancer.ClientConn) come from the embedded balancer.ClientConn.
@@ -567,3 +629,4 @@ balancer.ClientConn:
 // 2. Rewrite to run() goroutine...write run(), and also change methods to handle, and make Exported methods put on channel
 // 3. protect events with an event from close
 // 4. Add else if to protect from balancer no longer existing
+// 5. Any other weird behavior I think will come from tests
