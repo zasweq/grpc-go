@@ -307,10 +307,8 @@ func (gsb *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientCo
 			ClientConn: gsb.cc,
 			gsb:        gsb,
 			bal:        balToUpdate,
-		}, gsb.bOpts) // Make sure this is accurate - are build options per both?
-		// Set either current or pending
+		}, gsb.bOpts)
 		balToUpdate = bal
-		// Send update to that LB
 	} else {
 		// balToUpdate is either current or pending...
 		if gsb.balancerPending != nil {
@@ -321,17 +319,16 @@ func (gsb *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientCo
 	}
 	// Does this need to use pointers in order to not make a copy? I'm pretty sure it does
 	balToUpdate.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState: state.ResolverState, // I don't think there's anything else you need to add...
-		BalancerConfig: lbCfg.LoadBalancingConfig, // Loses child balancer type
+		ResolverState: state.ResolverState,
+		BalancerConfig: lbCfg.LoadBalancingConfig,
 	})
-	// This block of code plus the unmarshaling into a config is all I need I think for this function
 
 	// from resolver state passed in, Doug mentioned you might need to update
 	// both child balancers. Resolver State (like Resolver Error) is relevant to
 	// both balancers. However, in balancer group, it only forwards the resolver
 	// state to the child balancer that the update is relevant for.
 
-	// return nil?
+	return nil
 }
 
 func (gsb *gracefulSwitchBalancer) ResolverError(err error) {
@@ -360,6 +357,8 @@ func (gsb *gracefulSwitchBalancer) UpdateSubConnState(sc balancer.SubConn, state
 }
 
 func (gsb *gracefulSwitchBalancer) Close() {
+
+	// Can this be restarted? If so use a bool to sync this...if not have an event fire...THIS CORRESPONDS TO A SUBBALANCERWRAPPER, SO THIS QUESTION IS DEPENDENT ON THAT
 
 	// Either one or two mutex grabs...either have one protecting all or protecting inflow and outflow
 
@@ -497,3 +496,74 @@ func (ccw *clientConnWrapper) NewSubConn(addrs []resolver.Address, opts balancer
 // What about grabbing a mutex for each function, will that cause deadlock?
 
 // Cleanup (and save) then ask for help (push this to Github and do this in 1:1...run is looking better and better now)?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// If we choose to do a run() goroutine...
+
+// How to protect weird things with state accesses (i.e. balancer sent back not being current or pending due to it being deleted)
+
+/* State
+(Set at build time)
+bOpts balancer.BuildOptions
+cc balancer.ClientConn
+
+balancerCurrent balancer.Balancer
+balancerPending balancer.Balancer
+
+pendingState balancer.State (from child balancers)
+recentConfig *lbConfig (from grpc)
+scToSubBalancer map[balancer.SubConn]balancer.Balancer (from child balancers (NewSubconn() calls))
+*/
+
+// 6 events...(certain things can't happen after close event)...what weird things can happen one before the other that causes weird crap to happen
+
+// Main weird thing I can see is the writing to current/pending across both events, but my gut tells me that it won't be a problem, no weird stuff will arise if both events happen atomically.
+
+// Events and the state they touch/high level of logic?
+
+/*
+
+balancer.Balancer:
+
+1. UpdateClientConnState(state balancer.ClientConnState) error
+* Writes to current/pending, writes to recentConfig
+
+2. ResolverError(err error)
+* Reads both current/pending to forward it to them
+
+3. UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState)
+* Reads scToSubbalancer to get balancer and also delete if needed
+
+4. Close() <- once you close, stuff can't happen anymore (i.e. stops any event still queued) (unless you can restart), I don't think you can, fire an event...this locks events on both of the flows
+* Reads scToSubBalancer and current/pending
+
+balancer.ClientConn:
+
+5. updateState()
+* Writes to current/pending, scToSubBalancer, reads cc (can get an update from a nonexistent balancer (this knows what balancer it's tied to), and if so no-op protected by elseif)
+
+6. newSubConn()
+* Reads client conn to forward, writes to scToSubBalancer
+
+*/
+
+// 1. make a copy of file
+// 2. Rewrite to run() goroutine...write run(), and also change methods to handle, and make Exported methods put on channel
+// 3. protect events with an event from close
+// 4. Add else if to protect from balancer no longer existing
