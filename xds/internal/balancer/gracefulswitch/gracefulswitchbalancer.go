@@ -21,16 +21,20 @@ package gracefulswitch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal/buffer"
+	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 	"sync"
 )
 
 // This is not in xds package in c core...anyways someone will comment about this...even in Java.
+
+var errBalancerClosed = errors.New("gracefulSwitchBalancer is closed")
 
 const balancerName = "graceful_switch_load_balancer"
 
@@ -45,6 +49,7 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 		cc: cc,
 		bOpts: opts,
 		scToSubBalancer: make(map[balancer.SubConn]balancer.Balancer),
+		closed: grpcsync.NewEvent(),
 	}
 
 	// go b.run() I chose to sync with mutexes but this is still an option...events coming in from lower would be handled later...would this cause sync (fragmented) issues. Need to make sure no nil read on pending...need state to protect this if going this way.
@@ -87,6 +92,17 @@ func (bb) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 }
 
 type gracefulSwitchBalancer struct {
+	bOpts          balancer.BuildOptions
+	// Mutex: Does this need to be protected by anything? I don't think so, as
+	// this is static and persisted on build time to be used for both the
+	// subbalancers on creation.
+	cc balancer.ClientConn
+
+	outgoingMu sync.Mutex
+	// outgoingStarted bool - figure out if we need this or not
+	// C++ state - The most recent config passed to UpdateClientConnState()
+	recentConfig *lbConfig
+	// Mutex Outgoing/Incoming: Comes from UpdateClientConnState(), so this is OUTGOING. (comes from Client Conn)
 	balancerCurrent balancer.Balancer
 	balancerPending balancer.Balancer
 	// These are logically idToBalancerConfig except get written to (updated)/read from on the reverse flow
@@ -108,24 +124,6 @@ type gracefulSwitchBalancer struct {
 	// these fragmented events not cause a nil read? Guess it doesn't matter
 
 
-
-	outgoingMu sync.Mutex
-	// outgoingStarted bool - figure out if we need this or not
-
-	pendingState balancer.State // Do we need to protect this? I think so, child balancers can call updateState concurrently. (again, question about fragmented code segments in balancergroup)
-	// Mutex Outgoing/Incoming: passed from child balancers, so INCOMING.
-
-	// C++ state - The most recent config passed to UpdateClientConnState()
-	recentConfig *lbConfig
-	// Mutex Outgoing/Incoming: Comes from UpdateClientConnState(), so this is OUTGOING. (comes from Client Conn)
-
-	bOpts          balancer.BuildOptions
-	// Mutex: Does this need to be protected by anything? I don't think so, as
-	// this is static and persisted on build time to be used for both the
-	// subbalancers on creation.
-
-	cc balancer.ClientConn
-
 	incomingMu sync.Mutex
 	// incomingStarted bool - figure out if we need this or not
 	scToSubBalancer map[balancer.SubConn]balancer.Balancer
@@ -138,6 +136,11 @@ type gracefulSwitchBalancer struct {
 	// cleaning up this component after it gets closed(). Also, "removing
 	// SubConns it created" from the specific child balancer when the child gets
 	// deleted by pending.
+
+	pendingState balancer.State // Do we need to protect this? I think so, child balancers can call updateState concurrently. (again, question about fragmented code segments in balancergroup)
+	// Mutex Outgoing/Incoming: passed from child balancers, so INCOMING.
+
+	closed *grpcsync.Event
 
 	// Instead of mutexes...use this
 	updateCh *buffer.Unbounded // Channel for gRPC and child balancer updates.
@@ -159,15 +162,21 @@ type gracefulSwitchBalancer struct {
 // balancer it came from so ccw handles that by wrapping it also with correct
 // balancer and client conn itself.
 func (gsb *gracefulSwitchBalancer) updateState(bal balancer.Balancer, state balancer.State) { // Once it gets here - already parsed config
+	if gsb.closed.HasFired() {
+		return
+	}
 	// This can get called concurrently by multiple Child Balancers, as the balancers have no knowledge of each other.
 	// This deletes from scToSubBalancer, so I think this needs the lock - yes - but at what granularity?
-
+	gsb.incomingMu.Lock() // I want this to not intersplice with other updateState() calls and for this to happen atomically (i.e. writing to pending state concurrently and sending wrong one out)
+	// Can any codepaths call updateState() while holding either of these mutexes?
+	defer gsb.incomingMu.Unlock()
 
 	// What connectivity.State do LB's start out at? It seems like they start
 	// out at CONNECTING?
 
-
+	gsb.outgoingMu.Lock()
 	if bal == gsb.balancerPending {
+		gsb.outgoingMu.Unlock()
 		// Cache the pending state and picker if you don't need to send at this instant (i.e. the LB policy is not ready)
 		// you can send it later on an event like current LB exits READY.
 		gsb.pendingState = state
@@ -181,6 +190,7 @@ func (gsb *gracefulSwitchBalancer) updateState(bal balancer.Balancer, state bala
 
 	} else /*Add if here, make this no op if update comes in from balancer already deleted*/ { // Make a note that this copies Java behavior on swapping on exiting ready and also forwarding current updates to Client Conn even if there is pending lb present
 		// specfic case that the current lb exits ready, and there is a pending lb, can forward it up to ClientConn
+		gsb.outgoingMu.Unlock()
 		if state.ConnectivityState != connectivity.Ready && gsb.balancerPending != nil {
 			gsb.swap()
 		} else {
@@ -219,7 +229,7 @@ func (gsb *gracefulSwitchBalancer) swap() {
 	// update Client Conn with persisted picker - if you choose to go down the current READY state switch to new
 	// Either comes from previous or is the current update
 	gsb.cc.UpdateState(gsb.pendingState)
-
+	gsb.outgoingMu.Lock()
 	gsb.balancerCurrent.Close()
 	for sc, bal := range gsb.scToSubBalancer {
 		if bal == gsb.balancerCurrent {
@@ -230,16 +240,23 @@ func (gsb *gracefulSwitchBalancer) swap() {
 
 	gsb.balancerCurrent = gsb.balancerPending
 	gsb.balancerPending = nil
+	gsb.outgoingMu.Unlock()
 }
 
 // Receiver of a method to be pointer not a value, interface is a pointer, interfaces slices map (can nil them, so already a pointer on them), lots of things are pointers, slices are pointers
 func (gsb *gracefulSwitchBalancer) newSubConn(bal balancer.Balancer, addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
 	// If run() goroutine (can talk about this with Doug in 1:1) than can check if bal is even in the graceful switch load balancer...
+	if gsb.closed.HasFired() {
+		// logger?
+		return nil, errBalancerClosed
+	}
 	sc, err := gsb.cc.NewSubConn(addrs, opts)
 	if err != nil {
 		return nil, err
 	}
+	gsb.incomingMu.Lock() // Do we need to move this ^^^ before ClientConn read NewSubConn call?
 	gsb.scToSubBalancer[sc] = bal
+	gsb.incomingMu.Unlock()
 	return sc, nil
 }
 
@@ -249,7 +266,10 @@ func (gsb *gracefulSwitchBalancer) newSubConn(bal balancer.Balancer, addrs []res
 // balancer.Balancer methods
 // ClientConn (->) Balancer -> Subbalancer
 func (gsb *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientConnState) error {
-
+	if gsb.closed.HasFired() {
+		// logger?
+		return errBalancerClosed
+	}
 	// I think you get a JSON version of LB type: json.RawMessage, use this to
 	// build a config in this LB policies ParseConfig, that gets to this method,
 	// it's already parsed, so you just send it to the built balancers
@@ -290,7 +310,7 @@ func (gsb *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientCo
 		// But I don't have a logger...
 		return balancer.ErrBadResolverState
 	}
-
+	gsb.outgoingMu.Lock()
 	// c-core - strcmp the type of config passed in to the persisted config (the most recent one) is this logically equivalent in go? just the !=?
 	buildPolicy := gsb.balancerCurrent == nil || gsb.recentConfig.ChildBalancerType != lbCfg.ChildBalancerType /*Some way of comparing the LB policy type of this specific update to the most recent config sent - persist the config, along with the type of config (most recent config received, just store the whole thing which will have type)*/
 	gsb.recentConfig = lbCfg
@@ -299,6 +319,7 @@ func (gsb *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientCo
 		// Build the LB
 		builder := balancer.Get(lbCfg.ChildBalancerType) // ChildBalancerType but balancer.Get() will be called on certain conditions anyway...but I think you can just fill this in
 		if builder == nil {
+			gsb.outgoingMu.Unlock()
 			return fmt.Errorf("balancer of type %v not supported", lbCfg.ChildBalancerType)
 		}
 		if gsb.balancerCurrent == nil { // This moved to above builder.Build unlike C-Core, will this break anything?
@@ -321,6 +342,7 @@ func (gsb *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientCo
 		}
 	}
 	// Can you just unlock the Mutex right here? This already saves it into a local variable...if so you're done and can do incoming/outgoing and start to test this
+	gsb.outgoingMu.Unlock()
 
 	// Does this need to use pointers in order to not make a copy? I'm pretty sure it does
 	balToUpdate.UpdateClientConnState(balancer.ClientConnState{
@@ -337,52 +359,66 @@ func (gsb *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientCo
 }
 
 func (gsb *gracefulSwitchBalancer) ResolverError(err error) {
-	// Mutex Lock?
-	if gsb.balancerCurrent != nil {
+	if gsb.closed.HasFired() {
+		// Logger?
+		return
+	}
+	gsb.outgoingMu.Lock()
+	if gsb.balancerCurrent != nil { // Can this cause deadlock (i.e. can this call back into UpdateState() inline)? If so do it like UpdateClientConnState where you read to a local variable
 		gsb.balancerCurrent.ResolverError(err)
 	}
 	if gsb.balancerPending != nil {
 		gsb.balancerPending.ResolverError(err)
 	}
-	// Mutex Unlock?
+	gsb.outgoingMu.Unlock()
 }
 
 // Intertwined with BalancerGroup - either reuse balancer group or plumb this in somehow
 
 func (gsb *gracefulSwitchBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
+	if gsb.closed.HasFired() {
+		// Logger
+		return
+	}
+	gsb.incomingMu.Lock()
 	bal, ok := gsb.scToSubBalancer[sc] // protect this with a mutex
 	if !ok {
+		gsb.incomingMu.Unlock()
 		return
 	}
 	if state.ConnectivityState == connectivity.Shutdown {
 		delete(gsb.scToSubBalancer, sc)
 	}
-
+	gsb.incomingMu.Unlock()
+	gsb.outgoingMu.Lock() // Do we need this? Now, will this cause deadlock (call back into update state)
 	bal.UpdateSubConnState(sc, state) // Can this eventually be fragmented if not protected with Mutex?
+	gsb.outgoingMu.Unlock()
 }
 
 func (gsb *gracefulSwitchBalancer) Close() {
 
 	// Can this be restarted? If so use a bool to sync this...if not have an event fire...THIS CORRESPONDS TO A SUBBALANCERWRAPPER, SO THIS QUESTION IS DEPENDENT ON THAT
+	gsb.closed.Fire() // Does this need a receive on anything? Or does close just close it
 
-	// Either one or two mutex grabs...either have one protecting all or protecting inflow and outflow
-
+	gsb.incomingMu.Lock()
 	for sc := range gsb.scToSubBalancer {
-		gsb.cc.RemoveSubConn(sc)
+		gsb.cc.RemoveSubConn(sc) // Is this the right place to put it? Should I also have an explicit function for this?
 		delete(gsb.scToSubBalancer, sc)
 		// This is it in BalancerGroup, is there anything else I need to do here?
 	}
+	gsb.incomingMu.Unlock()
 
 	// Outgoing flow: Stop/delete both balancers if applicable (i.e. not nil)...
-	// Mutex grab if needed - also question of incoming/outgoing started
+	gsb.outgoingMu.Lock()
 	if gsb.balancerCurrent != nil {
-		gsb.balancerCurrent.Close()
+		gsb.balancerCurrent.Close() // Can this cause deadlock (i.e. can this call back into UpdateState() inline or just Add/RemoveSubconns())? If so do it like UpdateClientConnState where you read to a local variable
 		gsb.balancerCurrent = nil
 	}
 	if gsb.balancerPending != nil {
 		gsb.balancerPending.Close()
 		gsb.balancerPending = nil
 	}
+	gsb.outgoingMu.Unlock()
 }
 
 type ccUpdate struct { // neccesary data from UpdateClientConnState()
@@ -563,14 +599,6 @@ func (ccw *clientConnWrapper) NewSubConn(addrs []resolver.Address, opts balancer
 
 // Send rough draft of this out for PR
 
-// Tasks for today:
-
-// 1. Add mutex locks
-
-// 2. Clean up
-
-// 3. Send out Rough Draft PR
-
 
 
 
@@ -646,3 +674,13 @@ balancer.ClientConn:
 
 // Can you go Close() (reads scToSubBalancer) -> balancer -> back up...maybe make Add/RemoveSubconn happen sync...no, because thing protected is
 // Ah...here goes the outgoing/incoming flow inherent ordering
+
+// Tasks for today:
+
+// 1. Add mutex locks (tests/teammates will check for deadlocks)
+
+// 2. Add a Close() guard - do we need this? I think use RLS and fire off a channel event or something
+
+// 3. Clean up
+
+// 4. Send out Rough Draft PR
