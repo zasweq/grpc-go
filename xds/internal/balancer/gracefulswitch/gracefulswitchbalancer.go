@@ -320,6 +320,8 @@ func (gsb *gracefulSwitchBalancer) UpdateClientConnState(state balancer.ClientCo
 			balToUpdate = gsb.balancerCurrent
 		}
 	}
+	// Can you just unlock the Mutex right here? This already saves it into a local variable...if so you're done and can do incoming/outgoing and start to test this
+
 	// Does this need to use pointers in order to not make a copy? I'm pretty sure it does
 	balToUpdate.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState: state.ResolverState,
@@ -559,9 +561,15 @@ func (ccw *clientConnWrapper) NewSubConn(addrs []resolver.Address, opts balancer
 
 // Cleanup (and save) then ask for help (push this to Github and do this in 1:1...run is looking better and better now)?
 
+// Send rough draft of this out for PR
 
+// Tasks for today:
 
+// 1. Add mutex locks
 
+// 2. Clean up
+
+// 3. Send out Rough Draft PR
 
 
 
@@ -620,7 +628,7 @@ balancer.ClientConn:
 5. updateState()
 * Writes to current/pending, scToSubBalancer, reads cc (can get an update from a nonexistent balancer (this knows what balancer it's tied to), and if so no-op protected by elseif)
 
-6. newSubConn()
+6. newSubConn() - returns something
 * Reads client conn to forward, writes to scToSubBalancer
 
 */
@@ -630,3 +638,11 @@ balancer.ClientConn:
 // 3. protect events with an event from close
 // 4. Add else if to protect from balancer no longer existing
 // 5. Any other weird behavior I think will come from tests
+
+// If any other event can trigger () | | () <- async processing besides UpdateClientConnState() and UpdateState() then need to processes that sync if you want to protect accesses with no deadlock
+// I think UpdateClientConnState() || () <- AddSubConns..but I think you can give up the mutex before it calls back inline
+
+// UpdateClientConnState can give up the mutex for ScToSubBalancer before lower level balancer calls back into AddSubConn...
+
+// Can you go Close() (reads scToSubBalancer) -> balancer -> back up...maybe make Add/RemoveSubconn happen sync...no, because thing protected is
+// Ah...here goes the outgoing/incoming flow inherent ordering
