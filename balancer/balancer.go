@@ -161,9 +161,11 @@ type ClientConn interface {
 	//
 	// gRPC will update the connectivity state of the ClientConn, and will call
 	// Pick on the new Picker to pick new SubConns.
-	UpdateState(State) // Communicates upward to the client conn the state of the load balancer - what connectivity state the load balancer is in?
-	// C core has the lower level balancers (current and pending - how does it branch the two?) talk to the higher level balancers about the connectivity State
-	// Intercept using this function?, does the lowest level balancer report state upward? Then another chain of logic would have to happen before the whole string of balancers can logically be "ready"
+	UpdateState(State)
+
+	// Then another chain of logic would have to happen before the whole string
+	// of balancers can logically be "ready". Also, what layer of LB will
+	// actually call UpdateState?
 
 	// ResolveNow is called by balancer to notify gRPC to do a name resolving.
 	ResolveNow(resolver.ResolveNowOptions)
@@ -425,6 +427,3 @@ func (cse *ConnectivityStateEvaluator) RecordTransition(oldState, newState conne
 	}
 	return connectivity.TransientFailure
 }
-
-
-// What state would I need to intercept?

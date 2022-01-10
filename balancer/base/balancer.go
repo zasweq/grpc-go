@@ -85,7 +85,7 @@ func (b *baseBalancer) ResolverError(err error) {
 		return
 	}
 	b.regeneratePicker()
-	b.cc.UpdateState(balancer.State{
+	b.cc.UpdateState(balancer.State{ // This can call back in and delete itself...
 		ConnectivityState: b.state,
 		Picker:            b.picker,
 	})

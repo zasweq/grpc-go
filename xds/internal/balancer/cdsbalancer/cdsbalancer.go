@@ -77,7 +77,7 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 	b := &cdsBalancer{
 		bOpts:    opts,
 		updateCh: buffer.NewUnbounded(),
-		closed:   grpcsync.NewEvent(),
+		closed:   grpcsync.NewEvent(), // What all does closed protect...every single event?
 		done:     grpcsync.NewEvent(),
 		xdsHI:    xdsinternal.NewHandshakeInfo(nil, nil),
 	}
@@ -117,7 +117,7 @@ type lbConfig struct {
 
 // ParseConfig parses the JSON load balancer config provided into an
 // internal form or returns an error if the config is invalid.
-func (bb) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
+func (bb) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, error) { // Takes a json.RawMessage and converts into the data type LoadBalancingConfig
 	var cfg lbConfig
 	if err := json.Unmarshal(c, &cfg); err != nil {
 		return nil, fmt.Errorf("xds: unable to unmarshal lbconfig: %s, error: %v", string(c), err)
@@ -471,7 +471,7 @@ func (b *cdsBalancer) UpdateClientConnState(state balancer.ClientConnState) erro
 	// The errors checked here should ideally never happen because the
 	// ServiceConfig in this case is prepared by the xdsResolver and is not
 	// something that is received on the wire.
-	lbCfg, ok := state.BalancerConfig.(*lbConfig)
+	lbCfg, ok := state.BalancerConfig.(*lbConfig) // Typecasts from API state here to lbConfig, first time you get cluster
 	if !ok {
 		b.logger.Warningf("xds: unexpected LoadBalancingConfig type: %T", state.BalancerConfig)
 		return balancer.ErrBadResolverState

@@ -42,7 +42,7 @@ import (
 // if it exists.
 //
 // TODO: move to a separate file?
-type subBalancerWrapper struct { // What we have currently, do we a. add functionality to this or b. wrap this with a|b
+type subBalancerWrapper struct {
 	// subBalancerWrapper is passed to the sub-balancer as a ClientConn
 	// wrapper, only to keep the state and picker.  When sub-balancer is
 	// restarted while in cache, the picker needs to be resent.
@@ -56,7 +56,7 @@ type subBalancerWrapper struct { // What we have currently, do we a. add functio
 	group *BalancerGroup
 
 	mu    sync.Mutex
-	state balancer.State // Connectivity state and picker (picks a subconn for an rpc)
+	state balancer.State
 
 	// The static part of sub-balancer. Keeps balancerBuilders and addresses.
 	// To be used when restarting sub-balancer.
@@ -68,27 +68,35 @@ type subBalancerWrapper struct { // What we have currently, do we a. add functio
 	// and is set to nil at init, so when the balancer is built for the first
 	// time (not a restart), it won't receive an empty update. Note that this
 	// isn't reset to nil when the underlying balancer is closed.
-	ccState *balancer.ClientConnState // Persists ccState as well as the other director
+	ccState *balancer.ClientConnState
 	// The dynamic part of sub-balancer. Only used when balancer group is
 	// started. Gets cleared when sub-balancer is closed.
 	balancer balancer.Balancer
 }
 
+// This forwards all the non overriden - "intercepted" methods of the ClientConn
+// to the actual ClientConn that was passed in...otherwise it takes over the interface.
+
 // UpdateState overrides balancer.ClientConn, to keep state and picker.
-func (sbc *subBalancerWrapper) UpdateState(state balancer.State) { // Update
-	sbc.mu.Lock() // But this only has one balancer it holds onto
-	sbc.state = state // Just persists it
+func (sbc *subBalancerWrapper) UpdateState(state balancer.State) {
+	sbc.mu.Lock()
+	sbc.state = state
 	sbc.group.updateBalancerState(sbc.id, state)
 	sbc.mu.Unlock()
 }
-
-// Wrapper - direct child of xds_cluster_manager...can we wrap this subbalancer wrapper itself? What is the functionality of this balancer wrapper?
 
 // NewSubConn overrides balancer.ClientConn, so balancer group can keep track of
 // the relation between subconns and sub-balancers.
 func (sbc *subBalancerWrapper) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
 	return sbc.group.newSubConn(sbc, addrs, opts)
 }
+
+// The rest simply get sent to balancer.ClientConn
+
+// BalancerGroup simply holds onto a client conn, doesn't overwrite it, hint hint, I guess I could always change it later.
+// What's sent to children is a struct with state A or B, so can't overwrite that. The question becomes does the graceful switch
+// need to overwrite (embed) balancer.ClientConn...right now I don't see reason to. Can always expose non exported function
+// ccw talks to.
 
 func (sbc *subBalancerWrapper) updateBalancerStateWithCachedPicker() {
 	sbc.mu.Lock()
@@ -123,7 +131,7 @@ func (sbc *subBalancerWrapper) exitIdle() {
 	}
 }
 
-func (sbc *subBalancerWrapper) updateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
+func (sbc *subBalancerWrapper) updateSubConnState(sc balancer.SubConn, state balancer.SubConnState) { // A more specific function, unexported, that is from the branching of balancer group
 	b := sbc.balancer
 	if b == nil {
 		// This sub-balancer was closed. This can happen when EDS removes a
@@ -136,7 +144,7 @@ func (sbc *subBalancerWrapper) updateSubConnState(sc balancer.SubConn, state bal
 }
 
 func (sbc *subBalancerWrapper) updateClientConnState(s balancer.ClientConnState) error {
-	sbc.ccState = &s // Persists state
+	sbc.ccState = &s
 	b := sbc.balancer
 	if b == nil {
 		// This sub-balancer was closed. This should never happen because
@@ -215,7 +223,7 @@ type BalancerGroup struct {
 	// to sub-balancers after they are closed.
 	outgoingMu         sync.Mutex
 	outgoingStarted    bool
-	idToBalancerConfig map[string]*subBalancerWrapper
+	idToBalancerConfig map[string]*subBalancerWrapper // This doesn't get used in UpdateState() inline call back to Graceful Switch
 	// Cache for sub-balancers when they are removed.
 	balancerCache *cache.TimeoutCache
 
@@ -300,7 +308,7 @@ func (bg *BalancerGroup) Add(id string, builder balancer.Builder) {
 	// If outgoingStarted is true, search in the cache. Otherwise, cache is
 	// guaranteed to be empty, searching is unnecessary.
 	if bg.outgoingStarted {
-		if old, ok := bg.balancerCache.Remove(id); ok { // On new children that come in
+		if old, ok := bg.balancerCache.Remove(id); ok {
 			sbc, _ = old.(*subBalancerWrapper)
 			if sbc != nil && sbc.builder != builder {
 				// If the sub-balancer in cache was built with a different
@@ -321,9 +329,9 @@ func (bg *BalancerGroup) Add(id string, builder balancer.Builder) {
 	if sbc == nil {
 		sbc = &subBalancerWrapper{
 			ClientConn: bg.cc,
-			id:         id, // name
+			id:         id,
 			group:      bg,
-			builder:    builder, // builder from the registered builders in balancer
+			builder:    builder,
 			buildOpts:  bg.buildOpts,
 		}
 		if bg.outgoingStarted {
