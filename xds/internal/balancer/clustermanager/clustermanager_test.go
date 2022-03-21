@@ -632,3 +632,139 @@ func TestInitialIdle(t *testing.T) {
 		t.Fatalf("Received aggregated state: %v, want Idle", state1)
 	}
 }
+
+// Same scenario of aggregated picker?
+
+// Black box at this level ----? What are we testing here...seems like it's testing Picker that plops out of balancer
+
+// Draw out system in notebook
+
+func TestClusterGracefulSwitch(t *testing.T) {
+	// TestClusterPicks
+	// A vs. B in regards to SubConns is branching on child
+	// we want same child, but graceful switch that child
+	// that verifies addresses created - and amount of subconns
+	// and then verifies Pick
+
+	// TestConfigUpdateAddCluster is more what we need
+	// updating twice...I just need to gracefully
+	// switch a child (same name, different type) vs. multiple children
+	cc := testutils.NewTestClientConn(t)
+	rtb := rtBuilder.Build(cc, balancer.BuildOptions{})
+
+	configJSON1 := `{
+"children": {
+	"csp:cluster":{ "childPolicy": [{"ignore_attrs_round_robin":""}] }
+}
+}`
+/*
+	configJSON1 := `{
+"children": {
+	"csp:cluster":{ "childPolicy": [{"ignore_attrs_round_robin":""}] },
+}
+}`*/
+	config1, err := rtParser.ParseConfig([]byte(configJSON1))
+	if err != nil {
+		t.Fatalf("failed to parse balancer config: %v", err)
+	}
+	wantAddrs := []resolver.Address{
+		{Addr: testBackendAddrStrs[0], BalancerAttributes: nil},
+	}
+	if err := rtb.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: resolver.State{Addresses: []resolver.Address{
+			hierarchy.Set(wantAddrs[0], []string{"csp:cluster"}),
+		}},
+		BalancerConfig: config1,
+	});
+	err != nil {
+		t.Fatalf("failed to update ClientConn state: %v", err)
+	}
+
+
+	// Can verify SubConn A created
+	sc := <-cc.NewSubConnCh //  verify it's different than below with address? or do we not need this
+	// Hierarchy.Get is out of the scope of this Test...already tested in others
+	rtb.UpdateSubConnState(sc, balancer.SubConnState{ConnectivityState: connectivity.Connecting})
+	rtb.UpdateSubConnState(sc, balancer.SubConnState{ConnectivityState: connectivity.Ready})
+
+	// Verify Picker picks A
+	p1 := <-cc.NewPickerCh
+	pi := balancer.PickInfo{
+		Ctx: SetPickedCluster(context.Background(), "csp:cluster"),
+	}
+	testPick(t, p1, pi, sc, nil)
+
+
+
+	/*
+	configJSON2 := `{
+"children": {
+	"cluster":{ "childPolicy": [{"**Cluster that branches here - either inline UpdateState or on the type if we want to test picker**":""}] },
+}
+}`
+
+	// Can verify SubConn B created
+	// Update to connecting but not ready
+
+	// Verify Picker picks A - "The second child has not reported state READY yet, so
+	// calling the picker should pick the first created SubConn"
+
+	// This should actually not send a picker update at all.
+
+	testPick(t, )*/
+
+	// to trigger updatestate on b - updatesubconnstate with READY - inline it
+	// Similar to how you send SHUTDOWN downward, as that is what actually triggers picker update,
+	// keeps it consistent.
+
+	// updateState on B - now the problem comes up of how do we get a reference to this?
+	// Looks like this will be inline since updateState() still don't know how to get reference
+
+	// Verify new picker, and that Picker picks B
+
+
+
+
+
+	// Sequence of events...logical correctness
+
+	// Either a. Test it still picks as normal until READY (better, but seems to test correctness
+	// better)
+
+	// I think this makes sense
+
+	// UpdateClientConnState for A
+
+	// Picker should match A
+
+	// UpdateClientConnState for B (i.e. same name, different type)
+
+	// Picker should still match A
+
+	// B switches to READY
+
+	// Picker should now match B
+
+
+
+	// Update READY inline (easier)
+}
+
+
+
+
+// Mock balancer here - any difference vs. one in BalancerGroup?
+
+
+type mockBalancer struct {
+	cc balancer.ClientConn
+}
+
+func (mb *mockBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
+	// Same thing as previous - persist subconn from argument to send later
+	// in picker
+}
+
+func (mb *mockBalancer) UpdateSubConnState(sc balancer.SubConn, s balancer.SubConnState) {
+	// If ready send back
+}
