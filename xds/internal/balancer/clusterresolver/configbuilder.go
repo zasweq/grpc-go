@@ -21,6 +21,8 @@ package clusterresolver
 import (
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/internal/envconfig"
+	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"sort"
 
 	"google.golang.org/grpc/balancer/roundrobin"
@@ -103,6 +105,14 @@ type priorityConfig struct {
 // used.
 func buildPriorityConfigJSON(priorities []priorityConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) ([]byte, []resolver.Address, error) {
 	pc, addrs, err := buildPriorityConfig(priorities, xdsLBPolicy)
+
+	// ^^^ if no env var set, regular codepath of priority with top level for each priority cluster_impl
+
+	// if env var set, new codepath of outlier detection sitting at top level of priority level, with cluster_impl
+	// as child
+
+
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build priority config: %v", err)
 	}
@@ -112,12 +122,14 @@ func buildPriorityConfigJSON(priorities []priorityConfig, xdsLBPolicy *internals
 	}
 	return ret, addrs, nil
 }
-
-func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) (*priority.LBConfig, []resolver.Address, error) {
+// Switch to copy and see if that works (i.e. not a *)
+func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) (*priority.LBConfig, []resolver.Address, error) { // This type is generic, I think I can just use this?
 	var (
 		retConfig = &priority.LBConfig{Children: make(map[string]*priority.Child)}
 		retAddrs  []resolver.Address
 	)
+	// if not set, normal, if set, wrap the cluster impl config in an Outlier Detection config as such
+	// OutlierDetection{ChildPolicy: cluster impl}
 	for i, p := range priorities {
 		switch p.mechanism.Type {
 		case DiscoveryMechanismTypeEDS:
@@ -125,28 +137,73 @@ func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalservi
 			if err != nil {
 				return nil, nil, err
 			}
+			var odCfgs map[string]*outlierdetection.LBConfig
+			if envconfig.XDSOutlierDetection {
+				odCfgs = convertClusterImplMapToOutlierDetection(configs, p.mechanism.OutlierDetection)
+			}
 			retConfig.Priorities = append(retConfig.Priorities, names...)
+			retAddrs = append(retAddrs, addrs...)
+
+			if odCfgs != nil {
+				for n, c := range odCfgs {
+					retConfig.Children[n] = &priority.Child{
+						Config: &internalserviceconfig.BalancerConfig{Name: outlierdetection.Name, Config: c},
+						// Ignore all re-resolution from EDS children.
+						IgnoreReresolutionRequests: true,
+					}
+				}
+				continue
+			}
 			for n, c := range configs {
 				retConfig.Children[n] = &priority.Child{
 					Config: &internalserviceconfig.BalancerConfig{Name: clusterimpl.Name, Config: c},
 					// Ignore all re-resolution from EDS children.
 					IgnoreReresolutionRequests: true,
 				}
+
 			}
-			retAddrs = append(retAddrs, addrs...)
 		case DiscoveryMechanismTypeLogicalDNS:
 			name, config, addrs := buildClusterImplConfigForDNS(i, p.addresses, p.mechanism)
+			var odCfg *outlierdetection.LBConfig
+			if envconfig.XDSOutlierDetection {
+				odCfg = makeClusterImplOutlierDetectionChild(config, p.mechanism.OutlierDetection)
+			}
 			retConfig.Priorities = append(retConfig.Priorities, name)
+			retAddrs = append(retAddrs, addrs...)
+			if odCfg != nil {
+				retConfig.Children[name] = &priority.Child{
+					Config: &internalserviceconfig.BalancerConfig{Name: outlierdetection.Name, Config: odCfg},
+					// Not ignore re-resolution from DNS children, they will trigger
+					// DNS to re-resolve.
+					IgnoreReresolutionRequests: false,
+				}
+				continue
+			}
 			retConfig.Children[name] = &priority.Child{
 				Config: &internalserviceconfig.BalancerConfig{Name: clusterimpl.Name, Config: config},
 				// Not ignore re-resolution from DNS children, they will trigger
 				// DNS to re-resolve.
 				IgnoreReresolutionRequests: false,
 			}
-			retAddrs = append(retAddrs, addrs...)
 		}
 	}
 	return retConfig, retAddrs, nil
+}
+
+// Map[string] ClusterImpl.Config -> map[string] OutlierDetection.Config
+func convertClusterImplMapToOutlierDetection(ciCfgs map[string]*clusterimpl.LBConfig, odCfg *outlierdetection.LBConfig) map[string]*outlierdetection.LBConfig { // All wrapped in same config due to Outlier Detection mapped to discovery mechanism
+	odCfgs := make(map[string]*outlierdetection.LBConfig)
+	for n, c := range ciCfgs {
+		odCfgs[n] = makeClusterImplOutlierDetectionChild(c, odCfg)
+	}
+	return odCfgs
+}
+
+// ClusterImpl.Config -> OutlierDetection.Config
+func makeClusterImplOutlierDetectionChild(ciCfg *clusterimpl.LBConfig, odCfg *outlierdetection.LBConfig) *outlierdetection.LBConfig { // Discovery mechanism is tied to EDS/DNS
+	odCfgRet := odCfg
+	odCfgRet.ChildPolicy = &internalserviceconfig.BalancerConfig{Name: clusterimpl.Name, Config: ciCfg} // This can panic if odCfg is nil. This shouldn't be nil though, as per CDS balancer. I can add check
+	return odCfgRet
 }
 
 func buildClusterImplConfigForDNS(parentPriority int, addrStrs []string, mechanism DiscoveryMechanism) (string, *clusterimpl.LBConfig, []resolver.Address) {

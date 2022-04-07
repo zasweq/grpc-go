@@ -22,6 +22,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/internal/envconfig"
+	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"sort"
 	"testing"
 
@@ -68,6 +70,10 @@ var (
 			})
 			return out
 		})}
+
+	noopODCfg = &outlierdetection.LBConfig{
+		Interval: 1<<63 - 1,
+	}
 )
 
 func init() {
@@ -211,7 +217,7 @@ func TestBuildPriorityConfig(t *testing.T) {
 			"priority-0-0": {
 				Config: &internalserviceconfig.BalancerConfig{
 					Name: clusterimpl.Name,
-					Config: &clusterimpl.LBConfig{
+					Config: &clusterimpl.LBConfig{ // This doesn't correspond correctly
 						Cluster:               testClusterName,
 						EDSServiceName:        testEDSServiceName,
 						LoadReportingServer:   testLRSServerConfig,
@@ -308,6 +314,151 @@ func TestBuildPriorityConfig(t *testing.T) {
 	}
 }
 
+func TestBuildPriorityConfigWithOutlierDetection(t *testing.T) {
+	oldOutlierDetection := envconfig.XDSOutlierDetection
+	envconfig.XDSOutlierDetection = true
+	defer func() {
+		envconfig.XDSOutlierDetection = oldOutlierDetection
+	}()
+
+	// Need to scale up overall by adding OD to discovery mechanism and also switching child config to od(ClusterImpl)
+
+	// Also need to test DNS, and also the plurality of EDS (i.e. if spits out multiple priorities, it should wrap each priority
+	// with an Outlier Detection config)
+
+
+	// Minimum amount of data that passes validations for cluster impl
+
+	// TestBuildPriorityConfig tests a lot - eds + dns (oh wait copy that since that'll test both codepaths)
+
+	// Multiple children for EDS (don't need - wait, actually, we do. Need to test Pluarlity of OD Config)
+	// Just like test below, need to figure out how to get the map to actually check for equality amongst them.
+
+	// Everything with minimum requirements to pass...build it out with as
+	// little as you think as possible and slowly scale it up over time.
+
+	gotConfig, _, _ := buildPriorityConfig([]priorityConfig{ // We don't care about addrs
+		{
+			// EDS - OD config should wrap both child priorities balancer
+			mechanism: DiscoveryMechanism{
+				Cluster: testClusterName,
+				Type: DiscoveryMechanismTypeEDS,
+				EDSServiceName: testEDSServiceName,
+				OutlierDetection: noopODCfg,
+			},
+			edsResp: xdsresource.EndpointsUpdate{
+				// Drops...? Do we need this?
+				// Localities for both priorities - do weights need to add up to 100?
+				Localities: []xdsresource.Locality{
+					testLocalitiesP0[0],
+					testLocalitiesP0[1],
+					testLocalitiesP1[0],
+					testLocalitiesP1[1],
+				},
+			},
+		},
+		{
+			mechanism: DiscoveryMechanism{ // This mechanism is overwriting the od configs built in first one...why?
+				Cluster: testClusterName2,
+				Type:    DiscoveryMechanismTypeLogicalDNS,
+				OutlierDetection: noopODCfg,
+			},
+			addresses: testAddressStrs[4], // Do we need this? What to do about this address string?
+		},
+	}, nil)
+
+	wantConfig := &priority.LBConfig{
+		Children: map[string]*priority.Child{
+			"priority-0-0": {
+				Config: &internalserviceconfig.BalancerConfig{
+					Name: outlierdetection.Name,
+					Config: &outlierdetection.LBConfig{ // Just like with maps, this needs to make sure it's actually being compared
+						Interval: 1<<63 - 1, // Can toggle this to check if it actually checks?
+						ChildPolicy: &internalserviceconfig.BalancerConfig{
+							Name: clusterimpl.Name,
+							Config: &clusterimpl.LBConfig{ // This doesn't correspond correctly
+								Cluster:               testClusterName, // This is google_cfe_some-name wtf
+								EDSServiceName:        testEDSServiceName,
+								ChildPolicy: &internalserviceconfig.BalancerConfig{
+									Name: weightedtarget.Name,
+									Config: &weightedtarget.LBConfig{
+										Targets: map[string]weightedtarget.Target{
+											assertString(testLocalityIDs[0].ToString): {
+												Weight:      20,
+												ChildPolicy: &internalserviceconfig.BalancerConfig{Name: roundrobin.Name},
+											},
+											assertString(testLocalityIDs[1].ToString): {
+												Weight:      80,
+												ChildPolicy: &internalserviceconfig.BalancerConfig{Name: roundrobin.Name},
+											},
+										},
+									},
+								},
+							},
+						},
+					}/*noop outlier detection + cluster impl as child policy*/,
+				},
+				IgnoreReresolutionRequests: true,
+			},
+			// second priority for EDS
+			"priority-0-1": {
+				Config: &internalserviceconfig.BalancerConfig{
+					Name: outlierdetection.Name,
+					Config: &outlierdetection.LBConfig{
+						Interval: 1<<63 - 1,
+						ChildPolicy: &internalserviceconfig.BalancerConfig{
+							Name: clusterimpl.Name,
+							Config: &clusterimpl.LBConfig{
+								Cluster:               testClusterName,
+								EDSServiceName:        testEDSServiceName,
+								ChildPolicy: &internalserviceconfig.BalancerConfig{
+									Name: weightedtarget.Name,
+									Config: &weightedtarget.LBConfig{
+										Targets: map[string]weightedtarget.Target{
+											assertString(testLocalityIDs[2].ToString): {
+												Weight:      20,
+												ChildPolicy: &internalserviceconfig.BalancerConfig{Name: roundrobin.Name},
+											},
+											assertString(testLocalityIDs[3].ToString): {
+												Weight:      80,
+												ChildPolicy: &internalserviceconfig.BalancerConfig{Name: roundrobin.Name},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				IgnoreReresolutionRequests: true,
+			},
+			"priority-1": {
+				Config: &internalserviceconfig.BalancerConfig{
+					Name: outlierdetection.Name,
+					Config: &outlierdetection.LBConfig{
+						Interval: 1<<63 - 1,
+						ChildPolicy: &internalserviceconfig.BalancerConfig{
+							Name: clusterimpl.Name,
+							Config: &clusterimpl.LBConfig{
+								Cluster:     testClusterName2,
+								ChildPolicy: &internalserviceconfig.BalancerConfig{Name: "pick_first"},
+							},
+						},
+					},
+				},
+				IgnoreReresolutionRequests: false,
+			},
+		},
+		Priorities: []string{"priority-0-0", "priority-0-1", "priority-1"},
+	}
+	if diff := cmp.Diff(gotConfig, wantConfig); diff != "" {
+		t.Errorf("buildPriorityConfig() diff (-got +want) %v", diff)
+	}
+}
+// Def combine this into a t-test, with a knob on whether OD was specified or not, which this bool could also gate
+// checking equality of addresses or not
+
+
 func TestBuildClusterImplConfigForDNS(t *testing.T) {
 	gotName, gotConfig, gotAddrs := buildClusterImplConfigForDNS(3, testAddressStrs[0], DiscoveryMechanism{Cluster: testClusterName2, Type: DiscoveryMechanismTypeLogicalDNS})
 	wantName := "priority-3"
@@ -394,7 +545,7 @@ func TestBuildClusterImplConfigForEDS(t *testing.T) {
 					RequestsPerMillion: testDropOverMillion,
 				},
 			},
-			ChildPolicy: &internalserviceconfig.BalancerConfig{
+			ChildPolicy: &internalserviceconfig.BalancerConfig{ // This one actually compares the underlying data
 				Name: weightedtarget.Name,
 				Config: &weightedtarget.LBConfig{
 					Targets: map[string]weightedtarget.Target{
@@ -458,6 +609,10 @@ func TestBuildClusterImplConfigForEDS(t *testing.T) {
 	if diff := cmp.Diff(gotAddrs, wantAddrs, addrCmpOpts); diff != "" {
 		t.Errorf("buildClusterImplConfigForEDS() diff (-got +want) %v", diff)
 	}
+
+}
+
+func TestBuildConfigForEDS(t *testing.T) {
 
 }
 
@@ -980,3 +1135,95 @@ func testAddrWithAttrs(addrStr string, weight *uint32, priority string, lID *int
 	addr = hierarchy.Set(addr, path)
 	return addr
 }
+
+// Tests needed: test for ClusterImpl map -> OutlierDetection map
+func TestConvertClusterImplMapToOutlierDetection(t *testing.T) { // Tests function called as well
+	tests := []struct {
+		name string
+		ciCfgsMap map[string]*clusterimpl.LBConfig
+		odCfg *outlierdetection.LBConfig
+		odCfgsMapWant map[string]*outlierdetection.LBConfig
+	}{
+		{
+			name: "single-entry-noop",
+			ciCfgsMap: map[string]*clusterimpl.LBConfig{
+				"child1": {
+					Cluster: "cluster1",
+				},
+			},
+			odCfg: &outlierdetection.LBConfig{
+				Interval: 1<<63 - 1,
+			},
+			odCfgsMapWant: map[string]*outlierdetection.LBConfig{ // Need a way to ping this so that the data actually gets compared
+				"child1": {
+					Interval: 1<<63 - 1,
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: clusterimpl.Name,
+						Config: &clusterimpl.LBConfig{
+							Cluster: "cluster1",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "multiple-entries-noop",
+			ciCfgsMap: map[string]*clusterimpl.LBConfig{
+				"child1": {
+					Cluster: "cluster1",
+				},
+				"child2": {
+					Cluster: "cluster2",
+				},
+			},
+			odCfg: &outlierdetection.LBConfig{
+				Interval: 1<<63 - 1,
+			},
+			odCfgsMapWant: map[string]*outlierdetection.LBConfig{
+				"child1": {
+					Interval: 1<<63 - 1,
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: clusterimpl.Name,
+						Config: &clusterimpl.LBConfig{
+							Cluster: "cluster1",
+						},
+					},
+				},
+				"child2": {
+					Interval: 1<<63 - 1,
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: clusterimpl.Name,
+						Config: &clusterimpl.LBConfig{
+							Cluster: "cluster2",
+						},
+					},
+				},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := convertClusterImplMapToOutlierDetection(test.ciCfgsMap, test.odCfg)
+			if diff := cmp.Diff(got, test.odCfgsMapWant); diff != "" {
+				t.Fatalf("convertClusterImplMapToOutlierDetection() diff(-got +want) %v", diff)
+			}
+			// This doesn't work
+			// Either a. see filter chain and define something for maps
+			// b. write it inline in this function
+		})
+	}
+}
+
+// maybe just scale these tests up with dimension of OD on or off (can't, it's strongly typed):
+// EDS to ClusterImpl
+// DNS to ClusterImpl
+
+// PriorityConfig building overall
+
+// JSON Parsing add Outlier Detection as well
+
+// For Cluster Resolver: a test which turns on ENV Var, UpdateClientConnState sent to child priority balancer
+// should be OD
+
+
+// After I get my test to work (implicitly covers EDS and DNS), fix map test, then add UpdateClientConnState() test
