@@ -144,7 +144,7 @@ func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalservi
 			retConfig.Priorities = append(retConfig.Priorities, names...)
 			retAddrs = append(retAddrs, addrs...)
 
-			if odCfgs != nil {
+			if envconfig.XDSOutlierDetection {
 				for n, c := range odCfgs {
 					retConfig.Children[n] = &priority.Child{
 						Config: &internalserviceconfig.BalancerConfig{Name: outlierdetection.Name, Config: c},
@@ -166,11 +166,11 @@ func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalservi
 			name, config, addrs := buildClusterImplConfigForDNS(i, p.addresses, p.mechanism)
 			var odCfg *outlierdetection.LBConfig
 			if envconfig.XDSOutlierDetection {
-				odCfg = makeClusterImplOutlierDetectionChild(config, p.mechanism.OutlierDetection)
+				odCfg = makeClusterImplOutlierDetectionChild(*config, *p.mechanism.OutlierDetection)
 			}
 			retConfig.Priorities = append(retConfig.Priorities, name)
 			retAddrs = append(retAddrs, addrs...)
-			if odCfg != nil {
+			if envconfig.XDSOutlierDetection {
 				retConfig.Children[name] = &priority.Child{
 					Config: &internalserviceconfig.BalancerConfig{Name: outlierdetection.Name, Config: odCfg},
 					// Not ignore re-resolution from DNS children, they will trigger
@@ -194,16 +194,16 @@ func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalservi
 func convertClusterImplMapToOutlierDetection(ciCfgs map[string]*clusterimpl.LBConfig, odCfg *outlierdetection.LBConfig) map[string]*outlierdetection.LBConfig { // All wrapped in same config due to Outlier Detection mapped to discovery mechanism
 	odCfgs := make(map[string]*outlierdetection.LBConfig)
 	for n, c := range ciCfgs {
-		odCfgs[n] = makeClusterImplOutlierDetectionChild(c, odCfg)
+		odCfgs[n] = makeClusterImplOutlierDetectionChild(*c, *odCfg)
 	}
 	return odCfgs
 }
 
 // ClusterImpl.Config -> OutlierDetection.Config
-func makeClusterImplOutlierDetectionChild(ciCfg *clusterimpl.LBConfig, odCfg *outlierdetection.LBConfig) *outlierdetection.LBConfig { // Discovery mechanism is tied to EDS/DNS
+func makeClusterImplOutlierDetectionChild(ciCfg clusterimpl.LBConfig, odCfg outlierdetection.LBConfig) *outlierdetection.LBConfig { // Discovery mechanism is tied to EDS/DNS
 	odCfgRet := odCfg
-	odCfgRet.ChildPolicy = &internalserviceconfig.BalancerConfig{Name: clusterimpl.Name, Config: ciCfg} // This can panic if odCfg is nil. This shouldn't be nil though, as per CDS balancer. I can add check
-	return odCfgRet
+	odCfgRet.ChildPolicy = &internalserviceconfig.BalancerConfig{Name: clusterimpl.Name, Config: &ciCfg} // This can panic if odCfg is nil. This shouldn't be nil though, as per CDS balancer. I can add check
+	return &odCfgRet
 }
 
 func buildClusterImplConfigForDNS(parentPriority int, addrStrs []string, mechanism DiscoveryMechanism) (string, *clusterimpl.LBConfig, []resolver.Address) {

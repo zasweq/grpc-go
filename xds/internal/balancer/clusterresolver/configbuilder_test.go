@@ -379,6 +379,7 @@ func TestBuildPriorityConfigWithOutlierDetection(t *testing.T) {
 							Config: &clusterimpl.LBConfig{ // This doesn't correspond correctly
 								Cluster:               testClusterName, // This is google_cfe_some-name wtf
 								EDSServiceName:        testEDSServiceName,
+								DropCategories: []clusterimpl.DropConfig{},
 								ChildPolicy: &internalserviceconfig.BalancerConfig{
 									Name: weightedtarget.Name,
 									Config: &weightedtarget.LBConfig{
@@ -411,6 +412,7 @@ func TestBuildPriorityConfigWithOutlierDetection(t *testing.T) {
 							Config: &clusterimpl.LBConfig{
 								Cluster:               testClusterName,
 								EDSServiceName:        testEDSServiceName,
+								DropCategories: []clusterimpl.DropConfig{},
 								ChildPolicy: &internalserviceconfig.BalancerConfig{
 									Name: weightedtarget.Name,
 									Config: &weightedtarget.LBConfig{
@@ -451,6 +453,7 @@ func TestBuildPriorityConfigWithOutlierDetection(t *testing.T) {
 		},
 		Priorities: []string{"priority-0-0", "priority-0-1", "priority-1"},
 	}
+	print("what")
 	if diff := cmp.Diff(gotConfig, wantConfig); diff != "" {
 		t.Errorf("buildPriorityConfig() diff (-got +want) %v", diff)
 	}
@@ -1106,6 +1109,7 @@ func TestLocalitiesToRingHash(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			print("what")
 			got := localitiesToRingHash(tt.localities, tt.priorityName)
 			if diff := cmp.Diff(got, tt.wantAddrs, cmp.AllowUnexported(attributes.Attributes{})); diff != "" {
 				t.Errorf("localitiesToWeightedTarget() diff (-got +want) %v", diff)
@@ -1154,7 +1158,7 @@ func TestConvertClusterImplMapToOutlierDetection(t *testing.T) { // Tests functi
 			odCfg: &outlierdetection.LBConfig{
 				Interval: 1<<63 - 1,
 			},
-			odCfgsMapWant: map[string]*outlierdetection.LBConfig{ // Need a way to ping this so that the data actually gets compared
+			odCfgsMapWant: map[string]*outlierdetection.LBConfig{
 				"child1": {
 					Interval: 1<<63 - 1,
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
@@ -1204,6 +1208,8 @@ func TestConvertClusterImplMapToOutlierDetection(t *testing.T) { // Tests functi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := convertClusterImplMapToOutlierDetection(test.ciCfgsMap, test.odCfg)
+			print("got: ", got)
+			print(test.odCfgsMapWant)
 			if diff := cmp.Diff(got, test.odCfgsMapWant); diff != "" {
 				t.Fatalf("convertClusterImplMapToOutlierDetection() diff(-got +want) %v", diff)
 			}
