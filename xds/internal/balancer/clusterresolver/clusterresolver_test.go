@@ -21,6 +21,7 @@ package clusterresolver
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/internal/envconfig"
 	"testing"
 	"time"
 
@@ -129,6 +130,8 @@ func (f *fakeChildBalancer) UpdateSubConnState(sc balancer.SubConn, state balanc
 func (f *fakeChildBalancer) Close() {}
 
 func (f *fakeChildBalancer) ExitIdle() {}
+
+// waitForClientConnStateChangeVerifyClientConnState()
 
 func (f *fakeChildBalancer) waitForClientConnStateChange(ctx context.Context) error {
 	_, err := f.clientConnState.Receive(ctx)
@@ -498,5 +501,55 @@ func newLBConfigWithOneEDS(edsServiceName string) *LBConfig {
 			Type:           DiscoveryMechanismTypeEDS,
 			EDSServiceName: edsServiceName,
 		}},
+	}
+}
+
+func (s) TestOutlierDetection(t *testing.T) {
+	// Turn OD on
+	oldOutlierDetection := envconfig.XDSOutlierDetection
+	envconfig.XDSOutlierDetection = true
+	defer func() {
+		envconfig.XDSOutlierDetection = oldOutlierDetection
+	}()
+
+	// setup
+	edsLBCh := testutils.NewChannel()
+	xdsC, cleanup := setup(edsLBCh)
+	defer cleanup()
+
+	builder := balancer.Get(Name)
+	edsB := builder.Build(newNoopTestClientConn(), balancer.BuildOptions{})
+	if edsB == nil {
+		t.Fatalf("builder.Build(%s) failed and returned nil", Name)
+	}
+	defer edsB.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	// Update Cluster Resolver with Client Conn State
+	if err := edsB.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState:  xdsclient.SetClient(resolver.State{}, xdsC),
+		BalancerConfig: newLBConfigWithOneEDS(testEDSServcie),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := xdsC.WaitForWatchEDS(ctx); err != nil {
+		t.Fatalf("xdsClient.WatchEndpoints failed with error: %v", err)
+	}
+
+	// Invoke EDS Callback - causes child balancer to be built
+	// and then UpdateClientConnState called on it
+	xdsC.InvokeWatchEDSCallback("", xdsresource.EndpointsUpdate{}, nil)
+
+	// I think it does need to first wait for the balancer to be built before
+	// expecting child configuration on it
+	edsLB, err := waitForNewChildLB(ctx, edsLBCh)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Expect Child configuration with OD config in it
+	if err := edsLB.waitForClientConnStateChange(ctx); err != nil { // Switch to my new function of also verifying that Client Conn State matches
+		t.Fatalf("EDS impl got unexpected update: %v", err)
 	}
 }
