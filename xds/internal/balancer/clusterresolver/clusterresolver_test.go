@@ -141,7 +141,7 @@ func (f *fakeChildBalancer) ExitIdle() {}
 func (f *fakeChildBalancer) waitForClientConnStateChangeVerifyBalancerConfig(ctx context.Context, wantCCS balancer.ClientConnState) error {
 	ccs, err := f.clientConnState.Receive(ctx)
 	if err != nil {
-
+		return err
 	}
 	gotCCS := ccs.(balancer.ClientConnState)
 	if diff := cmp.Diff(gotCCS, wantCCS, cmpopts.IgnoreFields(resolver.State{}, "Addresses", "ServiceConfig", "Attributes")); diff != "" {
