@@ -21,24 +21,24 @@ package clusterresolver
 import (
 	"context"
 	"fmt"
-	"github.com/google/go-cmp/cmp/cmpopts"
-	"google.golang.org/grpc/balancer/roundrobin"
-	"google.golang.org/grpc/balancer/weightedtarget"
-	"google.golang.org/grpc/internal/envconfig"
-	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
-	"google.golang.org/grpc/xds/internal/balancer/clusterimpl"
-	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
-	"google.golang.org/grpc/xds/internal/balancer/priority"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/grpc/balancer"
+	"google.golang.org/grpc/balancer/roundrobin"
+	"google.golang.org/grpc/balancer/weightedtarget"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/grpctest"
+	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/xds/internal"
+	"google.golang.org/grpc/xds/internal/balancer/clusterimpl"
+	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
+	"google.golang.org/grpc/xds/internal/balancer/priority"
 	"google.golang.org/grpc/xds/internal/testutils/fakeclient"
 	"google.golang.org/grpc/xds/internal/xdsclient"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
@@ -138,7 +138,6 @@ func (f *fakeChildBalancer) Close() {}
 
 func (f *fakeChildBalancer) ExitIdle() {}
 
-// waitForClientConnStateChangeVerifyClientConnState()
 func (f *fakeChildBalancer) waitForClientConnStateChangeVerifyBalancerConfig(ctx context.Context, wantCCS balancer.ClientConnState) error {
 	ccs, err := f.clientConnState.Receive(ctx)
 	if err != nil {
@@ -526,23 +525,22 @@ func newLBConfigWithOneEDSAndOutlierDetection(edsServiceName string, odCfg *outl
 	lbCfg := newLBConfigWithOneEDS(edsServiceName)
 	lbCfg.DiscoveryMechanisms[0].OutlierDetection = odCfg
 	return lbCfg
-	// The only thing that will happen after this LBConfig is returned is
-	// the cluster impl child will get added to it.
 }
 
+// TestOutlierDetection tests the Balancer Config sent down to the child
+// priority balancer when Outlier Detection is turned on. The Priority
+// Configuration sent downward should have a top level Outlier Detection Policy
+// for each priority.
 func (s) TestOutlierDetection(t *testing.T) {
-	// Turn OD on
 	oldOutlierDetection := envconfig.XDSOutlierDetection
 	envconfig.XDSOutlierDetection = true
 	defer func() {
 		envconfig.XDSOutlierDetection = oldOutlierDetection
 	}()
 
-	// setup
 	edsLBCh := testutils.NewChannel()
 	xdsC, cleanup := setup(edsLBCh)
 	defer cleanup()
-
 	builder := balancer.Get(Name)
 	edsB := builder.Build(newNoopTestClientConn(), balancer.BuildOptions{})
 	if edsB == nil {
@@ -553,14 +551,14 @@ func (s) TestOutlierDetection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 
-	// CDS Balancer gets Cluster Update, converts to LB Config, by the time it
-	// gets to this level, already a created Outlier Detection Config.
-
-
-	// Update Cluster Resolver with Client Conn State
+	// Update Cluster Resolver with Client Conn State with Outlier Detection
+	// configuration present. This is what will be passed down to this balancer,
+	// as CDS Balancer gets the Cluster Update and converts the Outlier
+	// Detection data to an Outlier Detection configuration and sends it to this
+	// level.
 	if err := edsB.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, xdsC),
-		BalancerConfig: newLBConfigWithOneEDSAndOutlierDetection(testEDSService, noopODCfg), // Needs to scale up to handle Outlier Detection
+		BalancerConfig: newLBConfigWithOneEDSAndOutlierDetection(testEDSService, noopODCfg),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -568,19 +566,18 @@ func (s) TestOutlierDetection(t *testing.T) {
 		t.Fatalf("xdsClient.WatchEndpoints failed with error: %v", err)
 	}
 
-	// Invoke EDS Callback - causes child balancer to be built
-	// and then UpdateClientConnState called on it
-	xdsC.InvokeWatchEDSCallback("", /*xdsresource.EndpointsUpdate{}or */defaultEndpointsUpdate, nil)
-
-	// I think it does need to first wait for the balancer to be built before
-	// expecting child configuration on it
+	// Invoke EDS Callback - causes child balancer to be built and then
+	// UpdateClientConnState called on it with Outlier Detection as a direct
+	// child.
+	xdsC.InvokeWatchEDSCallback("", defaultEndpointsUpdate, nil)
 	edsLB, err := waitForNewChildLB(ctx, edsLBCh)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	localityID := internal.LocalityID{Zone: "zone"}
-	// Expect Child configuration with OD config in it
+	// The priority configuration generated should have Outlier Detection as a
+	// direct child due to Outlier Detection being turned on.
 	pCfgWant := &priority.LBConfig{
 		Children: map[string]*priority.Child{
 			"priority-0-1": {
@@ -591,8 +588,8 @@ func (s) TestOutlierDetection(t *testing.T) {
 						ChildPolicy: &internalserviceconfig.BalancerConfig{
 							Name: clusterimpl.Name,
 							Config: &clusterimpl.LBConfig{
-								Cluster:               testClusterName,
-								EDSServiceName:        "test-eds-service-name",
+								Cluster:        testClusterName,
+								EDSServiceName: "test-eds-service-name",
 								ChildPolicy: &internalserviceconfig.BalancerConfig{
 									Name: weightedtarget.Name,
 									Config: &weightedtarget.LBConfig{
@@ -616,13 +613,7 @@ func (s) TestOutlierDetection(t *testing.T) {
 
 	if err := edsLB.waitForClientConnStateChangeVerifyBalancerConfig(ctx, balancer.ClientConnState{
 		BalancerConfig: pCfgWant,
-	}/*(normal config sent downward) <- figure out what this ends up being + Outlier Detection*/); err != nil { // Switch to my new function of also verifying that Client Conn State matches
+	}); err != nil {
 		t.Fatalf("EDS impl got unexpected update: %v", err)
 	}
 }
-
-// Functionality: finish this test
-// Cleanup (merge into t test?)
-// Rebase onto previous PR
-
-// Then Outlier Detection LB Policy itself (with changes pulled from the cached 1/3rd of changes already implemented)

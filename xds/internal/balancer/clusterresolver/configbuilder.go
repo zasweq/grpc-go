@@ -21,18 +21,18 @@ package clusterresolver
 import (
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/internal/envconfig"
-	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"sort"
 
 	"google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/balancer/weightedroundrobin"
 	"google.golang.org/grpc/balancer/weightedtarget"
+	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/hierarchy"
 	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/xds/internal"
 	"google.golang.org/grpc/xds/internal/balancer/clusterimpl"
+	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"google.golang.org/grpc/xds/internal/balancer/priority"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
@@ -105,14 +105,6 @@ type priorityConfig struct {
 // used.
 func buildPriorityConfigJSON(priorities []priorityConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) ([]byte, []resolver.Address, error) {
 	pc, addrs, err := buildPriorityConfig(priorities, xdsLBPolicy)
-
-	// ^^^ if no env var set, regular codepath of priority with top level for each priority cluster_impl
-
-	// if env var set, new codepath of outlier detection sitting at top level of priority level, with cluster_impl
-	// as child
-
-
-
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build priority config: %v", err)
 	}
@@ -122,14 +114,12 @@ func buildPriorityConfigJSON(priorities []priorityConfig, xdsLBPolicy *internals
 	}
 	return ret, addrs, nil
 }
-// Switch to copy and see if that works (i.e. not a *)
-func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) (*priority.LBConfig, []resolver.Address, error) { // This type is generic, I think I can just use this?
+
+func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) (*priority.LBConfig, []resolver.Address, error) {
 	var (
 		retConfig = &priority.LBConfig{Children: make(map[string]*priority.Child)}
 		retAddrs  []resolver.Address
 	)
-	// if not set, normal, if set, wrap the cluster impl config in an Outlier Detection config as such
-	// OutlierDetection{ChildPolicy: cluster impl}
 	for i, p := range priorities {
 		switch p.mechanism.Type {
 		case DiscoveryMechanismTypeEDS:
@@ -190,8 +180,7 @@ func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalservi
 	return retConfig, retAddrs, nil
 }
 
-// Map[string] ClusterImpl.Config -> map[string] OutlierDetection.Config
-func convertClusterImplMapToOutlierDetection(ciCfgs map[string]*clusterimpl.LBConfig, odCfg *outlierdetection.LBConfig) map[string]*outlierdetection.LBConfig { // All wrapped in same config due to Outlier Detection mapped to discovery mechanism
+func convertClusterImplMapToOutlierDetection(ciCfgs map[string]*clusterimpl.LBConfig, odCfg *outlierdetection.LBConfig) map[string]*outlierdetection.LBConfig {
 	odCfgs := make(map[string]*outlierdetection.LBConfig)
 	for n, c := range ciCfgs {
 		odCfgs[n] = makeClusterImplOutlierDetectionChild(*c, *odCfg)
@@ -199,10 +188,9 @@ func convertClusterImplMapToOutlierDetection(ciCfgs map[string]*clusterimpl.LBCo
 	return odCfgs
 }
 
-// ClusterImpl.Config -> OutlierDetection.Config
-func makeClusterImplOutlierDetectionChild(ciCfg clusterimpl.LBConfig, odCfg outlierdetection.LBConfig) *outlierdetection.LBConfig { // Discovery mechanism is tied to EDS/DNS
+func makeClusterImplOutlierDetectionChild(ciCfg clusterimpl.LBConfig, odCfg outlierdetection.LBConfig) *outlierdetection.LBConfig {
 	odCfgRet := odCfg
-	odCfgRet.ChildPolicy = &internalserviceconfig.BalancerConfig{Name: clusterimpl.Name, Config: &ciCfg} // This can panic if odCfg is nil. This shouldn't be nil though, as per CDS balancer. I can add check
+	odCfgRet.ChildPolicy = &internalserviceconfig.BalancerConfig{Name: clusterimpl.Name, Config: &ciCfg} // This can panic if odCfg is nil. This shouldn't be nil though, as per CDS balancer. I can add check if you want.
 	return &odCfgRet
 }
 
