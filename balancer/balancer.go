@@ -273,7 +273,7 @@ type PickResult struct {
 	// this will be called with a nil parameter.  If the SubConn is not a valid
 	// type, Done may not be called.  May be nil if the balancer does not wish
 	// to be notified when the RPC completes.
-	Done func(DoneInfo)
+	Done func(DoneInfo) // Done is provided BY THE BALANCER to be notified when the RPC completes. This is passing down data about the RPC to the balancer so the balancer can be notified.
 }
 
 // TransientFailureError returns e.  It exists for backward compatibility and

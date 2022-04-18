@@ -222,6 +222,8 @@ func (c *clusterNode) handleResp(clusterUpdate xdsresource.ClusterUpdate, err er
 		return
 	}
 
+	// Check here - if in set persisted in c
+
 	c.receivedUpdate = true
 	c.clusterUpdate = clusterUpdate
 
@@ -276,7 +278,7 @@ func (c *clusterNode) handleResp(clusterUpdate xdsresource.ClusterUpdate, err er
 	for child := range newChildren {
 		if _, inChildrenAlready := mapCurrentChildren[child]; !inChildrenAlready {
 			createdChild = true
-			mapCurrentChildren[child] = createClusterNode(child, c.clusterHandler.parent.xdsClient, c.clusterHandler)
+			mapCurrentChildren[child] = createClusterNode(child, c.clusterHandler.parent.xdsClient, c.clusterHandler) // Pass the set as an arg here -
 		}
 	}
 

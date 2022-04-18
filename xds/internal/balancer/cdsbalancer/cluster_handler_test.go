@@ -683,3 +683,37 @@ func (s) TestSwitchClusterNodeBetweenLeafAndAggregated(t *testing.T) {
 		t.Fatal("Timed out waiting for update from update channel.")
 	}
 }
+
+func (s) TestAggregateClusterGraphLoop(t *testing.T) {
+	// Can't do validation in xdsclient because there could be two watches on same cluster...
+	// What validations are there in xdsclient that prevent this? Both (a a) (a b a)
+	ch, fakeClient := setupTests()
+	ch.updateRootCluster(aggregateClusterService)
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	_, err := fakeClient.WaitForWatchCluster(ctx)
+	if err != nil {
+		t.Fatalf("xdsClient.WatchCDS failed with error: %v", err)
+	}
+
+	// Try a (child a, child b first)
+	fakeClient.InvokeWatchClusterCallback(xdsresource.ClusterUpdate{
+		ClusterType:             xdsresource.ClusterTypeAggregate,
+		ClusterName:             aggregateClusterService,
+		PrioritizedClusterNames: []string{aggregateClusterService, logicalDNSService}, // Does this error?
+	}, nil) // Is the update persisted in the xdsclient and it will receive two updates?
+	fakeClient.WaitForWatchCluster(ctx)
+	fakeClient.WaitForWatchCluster(ctx)
+	fakeClient.InvokeWatchClusterCallback(xdsresource.ClusterUpdate{
+		ClusterType:             xdsresource.ClusterTypeAggregate,
+		ClusterName:             aggregateClusterService,
+		PrioritizedClusterNames: []string{aggregateClusterService, logicalDNSService}, // Does this error?
+	}, nil) // Is the update persisted in the xdsclient and it will receive two updates?
+	fakeClient.InvokeWatchClusterCallback(xdsresource.ClusterUpdate{
+		ClusterType: xdsresource.ClusterTypeLogicalDNS,
+		ClusterName: logicalDNSService,
+	}, nil)
+
+	// After fixing this fix import
+}
