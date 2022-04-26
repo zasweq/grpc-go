@@ -23,12 +23,12 @@ package outlierdetection
 import (
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/resolver"
 	"math"
 	"math/rand"
 	"time"
 
 	"google.golang.org/grpc/balancer"
+	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 )
 
@@ -103,36 +103,90 @@ func (bb) Name() string {
 	return Name
 }
 
-// Priority parent update client conn state with what
-
-// child lb is cluster impl
-
 type outlierDetectionBalancer struct {
-	// What state do we need?
-	// TODO: Switch this resolver.Address to a string - this needs to be documented in gRFC as well
+	// TODO: The fact that this is only an address string needs to be documented in the gRFC
 	// This gets populated in UpdateClientConnState...
 	// When the outlier_detection LB policy receives an address update, it will
 	// create a map entry for each subchannel address in the list, and remove
 	// each map entry for a subchannel address not in the list.
-	odAddrs map[string]/*pointer or not pointer*/*object // This is the central data structure to everything // Now that this is a pointer, does this break anything?
+
+	// What
+	// there are two attribute lists in resolver.Address, attributes for SubConn
+	// and also attributes for Balancer to create SubConn, which ones affect subchannel uniqueness/identity?
+
+	// Attributes is an arbitrary length key value list, how to combine that into map key?
+
+	// Mark's statement in chat - "Note that we have two types of per-address attributes: those that affect
+	// subchannel uniqueness/identity and those that don't. I think the map key needs to include the attributes
+	// that do affect subchannel uniqueness/identity"
+
+	// How to merge attributes into key***...a lot of code is dependent on this
+	// so perhaps do this first. Including all the code in the operations you
+	// still need to code.
+
+	// 1. Switch to resolver addressMap
+
+	// string is the actual string of the address, the dimensionality of different attributes
+	// is across the address list specific addresses attributes with same address string (arbitrary value for the address)
+
+	// type AddressMap struct {
+	//       m map[string]addressMapEntryList
+	// }
+
+	// Yeah switch to the struct as a whole
+	odAddrs map[string]/*pointer or not pointer*/*object // TODO: two types of per address attributes, needs to include attributes that affect subchannel uniqueness/identity
+	// 2. Figure out run() goroutine and syncing operations
+
+	// I try to avoid a run goroutine as much as possible
+	// But if I need a run(), I will probably try to move all the operations there
+	// Unless it's to just forward the update, without needing to sync any field
+
+	// Syncing fields require either putting operations in run() or lock unlock
+	// on mutex. So figure out which ones are just forward without syncing field
+	// - these operations don't have to be synced by putting in the run() goroutine
+
 
 	numAddrsEjected int // For fast calculations of percentage of addrs ejected
 
-	ejectionTime time.Time // timestamp used ejecting addresses per iteration
+	ejectionTime time.Time // timestamp used ejecting addresses per iteration, don't make state?
 
 	// wil get read a lot for the actual Outlier Detection algorithm itself
 	odCfg *LBConfig
 
-	cc balancer.ClientConn
+	cc balancer.ClientConn // Priority parent right?
 
 	// child policy balancer.Balancer (cluster impl)
 	child balancer.Balancer // cluster impl - when is this built?
 
+
+	timerStartTime time.Time
+	// Note: seperate logically
+	// 5 + 3 9time.New Timer diff
+	// on timer go off timer.NewTimer(interval from config)
+
+	intervalTimer time.Timer
+	// When this goes off, trigger OD algorithm
+	// When does this gets reset/cleared?
+	// When receiving a config update...
+
+
+
+	// After the Outlier Detection algorithm finishes, starts a new one based
+	// on the interval time
+
+	// time.NewTimer(Duration)
+	// <-timer.chan or something
+
+
+	// map sc (all parent knows about) -> scw (all children know about, this balancer wraps scs in scw)
+
 	// I plan to sync all operations with a run() goroutine - so no need for mutexes?
 }
 
-// What operations do we need? What can talk to this in regards to other parts of the system?
-// I plan to sync all operations with a run() goroutine - so no need for mutexes?
+// noopConfig returns whether this balancer is configured with a logical no-op configuration or not.
+func (b *outlierDetectionBalancer) noopConfig() bool {
+	return b.odCfg.SuccessRateEjection == nil && b.odCfg.FailurePercentageEjection == nil
+}
 
 func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 
@@ -146,17 +200,6 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		return balancer.ErrBadResolverState
 	}
 	b.odCfg = lbCfg
-
-	// Create a new interval timer here - with Mark's thing of 5 + (3), not (8)
-
-	// Everything that gets read from the config is knobs on the algorithm, which gets run every interval timer
-	// Persist the config and read fields from those.
-	// The only question about what to do is if the interval changes? My gut tells me to reset the whole countdown
-	// even if in between an iteration, and construct a whole new timer.
-
-
-	// I think persisting the config and reading from that in regards to
-	// algorithms etc.
 
 	// What to do about an already running interval timer, clear and make a new
 	// one? I think I'll do that. Yeah I think resetting and making a whole
@@ -225,16 +268,84 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 
 	// cleanup for this whole component?
 
+	// When a new config is provided, if the timer start timestamp is unset, set
+	// it to the current time and start the timer for the configured interval,
+	// then for each address, reset the call counters. If the timer start
+	// timestamp is set, instead cancel the existing timer and start the timer
+	// for the configured interval minus the difference between the current time
+	// and the previous start timestamp, or 0 if that would be negative.
+	var interval time.Duration
+	if b.timerStartTime.IsZero() {
+		b.timerStartTime = time.Now()
+		// for each address, "reset the call counters" << what does this mean I'm pretty sure it means clear both active and inactive
+		for _, obj := range b.odAddrs {
+			obj.callCounter.activeBucket = bucket{}
+			obj.callCounter.inactiveBucket = bucket{}
+		}
+		/*if !b.noopConfig() { // could move both these conditionals after and have a variable interval
+			b.intervalTimer = time.NewTimer(b.odCfg.Interval /*configured interval)
+		}*/
+		interval = b.odCfg.Interval
+	} else {
+		// cancel the existing timer and start the timer
+		// for the configured interval minus the difference between the current time
+		// and the previous start timestamp, or 0 if that would be negative.
+		// configured interval - (current time - previous start timestamp (b.timerStartTime)), if negative make 0 **do this when get back
+		interval := b.odCfg.Interval - (time.Now().Sub(b.timerStartTime))
+		if interval < 0 {
+			interval = 0
+		}
+		// "If a config is provided with both the `success_rate_ejection` and
+		// `failure_percentage_ejection` fields unset, skip starting the timer.
+		/*if !b.noopConfig() {
+			b.intervalTimer = time.NewTimer(interval /*difference between the current time and the previous start timestamp, or 0 if that would be negative.) // This implictly cancels it right? Or is there another step to take?
+		}*/
+	}
+
+	if !b.noopConfig() {
+		b.intervalTimer = time.NewTimer(interval)
+	} else {
+		// "If a config is provided with both the `success_rate_ejection` and
+		// `failure_percentage_ejection` fields unset, skip starting the timer and
+		// unset the timer start timestamp."
+		b.timerStartTime = time.Time{}
+	}
+
+
+
+	// "If a config is provided with both the `success_rate_ejection` and
+	// `failure_percentage_ejection` fields unset, skip starting the timer and
+	// unset the timer start timestamp."
+	// move this somewhere else (i.e. beginning of function?
+	// if no op config
+	/*if b.noopConfig() {
+		//  skip starting timer
+		//  unset timer start timestamp
+		b.timerStartTime = time.Time{}
+	}*/
+
 
 	// then pass the address list along to the child policy.
-	b.child.UpdateClientConnState(s)
+	b.child.UpdateClientConnState(s) // return this at the end instead? right now we're ignoring value
 
 	// s.balancerConfig - configuration for this outlier detection
 	return nil
 }
 
 func (b *outlierDetectionBalancer) ResolverError(err error) {
+	// This operation isn't defined in the gRFC. Pass through? If so, I don't think you need to sync.
+	// If not pass through, and it actually does something you'd need to sync. (See other balancers)
 
+	// See other balancers...sometimes they combine into one ClientConn update struct which gets synced in run()
+	// Or just pass through...see other balancers, seems like an operation that needs to be part of synced
+
+	// What is the desired behavior of this balancer when it receives a resolver error?
+	// Does it propogate all the way down? When does it get acted on? What happens in the other xds balancers?
+
+	// Graceful switch simply forwards the error downward (to either current or pending)
+
+	// What happens to all the state when you receive an error? (Again, see other xds balancers), what does a resolver error signify logically? Are we clearing out this balancer's state?
+	// Clearing out map + lb config etc. until you get a new Client Conn update with a good config? Is this the state machine?
 }
 
 func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
@@ -269,11 +380,16 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 }
 
 func (b *outlierDetectionBalancer) Close() {
-
+	// This operation isn't defined in the gRFC. Pass through? If so, I don't think you need to sync.
+	// If not pass through, and it actually does something you'd need to sync. (See other balancers)
+	// Cleanup stage - go specific cleanup
 }
 
 func (b *outlierDetectionBalancer) ExitIdle() {
+	// This operation isn't defined in the gRFC. Pass through? If so, I don't think you need to sync.
+	// If not pass through, and it actually does something you'd need to sync. (See other balancers)
 
+	// Exit Idle - go specific cleanup, see other balancers
 }
 
 
@@ -284,6 +400,7 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 type wrappedPicker struct {
 	// childPicker, embedded or wrapped
 	childPicker balancer.Picker // written to/constructed in UpdateState
+	noopPicker bool
 }
 
 func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
@@ -299,7 +416,9 @@ func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 	// needs to be scw
 
 	done := func(di balancer.DoneInfo) {
-		incrementCounter(pr.SubConn, di)
+		if !wp.noopPicker {
+			incrementCounter(pr.SubConn, di)
+		}
 		pr.Done(di)
 	}
 
@@ -339,10 +458,18 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 
 
 func (b *outlierDetectionBalancer) UpdateState(s balancer.State) {
+	// this needs to do not the counting if the config is unset
+	// hold up...do you ever **not determined by update addrs, determined by config***, a synced operation
+	// gate it here...but then a config update can cause a Picker update...
+
 	b.cc.UpdateState(balancer.State{ // Is this all you need?
 		ConnectivityState: s.ConnectivityState,
 		Picker: &wrappedPicker{
 			childPicker: s.Picker,
+			// If both the `success_rate_ejection` and
+			// `failure_percentage_ejection` fields are unset in the
+			// configuration, the picker should not do that counting.
+			noopPicker: b.noopConfig(),
 		},
 	})
 	// The outlier_detection LB policy will provide a picker that delegates to
@@ -438,7 +565,12 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	return scw, nil
 }
 
-// don't reuse same cluster/target, have a max depth
+func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []resolver.Address) {
+	// typecast sc to scw
+	// see if scw is ejected, if so don't forward
+
+	//
+}
 
 func max(x, y int64) int64 {
 	if x < y {
@@ -455,10 +587,36 @@ func min(x, y int64) int64 {
 }
 
 func (b *outlierDetectionBalancer) run() {
+	// ** Triage other xds balancers to see what operations they sync
+	for {
+		select {
+		// Need to fill out the other operations...are they pass through (i.e. Resolver Error and stuff) or do they read here?
+		// Each operation both ways?...what type of channel do they read from? You can combine multiple onto a single channel, have a channel for each one etc.
+
+		// UpdateClientConnState is def one....the whole of the od algorithm reads from the config this writes...
+		// What amount of statements executed before it gets to here?
+
+		// ResolverError?
+		// UpdateSubConnState?
+		// Close (like graceful switch, this is an event that can be synced in many different ways)
+
+		// NewSubConn (yes for sure, adds to map - or protect map with mutex like cluster impl)
+		// RemoveSubConn (removes from map, no, this is determined by address list, I think just removes scw from address list, still reading it so sync it here. Need to add functionality for this)
+		// UpdateAddresses (algorithm I proposed, uses map so yes needs to be synced)
+		// UpdateState (yes, reads sc...I think so?)
+		// ResolveNow?
+		// Target?
+
+		// Should I finish all of these operations before figuring any of this out? I.e. ordering of operations
+
+		case <-b.intervalTimer.C:
+			// Outlier Detection algo here. Quite large, so maybe make a helper function
+		}
+	}
 
 	// interval timer receive (need some way of representing interval timer with a trigger) this logic can either be inline or in a handle function
 	// Every interval trigger (determined by config):
-
+	b.timerStartTime = time.Now() // could also use this for ejection time, unless something can also write to it before reading...
 	// 1. Record the timestamp for use when ejecting addresses in this iteration. "timestamp that was recorded when the timer fired"
 	b.ejectionTime = time.Now() // I can write it here - is it because it's not a value..."referenced by the subchannel wrapper that was picked" - so object value needs to be a pointer?
 	// ejectionTime could be a field plumbed through methods defined - but writing to a field
@@ -874,6 +1032,11 @@ type object struct { // Now that this is a pointer, does this break anything?
 // ResolveNow()
 
 // Target()
+
+
+
+// Figure out operations...and also this whole per subchannel attributes
+
 
 
 // Figure out linkage between a wrapped SubConn and the balancer...the SubConn API doesn't do anything.

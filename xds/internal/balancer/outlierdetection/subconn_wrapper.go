@@ -128,6 +128,13 @@ func (scw *subConnWrapper) uneject() {
 // This def implies going downward - "child policy"
 
 
+// State that gets interfaced with in balancer.
+
+// ejected T | F
+
+// UpdateState reads this to determine whether to forward down...
+
+// UpdateAddresses
 
 
 
