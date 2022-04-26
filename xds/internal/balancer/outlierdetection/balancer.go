@@ -42,9 +42,13 @@ func init() {
 type bb struct{}
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
-
+	// am = NewAddressMap(), stick this as a field of balancer
+	am := resolver.NewAddressMap()
 	// go b.run() <- way of synchronizing
-	return &outlierDetectionBalancer{}
+	return &outlierDetectionBalancer{
+		cc: cc,
+		odAddrs: am,
+	}
 }
 
 func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
@@ -134,7 +138,12 @@ type outlierDetectionBalancer struct {
 	// }
 
 	// Yeah switch to the struct as a whole
-	odAddrs map[string]/*pointer or not pointer*/*object // TODO: two types of per address attributes, needs to include attributes that affect subchannel uniqueness/identity
+	odAddrs *resolver.AddressMap
+
+	// ^^^ pops out an interface{} as the value, need to typecast it from interface{} to object
+	// vvv already of type object
+
+	// odAddrs map[string]/*pointer or not pointer*/*object // TODO: two types of per address attributes, needs to include attributes that affect subchannel uniqueness/identity
 	// 2. Figure out run() goroutine and syncing operations
 
 	// I try to avoid a run goroutine as much as possible
@@ -144,6 +153,8 @@ type outlierDetectionBalancer struct {
 	// Syncing fields require either putting operations in run() or lock unlock
 	// on mutex. So figure out which ones are just forward without syncing field
 	// - these operations don't have to be synced by putting in the run() goroutine
+
+	// Can also intermingle cleanup with 2 after you fix odAddrs
 
 
 	numAddrsEjected int // For fast calculations of percentage of addrs ejected
@@ -239,32 +250,48 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	// This list of addresses is used for the algorithm
 
 
-	addrs := make(map[string]bool) // for fast lookups during deletion phase
+	addrs := make(map[resolver.Address]bool) // for fast lookups during deletion phase
 
 	// Create a map entry for each subchannel address in the list (create a whole new one or create new ones for new addresses?)
 	// as you are iterating through, build a set for o(1) access during the remove stage using
 	// the Addresses.Addr field
 	for _, addr := range s.ResolverState.Addresses {
-		addrs[addr.Addr] = true // use this to build a set
+		addrs[addr] = true // use this to build a set
 
 		// create a whole new map entry or keep what's currently there?
 		// keep what's currently there
-		if _, ok := b.odAddrs[addr.Addr]; ok { // Not yet present
+		/*if _, ok := b.odAddrs[addr.Addr]; ok { // Not yet present
 			// create a whole new one
 			b.odAddrs[addr.Addr] = &object{} // Do we need to initialize any part of this or are zero values sufficient?
-		}
+		}*/
+
+		b.odAddrs.Set(addr, &object{}) // Creates or keeps what is currently there. Does this within Set().
 	}
 
 	// remove each map entry for a subchannel address not in the list
 	// iterate through addrs in map
-	for addr, _ := range b.odAddrs {
+	/*for addr, _ := range b.odAddrs {
 		// if key not in set remove
-		if !addrs[addr] {
+		if !addrs[addr] { // Uses the address string here...not the full address
 			delete(b.odAddrs, addr)
 		}
 		// do we have to cleanup the object?
 
+	}*/
+	// Iterate through the address map and delete addresses not present in list
+	b.odAddrs.Keys() // []Address, full object struct, I think once you get evaluate this expression, it is immutable
+
+	// iterate through []Address list, for each Address, check if it's in that addrs set we build (need to switch to whole address)
+	// and if not in, remove from Address Map
+	for _, addr := range b.odAddrs.Keys() {
+		if !addrs[addr] {
+			b.odAddrs.Delete(addr)
+		}
 	}
+
+
+
+
 
 	// cleanup for this whole component?
 
@@ -278,10 +305,33 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	if b.timerStartTime.IsZero() {
 		b.timerStartTime = time.Now()
 		// for each address, "reset the call counters" << what does this mean I'm pretty sure it means clear both active and inactive
-		for _, obj := range b.odAddrs {
+
+		b.odAddrs.Keys() // [] Addresses, this is what you iterate through
+		// Use these keys to get values, typecast that value into the object{} type,
+		// then clear bucket
+		/*for _, addr := range b.odAddrs.Keys() {
+			val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+			if !ok { // Shouldn't happen
+				continue
+			}
+			// typecast val to obj,
+			// shouldn't error either
+			obj, ok := val.(object)
+			if !ok {
+				continue
+			}
+			obj.callCounter.activeBucket = bucket{}
+			obj.callCounter.inactiveBucket = bucket{}
+		}*/
+		for _, obj := range b.objects() {
 			obj.callCounter.activeBucket = bucket{}
 			obj.callCounter.inactiveBucket = bucket{}
 		}
+		/* for _, obj := range b.odAddrs { // COME BACK HERE
+			obj.callCounter.activeBucket = bucket{}
+			obj.callCounter.inactiveBucket = bucket{}
+		}*/
+
 		/*if !b.noopConfig() { // could move both these conditionals after and have a variable interval
 			b.intervalTimer = time.NewTimer(b.odCfg.Interval /*configured interval)
 		}*/
@@ -539,7 +589,8 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 		return scw, nil
 	}
 
-	if _, ok := b.odAddrs[addrs[0].Addr]; !ok {
+	val, ok := b.odAddrs.Get(addrs[0])
+	if !ok {
 		// "Ignore subchannel for outlier detection" - what does this mean now that
 		// we wrap everything anyway...wrap it but don't persist in map. ** Take this and actually implement it
 		// map persistence will come later on UpdateAddress call.
@@ -551,7 +602,10 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	// scw // All this data you can either interact with here or do it somewhere else
 
 
-	b.odAddrs[addrs[0].Addr].sws = append(b.odAddrs[addrs[0].Addr].sws, *scw) // or do we make this an array of pointers to scw and don't dereference?
+	// Does this actually write to the corresponding heap memory?
+	obj, ok := val.(*object) // is this ring
+
+	obj.sws = append(obj.sws, *scw) // or do we make this an array of pointers to scw and don't dereference?
 
 	// If that address is currently ejected, that subchannel wrapper's eject
 	// method will be called.
@@ -559,7 +613,7 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	// Logical invaraint of the type - "The latest ejection timestamp, or null if the address is currently not ejected"
 	// if mapentry...latest ejection timestamp != null
 	//      scw.eject()
-	if !b.odAddrs[addrs[0].Addr/*could also read this into a seperate variable*/].latestEjectionTimestamp.IsZero() {
+	if !obj.latestEjectionTimestamp.IsZero() {
 		scw.eject()
 	}
 	return scw, nil
@@ -585,6 +639,32 @@ func min(x, y int64) int64 {
 	}
 	return y
 }
+
+// switch for _, obj := range b.odAddrs
+// to for _, obj := range b.objects()
+
+// returns []object from odAddrs
+func (b *outlierDetectionBalancer) objects() []*object {
+	var objs []*object
+	for _, addr := range b.odAddrs.Keys() {
+		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+		if !ok { // Shouldn't happen
+			continue
+		}
+		// typecast val to obj,
+		// shouldn't error either
+		obj, ok := val.(*object)
+		if !ok {
+			continue
+		}
+		objs = append(objs, obj)
+	}
+	return objs // what happens when you range over a nil slice?
+}
+
+// We also don't need just []{object, object, object, object}
+
+// We need []{{addr, obj}, {addr, obj}, {addr, obj}, {addr, obj}}, what is best data type/way to represent this?
 
 func (b *outlierDetectionBalancer) run() {
 	// ** Triage other xds balancers to see what operations they sync
@@ -623,9 +703,46 @@ func (b *outlierDetectionBalancer) run() {
 	// makes more sense?
 
 	// 2. For each address, swap the call counter's buckets in that address's map entry. // Question, so we're using the inactive bucket then for the data to read - I'm pretty sure
-	for _, obj := range b.odAddrs {
+	// for each address is logically equivalent to:
+	/*
+	for _, addr := range b.odAddrs.Keys() {
+				val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+				if !ok { // Shouldn't happen
+					continue
+				}
+				// typecast val to obj,
+				// shouldn't error either
+				obj, ok := val.(object)
+				if !ok {
+					continue
+				}
+				obj.callCounter.activeBucket = bucket{}
+				obj.callCounter.inactiveBucket = bucket{}
+			}
+	*/
+
+	for _, obj := range b.objects() {
 		obj.callCounter.swap()
 	}
+
+	/*for _, addr := range b.odAddrs.Keys() {
+		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+		if !ok { // Shouldn't happen
+			continue
+		}
+		// typecast val to obj,
+		// shouldn't error either
+		obj, ok := val.(object)
+		if !ok {
+			continue
+		}
+		obj.callCounter.swap()
+	}*/
+
+	/*for _, obj := range b.odAddrs {
+		obj.callCounter.swap()
+	}*/
+
 	// 3. If the success_rate_ejection configuration field is set, run the success rate algorithm.
 	if b.odCfg.SuccessRateEjection != nil {
 		b.successRateAlgorithm()
@@ -636,8 +753,42 @@ func (b *outlierDetectionBalancer) run() {
 		b.failurePercentageAlgorithm()
 	}
 
-	// For each address in the map:
-	for addr, obj := range b.odAddrs {
+	/*
+	func (b *outlierDetectionBalancer) objects() []*object {
+		var objs []*object
+		for _, addr := range b.odAddrs.Keys() {
+			val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+			if !ok { // Shouldn't happen
+				continue
+			}
+			// typecast val to obj,
+			// shouldn't error either
+			obj, ok := val.(*object)
+			if !ok {
+				continue
+			}
+			objs = append(objs, obj)
+		}
+		return objs // what happens when you range over a nil slice?
+	}
+	*/
+
+
+	// can't really pull stuff out, I think it's fine to switch each for each Address to this
+
+	// for addr, obj := range b.odAddrs (what is logically equivalent to ranging over map entry)
+	for _, addr := range b.odAddrs.Keys() {
+		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+		if !ok { // Shouldn't happen
+			continue
+		}
+		// typecast val to obj,
+		// shouldn't error either
+		obj, ok := val.(*object)
+		if !ok {
+			continue
+		}
+		// Logically equivalent, you have addr, obj in the for each
 		// If the address is not ejected and the multiplier is greater than 0, decrease the multiplier by 1.
 		if obj.latestEjectionTimestamp.IsZero() && obj.ejectionTimeMultiplier > 0 {
 			obj.ejectionTimeMultiplier--
@@ -660,8 +811,38 @@ func (b *outlierDetectionBalancer) run() {
 		}
 
 		b.odCfg.BaseEjectionTime.Nanoseconds()
-
 	}
+
+
+
+
+
+	// For each address in the map:
+	/*for addr, obj := range b.odAddrs {
+		// If the address is not ejected and the multiplier is greater than 0, decrease the multiplier by 1.
+		if obj.latestEjectionTimestamp.IsZero() && obj.ejectionTimeMultiplier > 0 {
+			obj.ejectionTimeMultiplier--
+			continue
+		}
+		// If it hits here the address is ejected
+
+		// If the address is ejected, and the current time is after
+		// ejection_timestamp + min(base_ejection_time (type: time.Time) * multiplier (type: int),
+		// max(base_ejection_time (type: time.Time), max_ejection_time (type: time.Time))), un-eject the address.
+		// obj.latestEjectionTimestamp /*ejection_timestamp + /*min(bet * multiplier, max(bet, met))
+
+		// min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))
+
+		// max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds())
+
+		if time.Now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) {
+			// uneject address - see algorithm, either do that in a function or do it inline
+			b.unejectAddress(addr)
+		}
+
+		b.odCfg.BaseEjectionTime.Nanoseconds()
+
+	}*/
 
 }
 
@@ -669,7 +850,7 @@ func (b *outlierDetectionBalancer) run() {
 // that have request volume of at least requestVolume.
 func (b *outlierDetectionBalancer) numAddrsWithAtLeastRequestVolume(/*requestVolume uint32 - you don't need this, you can pull this from config stored in balancer*/) uint32 { // either have this return a boolean or just return the number
 	var numAddrs uint32 // will probably need to change this type
-	for _, obj := range b.odAddrs { // "at least"
+	for _, obj := range b.objects() { // "at least"
 		if uint32(obj.callCounter.inactiveBucket.requestVolume) >= b.odCfg.SuccessRateEjection.RequestVolume {
 			numAddrs++
 		}
@@ -687,13 +868,13 @@ func (b *outlierDetectionBalancer) meanAndStdDevOfSuccessesAtLeastRequestVolume(
 	var mean float64 // Right type?
 	// var stddev float64 // Right type?
 
-	for _, obj := range b.odAddrs {
+	for _, obj := range b.objects() {
 		// "of at least success_rate_ejection.request_volume"
 		if uint32(obj.callCounter.inactiveBucket.requestVolume) >= b.odCfg.SuccessRateEjection.RequestVolume { // Is inactive bucket the right one to look at?
 			totalFractionOfSuccessfulRequests += float64(obj.callCounter.inactiveBucket.numSuccesses)/float64(obj.callCounter.inactiveBucket.requestVolume) // Does this cause any problems...? This shouldn't, just adds 000000000 decimals to the end of it
 		}
 	}
-	mean = totalFractionOfSuccessfulRequests / float64(len(b.odAddrs)) // TODO: Figure out types - should this be a float and what's on the left? I feel like with means/std dev you need float for decimal
+	mean = totalFractionOfSuccessfulRequests / float64(b.odAddrs.Len()) // TODO: Figure out types - should this be a float and what's on the left? I feel like with means/std dev you need float for decimal
 
 
 	// to calculate std dev:
@@ -705,13 +886,13 @@ func (b *outlierDetectionBalancer) meanAndStdDevOfSuccessesAtLeastRequestVolume(
 
 	var sumOfSquares float64
 
-	for _, obj := range b.odAddrs { // Comparing the fractions of successful requests
+	for _, obj := range b.objects() { // Comparing the fractions of successful requests
 		// either calculate it inline or store a list and divide
 		devFromMean := float64(obj.callCounter.inactiveBucket.numSuccesses) / float64(obj.callCounter.inactiveBucket.requestVolume)
 		sumOfSquares += devFromMean * devFromMean
 	}
 
-	variance := sumOfSquares / float64(len(b.odAddrs))
+	variance := sumOfSquares / float64(b.odAddrs.Len())
 
 	// Find the variance - divide the sum of the squares by n (it's population because you use every data point)
 	// Take square root of the variance - you now have std dev
@@ -789,9 +970,59 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 
 	mean, stddev := b.meanAndStdDevOfSuccessesAtLeastRequestVolume()
 
+	/*
+	for _, addr := range b.odAddrs.Keys() {
+			val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+			if !ok { // Shouldn't happen
+				continue
+			}
+			// typecast val to obj,
+			// shouldn't error either
+			obj, ok := val.(*object)
+			if !ok {
+				continue
+			}
+	*/
+	for _, addr := range b.odAddrs.Keys() {
+		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+		if !ok {                       // Shouldn't happen
+			continue
+		}
+		// typecast val to obj,
+		// shouldn't error either
+		obj, ok := val.(*object)
+		if !ok {
+			continue
+		}
+		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
+			// stop.
+			return
+		}
 
+		// If the address's total request volume is less than success_rate_ejection.request_volume, continue to the next address.
+		if obj.callCounter.inactiveBucket.requestVolume < int64(b.odCfg.SuccessRateEjection.RequestVolume) {
+			continue
+		}
+
+		// ccb := obj.callCounter.inactiveBucket (both of these would get rid of a lot of verbosity)
+		// sre := b.odCfg.SuccessRateEjection
+
+		//  If the address's success rate is less than (mean - stdev *
+		//  (success_rate_ejection.stdev_factor / 1000)), then choose a random
+		//  integer in [0, 100). If that number is less than
+		//  success_rate_ejection.enforcement_percentage, eject that address.
+		successRate := obj.callCounter.inactiveBucket.numSuccesses / obj.callCounter.inactiveBucket.requestVolume // This needs to be a float, not an int
+		if float64(successRate) < (mean - stddev * (float64(b.odCfg.SuccessRateEjection.StdevFactor) / 1000) ) {
+
+			// choose a random integer in [0, 100). If that number is less than
+			// success_rate_ejection.enforcement_percentage, eject that address.
+			if uint32(rand.Int31n(100)) < b.odCfg.SuccessRateEjection.EnforcementPercentage {
+				b.ejectAddress(addr)
+			}
+		}
+	}
 	// 3. For each address:
-	for addr, obj := range b.odAddrs {
+	/*for addr, obj := range b.odAddrs {
 		// If the percentage of ejected addresses is greater than max_ejection_percent, stop.
 		//
 		if float64(b.numAddrsEjected) / float64(len(b.odAddrs)) * 100 > float64(b.odCfg.MaxEjectionPercent) {
@@ -820,7 +1051,7 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 				b.ejectAddress(addr)
 			}
 		}
-	}
+	}*/
 
 	// 	3a. If the percentage of ejected addresses is greater than max_ejection_percent, stop.
 	//  3b. If the address's total request volume is less than success_rate_ejection.request_volume, continue to the next address.
@@ -848,12 +1079,63 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 
 
 	// 1. If the number of addresses (len(map)) is less than failure_percentage_ejection.minimum_hosts, stop.
-	if uint32(len(b.odAddrs)) < b.odCfg.FailurePercentageEjection.MinimumHosts {
+	if uint32(b.odAddrs.Len()) < b.odCfg.FailurePercentageEjection.MinimumHosts {
 		return
 	}
 
+	/*
+		for _, addr := range b.odAddrs.Keys() {
+				val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+				if !ok { // Shouldn't happen
+					continue
+				}
+				// typecast val to obj,
+				// shouldn't error either
+				obj, ok := val.(*object)
+				if !ok {
+					continue
+				}
+	*/
+	for _, addr := range b.odAddrs.Keys() {
+		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+		if !ok {                       // Shouldn't happen
+			continue
+		}
+		// typecast val to obj,
+		// shouldn't error either
+		obj, ok := val.(*object)
+		if !ok {
+			continue
+		}
+		// If the percentage of ejected addresses is greater than max_ejection_percent, stop.
+
+		// ejected address int as state, add 1 to it when ejected, subtract 1 from it when unejected
+
+		// for loop through addrs, count number of ejected addresses/ len(b.odAddrs)
+
+		// Needs to be a float * 100 VVV
+		// float64(b.numAddrsEjected) / float64(len(b.odAddrs)) * 100 > float64(b.odCfg.MaxEjectionPercent)
+		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
+			// stop.
+			return
+		}
+		// If the address's total request volume is less than failure_percentage_ejection.request_volume, continue to the next address.
+		if uint32(obj.callCounter.inactiveBucket.requestVolume) < b.odCfg.FailurePercentageEjection.RequestVolume {
+			continue
+		}
+		//  2c. If the address's failure percentage is greater than
+		//  failure_percentage_ejection.threshold, then choose a random integer
+		//  in [0, 100). If that number is less than
+		//  failiure_percentage_ejection.enforcement_percentage, eject that
+		//  address.
+		failurePercentage := obj.callCounter.inactiveBucket.numFailures / obj.callCounter.inactiveBucket.requestVolume
+		if uint32(failurePercentage) > b.odCfg.FailurePercentageEjection.EnforcementPercentage {
+			b.ejectAddress(addr)
+		}
+	}
+
 	// 2. for each address
-	for addr, obj := range b.odAddrs {
+	/*for addr, obj := range b.odAddrs {
 		// If the percentage of ejected addresses is greater than max_ejection_percent, stop.
 
 		// ejected address int as state, add 1 to it when ejected, subtract 1 from it when unejected
@@ -879,32 +1161,50 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 		if uint32(failurePercentage) > b.odCfg.FailurePercentageEjection.EnforcementPercentage {
 			b.ejectAddress(addr)
 		}
-	}
+	}*/
 
 }
 
-func (b *outlierDetectionBalancer) ejectAddress(addr string/*key entry of map - o(1) access*/) { // I think it makes more sense to do this inline
-	b.numAddrsEjected++
+func (b *outlierDetectionBalancer) ejectAddress(addr resolver.Address/*key entry of map - o(1) access*/) { // I think it makes more sense to do this inline
 	// To eject an address (i.e. a single map entry in the map this balancer holds):
 	// obj := b.odAddrs[key] (to remove verbosity)
 
+	val, ok := b.odAddrs.Get(addr)
+	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
+		return
+	}
+	obj, ok := val.(*object)
+	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
+		return
+	}
+
+	b.numAddrsEjected++
+
 	// set the current ejection timestamp to the timestamp that was recorded when the timer fired
-	b.odAddrs[addr].latestEjectionTimestamp = b.ejectionTime/*timestamp that was recorded when the timer fired - need to plumb this in somehow*/
+	obj.latestEjectionTimestamp = b.ejectionTime/*timestamp that was recorded when the timer fired - need to plumb this in somehow*/
 	// increase the ejection time multiplier by 1
-	b.odAddrs[addr].ejectionTimeMultiplier++
+	obj.ejectionTimeMultiplier++
 	// call eject() on each subchannel wrapper in that address's subchannel wrapper list. (plural! on all the subchannels that connect to that upstream)
-	for _, sbw := range b.odAddrs[addr].sws {
+	for _, sbw := range obj.sws {
 		sbw.eject()
 	}
 }
 
-func (b *outlierDetectionBalancer) unejectAddress(addr string/*key entry of map - o(1) access*/) {
+func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address/*key entry of map - o(1) access*/) {
+	val, ok := b.odAddrs.Get(addr)
+	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
+		return
+	}
+	obj, ok := val.(*object)
+	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
+		return
+	}
 	b.numAddrsEjected--
 	// set the current ejection timestamp to null (doesn't he mean latest ejection timestamp?)
-	b.odAddrs[addr].latestEjectionTimestamp = time.Time{} // or nil if not currently ejected - logically equivalent to time zero value
+	obj.latestEjectionTimestamp = time.Time{} // or nil if not currently ejected - logically equivalent to time zero value
 
 	// call uneject() on each subchannel wrapper in that address's subchannel wrapper list
-	for _, sbw := range b.odAddrs[addr].sws {
+	for _, sbw := range obj.sws {
 		sbw.uneject()
 	}
 }
