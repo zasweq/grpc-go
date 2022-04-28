@@ -42,7 +42,6 @@ func init() {
 type bb struct{}
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
-	// am = NewAddressMap(), stick this as a field of balancer
 	am := resolver.NewAddressMap()
 	// go b.run() <- way of synchronizing
 	return &outlierDetectionBalancer{
@@ -108,103 +107,37 @@ func (bb) Name() string {
 }
 
 type outlierDetectionBalancer struct {
-	// TODO: The fact that this is only an address string needs to be documented in the gRFC
-	// This gets populated in UpdateClientConnState...
-	// When the outlier_detection LB policy receives an address update, it will
-	// create a map entry for each subchannel address in the list, and remove
-	// each map entry for a subchannel address not in the list.
-
-	// What
-	// there are two attribute lists in resolver.Address, attributes for SubConn
-	// and also attributes for Balancer to create SubConn, which ones affect subchannel uniqueness/identity?
-
-	// Attributes is an arbitrary length key value list, how to combine that into map key?
-
-	// Mark's statement in chat - "Note that we have two types of per-address attributes: those that affect
-	// subchannel uniqueness/identity and those that don't. I think the map key needs to include the attributes
-	// that do affect subchannel uniqueness/identity"
-
-	// How to merge attributes into key***...a lot of code is dependent on this
-	// so perhaps do this first. Including all the code in the operations you
-	// still need to code.
-
-	// 1. Switch to resolver addressMap
-
-	// string is the actual string of the address, the dimensionality of different attributes
-	// is across the address list specific addresses attributes with same address string (arbitrary value for the address)
-
-	// type AddressMap struct {
-	//       m map[string]addressMapEntryList
-	// }
-
-	// Yeah switch to the struct as a whole
+	// TODO: The fact that this is an address string + attributes needs to be documented in the gRFC?
 	odAddrs *resolver.AddressMap
-
-	// ^^^ pops out an interface{} as the value, need to typecast it from interface{} to object
-	// vvv already of type object
-
-	// odAddrs map[string]/*pointer or not pointer*/*object // TODO: two types of per address attributes, needs to include attributes that affect subchannel uniqueness/identity
-	// 2. Figure out run() goroutine and syncing operations
-
-	// I try to avoid a run goroutine as much as possible
-	// But if I need a run(), I will probably try to move all the operations there
-	// Unless it's to just forward the update, without needing to sync any field
-
-	// Syncing fields require either putting operations in run() or lock unlock
-	// on mutex. So figure out which ones are just forward without syncing field
-	// - these operations don't have to be synced by putting in the run() goroutine
-
-	// Can also intermingle cleanup with 2 after you fix odAddrs
-
 
 	numAddrsEjected int // For fast calculations of percentage of addrs ejected
 
 	ejectionTime time.Time // timestamp used ejecting addresses per iteration, don't make state?
 
-	// wil get read a lot for the actual Outlier Detection algorithm itself
 	odCfg *LBConfig
 
 	cc balancer.ClientConn // Priority parent right?
 
-	// child policy balancer.Balancer (cluster impl)
-	child balancer.Balancer // cluster impl - when is this built?
-
+	child balancer.Balancer // cluster impl - when is this built? See others for example, is it in Build()?
 
 	timerStartTime time.Time
-	// Note: seperate logically
-	// 5 + 3 9time.New Timer diff
-	// on timer go off timer.NewTimer(interval from config)
 
 	intervalTimer time.Timer
-	// When this goes off, trigger OD algorithm
-	// When does this gets reset/cleared?
-	// When receiving a config update...
-
-
-
-	// After the Outlier Detection algorithm finishes, starts a new one based
-	// on the interval time
-
-	// time.NewTimer(Duration)
-	// <-timer.chan or something
 
 
 	// map sc (all parent knows about) -> scw (all children know about, this balancer wraps scs in scw)
 
-	// I plan to sync all operations with a run() goroutine - so no need for mutexes?
+	// I plan to sync all operations with a run() goroutine - so no need for mutexes? Wrong,
+	// sometimes interspliced between reading in non run() and operations synced in run()
 }
 
-// noopConfig returns whether this balancer is configured with a logical no-op configuration or not.
+// noopConfig returns whether this balancer is configured with a logical no-op
+// configuration or not.
 func (b *outlierDetectionBalancer) noopConfig() bool {
 	return b.odCfg.SuccessRateEjection == nil && b.odCfg.FailurePercentageEjection == nil
 }
 
 func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
-
-	// when is this originally built/updated/what happens on config changes
-	// that change the knobs configuring this policy?
-
-	// Simply persist the config? Do this first, everything is dependent on this
 	lbCfg, ok := s.BalancerConfig.(*LBConfig)
 	if !ok {
 		// b.logger.Warningf("xds: unexpected LoadBalancingConfig type: %T", s.BalancerConfig)
@@ -212,25 +145,9 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	}
 	b.odCfg = lbCfg
 
-	// What to do about an already running interval timer, clear and make a new
-	// one? I think I'll do that. Yeah I think resetting and making a whole
-	// interval timer makes the most sense, especially in regards to
-	// synchronization guarantees on the two algorithms running.
 
+	// Perhaps move to a handle function - after coding/putting in run() goroutine
 
-
-	// As the system is running, a whole new configuration can be specified to
-	// configure the system. Parts of the system that are running concurrently
-	// (i.e. success rate/failure percentage algorithms) that are dependent on
-	// the config can be running as new configuration comes in.
-
-	// Thus, wrap each operation with a mu (or I guess a run() goroutine would
-	// guarantee the two operations don't happen synchronously).
-
-
-	// Perhaps move to a handle function - after coding
-
-	s.ResolverState.Addresses // []resolver.Address
 
 	// When the outlier_detection LB policy receives an address update, it will
 	// create a map entry for each subchannel address in the list, and remove
@@ -240,60 +157,22 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	// When the outlier_detection LB policy receives an address update, it will
 	// create a map entry for each subchannel address in the list, and remove
 	// each map entry for a subchannel address not in the list
-
-	// Algorithm here that I wrote in aggregate clusters
-	// Figure out initialization of objects with what values etc.
-	s.ResolverState.Addresses // What to do with Attributes and Service Config?
-
-	// s.ResolverState.Addresses[0]. // this has the addr string inside it. What to do about this addr string? build a set?
-
-	// This list of addresses is used for the algorithm
-
-
 	addrs := make(map[resolver.Address]bool) // for fast lookups during deletion phase
-
-	// Create a map entry for each subchannel address in the list (create a whole new one or create new ones for new addresses?)
-	// as you are iterating through, build a set for o(1) access during the remove stage using
-	// the Addresses.Addr field
 	for _, addr := range s.ResolverState.Addresses {
-		addrs[addr] = true // use this to build a set
+		addrs[addr] = true
 
-		// create a whole new map entry or keep what's currently there?
-		// keep what's currently there
-		/*if _, ok := b.odAddrs[addr.Addr]; ok { // Not yet present
-			// create a whole new one
-			b.odAddrs[addr.Addr] = &object{} // Do we need to initialize any part of this or are zero values sufficient?
-		}*/
-
-		b.odAddrs.Set(addr, &object{}) // Creates or keeps what is currently there. Does this within Set().
+		// Cool, stores a pointer, so will affect underlying heap memory and not make a copy
+		b.odAddrs.Set(addr, &object{}) // Do we need to initialize any part of this or are zero values sufficient?
 	}
 
 	// remove each map entry for a subchannel address not in the list
-	// iterate through addrs in map
-	/*for addr, _ := range b.odAddrs {
-		// if key not in set remove
-		if !addrs[addr] { // Uses the address string here...not the full address
-			delete(b.odAddrs, addr)
-		}
-		// do we have to cleanup the object?
-
-	}*/
-	// Iterate through the address map and delete addresses not present in list
-	b.odAddrs.Keys() // []Address, full object struct, I think once you get evaluate this expression, it is immutable
-
-	// iterate through []Address list, for each Address, check if it's in that addrs set we build (need to switch to whole address)
-	// and if not in, remove from Address Map
-	for _, addr := range b.odAddrs.Keys() {
+	for _, addr := range b.odAddrs.Keys() { // []Address, full object struct, I think once you get evaluate this expression, it is immutable
 		if !addrs[addr] {
 			b.odAddrs.Delete(addr)
 		}
 	}
 
 
-
-
-
-	// cleanup for this whole component?
 
 	// When a new config is provided, if the timer start timestamp is unset, set
 	// it to the current time and start the timer for the configured interval,
@@ -305,51 +184,20 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	if b.timerStartTime.IsZero() {
 		b.timerStartTime = time.Now()
 		// for each address, "reset the call counters" << what does this mean I'm pretty sure it means clear both active and inactive
-
-		b.odAddrs.Keys() // [] Addresses, this is what you iterate through
-		// Use these keys to get values, typecast that value into the object{} type,
-		// then clear bucket
-		/*for _, addr := range b.odAddrs.Keys() {
-			val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-			if !ok { // Shouldn't happen
-				continue
-			}
-			// typecast val to obj,
-			// shouldn't error either
-			obj, ok := val.(object)
-			if !ok {
-				continue
-			}
-			obj.callCounter.activeBucket = bucket{}
-			obj.callCounter.inactiveBucket = bucket{}
-		}*/
 		for _, obj := range b.objects() {
 			obj.callCounter.activeBucket = bucket{}
 			obj.callCounter.inactiveBucket = bucket{}
 		}
-		/* for _, obj := range b.odAddrs { // COME BACK HERE
-			obj.callCounter.activeBucket = bucket{}
-			obj.callCounter.inactiveBucket = bucket{}
-		}*/
-
-		/*if !b.noopConfig() { // could move both these conditionals after and have a variable interval
-			b.intervalTimer = time.NewTimer(b.odCfg.Interval /*configured interval)
-		}*/
 		interval = b.odCfg.Interval
 	} else {
 		// cancel the existing timer and start the timer
 		// for the configured interval minus the difference between the current time
 		// and the previous start timestamp, or 0 if that would be negative.
-		// configured interval - (current time - previous start timestamp (b.timerStartTime)), if negative make 0 **do this when get back
+		// configured interval - (current time - previous start timestamp (b.timerStartTime)), if negative make 0
 		interval := b.odCfg.Interval - (time.Now().Sub(b.timerStartTime))
 		if interval < 0 {
 			interval = 0
 		}
-		// "If a config is provided with both the `success_rate_ejection` and
-		// `failure_percentage_ejection` fields unset, skip starting the timer.
-		/*if !b.noopConfig() {
-			b.intervalTimer = time.NewTimer(interval /*difference between the current time and the previous start timestamp, or 0 if that would be negative.) // This implictly cancels it right? Or is there another step to take?
-		}*/
 	}
 
 	if !b.noopConfig() {
@@ -359,27 +207,12 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		// `failure_percentage_ejection` fields unset, skip starting the timer and
 		// unset the timer start timestamp."
 		b.timerStartTime = time.Time{}
-	}
-
-
-
-	// "If a config is provided with both the `success_rate_ejection` and
-	// `failure_percentage_ejection` fields unset, skip starting the timer and
-	// unset the timer start timestamp."
-	// move this somewhere else (i.e. beginning of function?
-	// if no op config
-	/*if b.noopConfig() {
-		//  skip starting timer
-		//  unset timer start timestamp
-		b.timerStartTime = time.Time{}
-	}*/
+		// Do we need to clear the timer as well? Or when it fires it will be logical no-op (from no-op config) and not count...
+	} // Do we need to move somewhere else? I.e. beginning of function
 
 
 	// then pass the address list along to the child policy.
-	b.child.UpdateClientConnState(s) // return this at the end instead? right now we're ignoring value
-
-	// s.balancerConfig - configuration for this outlier detection
-	return nil
+	return b.child.UpdateClientConnState(s)
 }
 
 func (b *outlierDetectionBalancer) ResolverError(err error) {
@@ -390,7 +223,7 @@ func (b *outlierDetectionBalancer) ResolverError(err error) {
 	// Or just pass through...see other balancers, seems like an operation that needs to be part of synced
 
 	// What is the desired behavior of this balancer when it receives a resolver error?
-	// Does it propogate all the way down? When does it get acted on? What happens in the other xds balancers?
+	// Does it propogate all the way down the balancer tree? When does it get acted on? What happens in the other xds balancers?
 
 	// Graceful switch simply forwards the error downward (to either current or pending)
 
@@ -399,39 +232,28 @@ func (b *outlierDetectionBalancer) ResolverError(err error) {
 }
 
 func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
-	// what type is this sc? It's called from higher level so is this sc or scw?
-	// Cluster Impl persists a map that maps sc -> scw...see how it's done in other parts of codebase
+	// This gets called from the parent, which has no knowledge of scw (gets
+	// called NewSubConn(), that returned sc gets put into a scw in this
+	// balancer), thus need to convert sc to scw. This can either be done
+	// through typecasting (I don't think would work) or the map thing. Cluster
+	// Impl persists a map that maps sc -> scw...see how it's done in other
+	// parts of codebase.
 
-
-
-	// it gets to a point where local var on the stack is scw, whether it does this through typecasting (passed in as a scw
-	// vs. ?) need to persist state etc. (if it is wrapped subconn, it's passed up as wrapper, unlike cluster impl,
-	// which doesn't pass up wrapped subconn, it abstracts it upward as a normal.) **confirm whether you pass up
-	// up wrapper in other parts of codebase, I think you do
-
-	scw, ok := sc.(subConnWrapper)
+	scw, ok := sc.(subConnWrapper) // Need to get scw data from a map, this is wrong, parent has no knowledge of the wrapper
 	if !ok {
 		// Return, shouldn't happen if passed up scw
 	}
-	if scw.ejected { // Is this all you need? Feels bare
-		scw.latestState = state
-	} else {
-		scw.latestState = state
+
+	scw.latestState = state
+	if !scw.ejected { // eject() - "stop passing along updates from the underlying subchannel."
 		b.child.UpdateSubConnState(scw, state)
 	}
-
-
-	// gate this call if the address is ejected
-	// don't forward this down if address is ejected
-	// if (scw.ejected (state determined by other operations))
-	//       persist this state (in the scw)
- 	// else
-	//       forward this down
 }
 
 func (b *outlierDetectionBalancer) Close() {
 	// This operation isn't defined in the gRFC. Pass through? If so, I don't think you need to sync.
 	// If not pass through, and it actually does something you'd need to sync. (See other balancers)
+
 	// Cleanup stage - go specific cleanup
 }
 
@@ -439,7 +261,12 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 	// This operation isn't defined in the gRFC. Pass through? If so, I don't think you need to sync.
 	// If not pass through, and it actually does something you'd need to sync. (See other balancers)
 
-	// Exit Idle - go specific cleanup, see other balancers
+	// Sync required unless child balancer is only built at build time, then
+	// it's a guarantee the rest of the time to simply read it and forward down
+	// no need for mutexes or run()...but see other balancers to confirm.
+
+	// Exit Idle - go specific logic, see other balancers, I'm pretty sure
+	// this simply forwards this call down the balancer hierarchy, typecast, etc.
 }
 
 
@@ -448,8 +275,8 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 // corresponding counter in the map entry referenced by the subchannel
 // wrapper that was picked.
 type wrappedPicker struct {
-	// childPicker, embedded or wrapped
-	childPicker balancer.Picker // written to/constructed in UpdateState
+	// childPicker, embedded or wrapped, I think wrapped is right, maybe see how other parts of codebase do it? I'm pretty sure I based it off other parts of codebase
+	childPicker balancer.Picker
 	noopPicker bool
 }
 
@@ -460,10 +287,6 @@ func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 	if err != nil {
 		return balancer.PickResult{}, err
 	}
-	pr.SubConn // balancer.SubConn - should be wrapped SubConn type, wraps SubConn before sending it down to child balancer, so the child balancer's Pick result should be a SubConnWrapper, implicitly deals with a wrapped subconn (i.e. not dependent on...) because it comes from child
-	pr.Done // this comes back, wrap it with yours?, this function gets passed data from grpc that you need, need to plumb both into same function, needs both pieces of data
-	// Dealing with the scw, not the sc, whether you get that through map or something,
-	// needs to be scw
 
 	done := func(di balancer.DoneInfo) {
 		if !wp.noopPicker {
@@ -471,27 +294,12 @@ func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 		}
 		pr.Done(di)
 	}
-
+	// Why do you need a map? ((A), BBB) if you only get A you need to map it to the object that wraps it with extra code?
 	return balancer.PickResult{
-		SubConn: pr.SubConn, // Should this be scw or sc? If sc, look reverse in map?
+		SubConn: pr.SubConn, // Should this send back the wrapped SubConn or the underlying SubConn in the wrapped SubConn? If sc, look reverse in map?
 		Done: done,
 	}, nil
-
-	// Done is providing the balancer info
-	// grpc (info about RPC)-> balancer
-	// almost like a handle function, needs both data about RPC (successful || error)...to me determined by the data passed down to balancer about RPC in DoneInfo...err being nil vs. not nil
-	// and also the scw to get the ref to the map entry
-
-	// grpc asks picker what SubConn to use, gives it info about RPC
-	// Picker sends back a SubConn and a Done function
-	// Once the RPC is complete, the Done function is called with data about the RPC
 }
-
-// done
-// wraps done - calls child's done
-// if you use an inline function, it can take a closure on the scw that was picked, and send it to increment counter
-// calls incrementCounter...but how do you know SubConn that was picked...capture it (closure)...since it's per RPC and on a single SubConn
-// "pick a SubConn to send an RPC"...***per rpc***, tied to a SubConn, capture it and send it to increment counter
 
 func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	scw, ok := sc.(subConnWrapper)
@@ -500,6 +308,7 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 		return
 	}
 	if info.Err != nil {
+		// Is there anything else that is required to make this a successful RPC?
 		scw.obj.callCounter.activeBucket.numSuccesses++ // is this the thing that needs to protected by the mutex?
 	} else {
 		scw.obj.callCounter.activeBucket.numFailures++
@@ -509,11 +318,23 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 
 func (b *outlierDetectionBalancer) UpdateState(s balancer.State) {
 	// this needs to do not the counting if the config is unset
-	// hold up...do you ever **not determined by update addrs, determined by config***, a synced operation
-	// gate it here...but then a config update can cause a Picker update...
+	// hold up...do you ever **not determined by update addrs (i.e. map state), determined by config state***, a synced operation with UpdateClientConnState
+
+	// gate it here...but then a config update can cause a Picker update..., for sync stuff tho
+	// UpdateClientConnState causes inline UpdateState callback. This callback/function writes to a buffer
+	// then picked up by run goroutine operations now synced.
+
+	// Update Client Conn state can cause an inline UpdateState |||| but happens before, so write that determines
+	// noopConfig will be read here
+
+
 
 	b.cc.UpdateState(balancer.State{ // Is this all you need?
 		ConnectivityState: s.ConnectivityState,
+		// The outlier_detection LB policy will provide a picker that delegates to
+		// the child policy's picker, and when the request finishes, increment the
+		// corresponding counter in the map entry referenced by the subchannel
+		// wrapper that was picked.
 		Picker: &wrappedPicker{
 			childPicker: s.Picker,
 			// If both the `success_rate_ejection` and
@@ -522,97 +343,50 @@ func (b *outlierDetectionBalancer) UpdateState(s balancer.State) {
 			noopPicker: b.noopConfig(),
 		},
 	})
-	// The outlier_detection LB policy will provide a picker that delegates to
-	// the child policy's picker, and when the request finishes, increment the
-	// corresponding counter in the map entry referenced by the subchannel
-	// wrapper that was picked.
 
-	// Picker: Pick(info PickInfo) (PickResult, error)
-	// What to do with connectivity state?
-	// wraps child picker
-	s.Picker // child picker
-	// type PickResult struct {
-	//   SubConn // wrapped SubConn, main wrapped picker
-	//   Done // "increment the corresponding counter in the map entry referenced by scw that was picker, but only if one of the algorithms is set
-	// }
+	// What to do with connectivity state? Simply forward, or does it affect anything here?
 
-	// related to algorithms: is no-op logically treated same as any config with both unset, if both are unset
-	// other parts of config can be set that aren't maxing interval
-
-	// get scw out of the picker somehow
-	s.Picker // wrap this
+	// related to algorithms: is no-op logically treated same as any config with
+	// both unset, if both are unset other parts of config can be set that
+	// aren't maxing interval?
 }
 
 func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) { // Intercepts call
-	// RELOOK OVER THIS AFTER DONE. DRAFT
+
+	// Now that there's UpdateAddresses, each SubConn needs to be wrapped. But
+	// even though you wrap each SubConn, you still logically ignore the SubConn
+	// for Outlier Detection (i.e. don't add to Outlier Detection map scw lists)
 
 	// When the child policy asks for a subchannel, the outlier_detection will
-	// wrap the subchannel with a wrapper (see Subchannel Wrapper section).
+	// wrap the subchannel with a wrapper.
 	sc, err := b.cc.NewSubConn(addrs, opts)
 	// Wait, the SubConn passed downward from parent policy is a sc constructed
 	// in the parent policy. Thus, it has no knowledge of this types scw. like
-	// cluster impl, need a map from sc -> scw (how is this keyed?), Eric says
-	// wrap every single SubConn, UpdateAddrs to single needs to keep wrapper or
-	// if it switches to something in map
-
-	// ** Ask Eric and Menghan about this in person. Should this still be done?
-	// I.e. Wrap SubConn for every sc, because of special logic with regards to UpdateAddrs
-
-	// Also clairfy with Menghan about what we decided to do for Agg. Clusters tomorrow in person
+	// cluster impl, need a map from sc -> scw (how is this keyed?)
 
 	if err != nil {
 		return nil, err
 	}
-	scw := &subConnWrapper{SubConn: sc}
-	// Then, the subchannel wrapper will be added to the list in the map entry
-	// for its address, if that map entry exists. If there is no map entry, or
-	// if the subchannel is created with multiple addresses, the subchannel will
-	// be ignored for outlier detection. (duh, so you keep SubConn's normal
-	// functioning outside of the functionality of the outlier detection, why
-	// there is "if one exists" clause in SubChannel Wrapper section.)
-
-
-
-	// Wrap regardless
-	// If one of these conditionals hits VVV
-	//		still wrap just don't persist in map
-	//		early return
-	// else (implicit from early return)
-	//		persist in map
-	// 		eject if needed
-
-	// If we "ignore" subchannel - do we still wrap it? Is it just a logical no-op at this level (i.e. just pass the subconns both ways alone?)
-	// From discussion with Eric and UpdateAddresses...it seems like you'll need to wrap anyway for UpdateAddresses...
-	if len(addrs) != 1 {
-		// "Ignore subchannel for outlier detection"
-		// What
+	scw := &subConnWrapper{
+		SubConn: sc,
+		addresses: addrs,
+	}
+	if len(addrs) != 1 { // This addresses list plurality can change from A (what it is right now, in this call) to B, which can cause logic changes in UpdateAddresses. How do I persist here so I know A?
 		return scw, nil
 	}
 
 	val, ok := b.odAddrs.Get(addrs[0])
 	if !ok {
-		// "Ignore subchannel for outlier detection" - what does this mean now that
-		// we wrap everything anyway...wrap it but don't persist in map. ** Take this and actually implement it
-		// map persistence will come later on UpdateAddress call.
 		return scw, nil
 	}
 
-	// AFTER FINISH THIS FUNCTION CLEANUP WHOLE PROJECT TO SEE WHERE I'M AT I feel like I'm close
-
-	// scw // All this data you can either interact with here or do it somewhere else
-
-
 	// Does this actually write to the corresponding heap memory?
-	obj, ok := val.(*object) // is this ring
+	obj, ok := val.(*object) // is this right?
 
 	obj.sws = append(obj.sws, *scw) // or do we make this an array of pointers to scw and don't dereference?
 
 	// If that address is currently ejected, that subchannel wrapper's eject
 	// method will be called.
-
-	// Logical invaraint of the type - "The latest ejection timestamp, or null if the address is currently not ejected"
-	// if mapentry...latest ejection timestamp != null
-	//      scw.eject()
 	if !obj.latestEjectionTimestamp.IsZero() {
 		scw.eject()
 	}
@@ -620,10 +394,204 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 }
 
 func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []resolver.Address) {
-	// typecast sc to scw
-	// see if scw is ejected, if so don't forward
+	// Comes from child lb - so implicitly a scw
+	// typecast to scw
+	scw, ok := sc.(subConnWrapper)
+	if !ok {
+		// Return, shouldn't happen if passed up scw
+	}
 
-	//
+	// see if scw is ejected, if so don't forward? I'm pretty sure. This is the question that started it in the first place.
+	if scw.ejected {
+		// Don't forward?
+	}
+
+
+	// what data do you have now, can you scale it up
+
+	// Pluralities L (the len(addrs) of old subconn) -> R: Right side is addrs function argument
+	len(scw.addresses)
+	// len(addrs) = 0...what happens here, can this happen? Or is this equivalent to remove subconn? This adds a massive
+	// amount of permutation to the space
+
+	// len(addrs) = 1, single
+
+	// len(addrs) > 1, multiple
+
+
+
+	// How to determine left side? I.e. is this subconn -> address list persisted, implicit (no), or what? ***See other parts of codebase
+
+
+	// Where to determine the plurality list? Helper function?
+
+
+	// 1 single to single:
+
+	// 1a. Forward the update to the Client Conn.
+	//    b.cc.UpdateAddresses(sc, addrs)
+
+	// 1b. Update (create/delete map entries) the map of addresses if applicable.
+	// There's a lot to this ^^^
+
+	// 1c. Relay state with eject() recalculated
+
+	/*
+	if !obj.latestEjectionTimestamp.IsZero() {
+			scw.eject()
+		}
+	*/
+
+
+
+
+
+	// 2 single to multiple:
+
+	// 2a. Remove Subchannel from Addresses map entry.
+	//    delete from mapEntry.sws...how to do this in non linear time?
+
+	// 2b. Remove the map entry if only subchannel for that address
+    //    if len(mapEntry.sws) == 0
+	//         delete(mapEntry)
+
+	// 2c. Clear the Subchannel wrapper's Call Counter entry
+	//    scw.obj.callCounter = callCounter{} // <- something like this
+
+
+
+	// 3 multiple to single:
+
+	// 3a. Add map entry for that Address if applicable (i.e. if not already there)
+	//    if right (single) is not a key in map, add a whole new map entry
+
+
+	// 3b. Add Subchannel to Addresses map entry.
+	//   mapValue.sws = append(mapValue.sws, sc)
+
+
+
+	// 4 multiple to multiple
+		// no-op, subchannel continues to be ignored by outlier detection load balancer
+
+
+	// I think best way is (if zero add another if at the top, will have 9 possibilities
+	// if single {
+		// if new single {
+		//     single -> single algorithm
+		// } else if multiple { // or just else
+		//     single -> multiple algorithm
+		// }
+	// else if multiple { // or just else
+		// if new single {
+		//     single -> single algorithm
+		// } else if multiple { // or just else
+		//     single -> multiple algorithm
+		// }
+	// }
+
+	// Have 0 be a special case of multiple. Wait, if 0 is a special case of
+	// multiple, addrs[0] will cause a nil panic.
+
+	// if len(scw.addresses) == 0 if it supports that, thus it being 1 is the logical conditional
+	if len(scw.addresses) == 1 {
+		if len(addrs) == 1 {
+			// single to single algorithm - make helper function?
+
+			// 1a. Forward the update to the Client Conn.
+			//    b.cc.UpdateAddresses(sc, addrs)
+			b.cc.UpdateAddresses(sc, addrs) // callback inline
+
+
+
+			// 1b. Update (create/delete map entries) the map of addresses if applicable.
+			// There's a lot to this ^^^, draw out each step and what goes on in each step, check it for correctness and try to break
+
+			scw.addresses[0] // old single address
+
+			addrs[0] // new single address
+
+
+
+
+			// 1c. Relay state with eject() recalculated
+			// call it with latest state like uneject
+			// scw.ejected = false // this can now be true or false always
+			scw.ejected = /*mapEntry.latestEjectionTimestamp.IsZero()*/
+
+			// always send down?
+			// scw.childPolicy.UpdateSubConnState(sc/*scw.SubConn or scw (I think just sc i.e. scw.SubConn)*/, scw.latestState)
+
+			// MAKE SURE SCW POINTS TO THE CORRECT OBJ AT THE END OF THIS
+
+		} else {
+			// single to multiple algorithm
+
+			// the problem is we have only the subchannel
+			scw.addresses // wait this is old addresses
+
+
+
+			// 2a. Remove Subchannel from Addresses map entry.
+			//    delete from mapEntry.sws...how to do this in non linear time?
+			scw.obj.sws // []subConnWrapper, search through this and delete subchannel if you found it
+
+			// 2b. Remove the map entry if only subchannel for that address
+			//    if len(mapEntry.sws) == 0
+			//         delete(mapEntry)
+			if len(scw.obj.sws) == 0 {
+				b.odAddrs.Delete(scw.addresses[0]) // invariant that used to be single (top level if), guarantee this never becomes nil
+				// delete the pointer
+				scw.obj = nil // does this cause any negative downstream effects?
+			}
+
+			// 2c. Clear the Subchannel wrapper's Call Counter entry - this might not be tied to an Address you want to count, as you potentially
+			// delete the whole map entry
+			if scw.obj != nil {
+				scw.obj.callCounter.activeBucket = bucket{}
+				scw.obj.callCounter.inactiveBucket = bucket{}
+			}
+		}
+	} else if len(scw.addresses) > 1 { // s else
+		if len(addrs) == 1 {
+			// multiple to single algorithm
+			val, ok := b.odAddrs.Get(addrs[0])
+			var obj *object
+			if !ok {
+				// 3a. Add map entry for that Address if applicable (i.e. if not already there)
+				obj = &object{}
+				b.odAddrs.Set(addrs[0], obj)
+			} else {
+				obj , ok = val.(*object)
+				if !ok {
+					// shouldn't happen, logical no-op
+				}
+			}
+
+
+			// 3b. Add Subchannel to Addresses map entry. **Note, look over,
+			// this should come coupled with adding and removing (updating what
+			// object the scw points to, as logically it's not a part of an
+			// object anymore or added to an object)
+			scw.obj = obj
+			obj.sws = append(obj.sws, scw)
+
+
+
+			// is that really the best way to get the object? Yes, might be
+			// brand new. But you need to update the object the subchannel
+			// points to
+
+
+		} // else is multiple to multiple - no op, continued to be ignored by outlier detection load balancer
+		/*else {
+			// multiple to multiple algorithm - no op, you don't even need this else just a no-op
+		}*/
+	}
+
+	// MAKE SURE YOU UPDATE THE OBJECT THE SUBCHANNEL WRAPPER IS POINTING TO WHEN YOU NEED TO
+	// scw.addresses (data used for previous addresses - can clear out now because already used) = addrs
+	scw.addresses = addrs
 }
 
 func max(x, y int64) int64 {
@@ -640,19 +608,15 @@ func min(x, y int64) int64 {
 	return y
 }
 
-// switch for _, obj := range b.odAddrs
-// to for _, obj := range b.objects()
-
-// returns []object from odAddrs
+// objects returns a list of objects corresponding to every address in the address map.
 func (b *outlierDetectionBalancer) objects() []*object {
 	var objs []*object
 	for _, addr := range b.odAddrs.Keys() {
-		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
+		val, ok := b.odAddrs.Get(addr)
 		if !ok { // Shouldn't happen
 			continue
 		}
-		// typecast val to obj,
-		// shouldn't error either
+		// shouldn't error - everywhere you set in the map is of type object
 		obj, ok := val.(*object)
 		if !ok {
 			continue
@@ -664,7 +628,7 @@ func (b *outlierDetectionBalancer) objects() []*object {
 
 // We also don't need just []{object, object, object, object}
 
-// We need []{{addr, obj}, {addr, obj}, {addr, obj}, {addr, obj}}, what is best data type/way to represent this?
+// We need []{{addr, obj}, {addr, obj}, {addr, obj}, {addr, obj}}, what is best data type/way to represent this? did that inline
 
 func (b *outlierDetectionBalancer) run() {
 	// ** Triage other xds balancers to see what operations they sync
@@ -690,58 +654,21 @@ func (b *outlierDetectionBalancer) run() {
 		// Should I finish all of these operations before figuring any of this out? I.e. ordering of operations
 
 		case <-b.intervalTimer.C:
-			// Outlier Detection algo here. Quite large, so maybe make a helper function
+			// Outlier Detection algo here. Quite large, so maybe make a helper function - "logic can either be inline or in a handle function"
 		}
 	}
 
-	// interval timer receive (need some way of representing interval timer with a trigger) this logic can either be inline or in a handle function
-	// Every interval trigger (determined by config):
+	// Interval trigger:
 	b.timerStartTime = time.Now() // could also use this for ejection time, unless something can also write to it before reading...
 	// 1. Record the timestamp for use when ejecting addresses in this iteration. "timestamp that was recorded when the timer fired"
 	b.ejectionTime = time.Now() // I can write it here - is it because it's not a value..."referenced by the subchannel wrapper that was picked" - so object value needs to be a pointer?
 	// ejectionTime could be a field plumbed through methods defined - but writing to a field
 	// makes more sense?
 
-	// 2. For each address, swap the call counter's buckets in that address's map entry. // Question, so we're using the inactive bucket then for the data to read - I'm pretty sure
-	// for each address is logically equivalent to:
-	/*
-	for _, addr := range b.odAddrs.Keys() {
-				val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-				if !ok { // Shouldn't happen
-					continue
-				}
-				// typecast val to obj,
-				// shouldn't error either
-				obj, ok := val.(object)
-				if !ok {
-					continue
-				}
-				obj.callCounter.activeBucket = bucket{}
-				obj.callCounter.inactiveBucket = bucket{}
-			}
-	*/
-
+	// 2. For each address, swap the call counter's buckets in that address's map entry.
 	for _, obj := range b.objects() {
 		obj.callCounter.swap()
 	}
-
-	/*for _, addr := range b.odAddrs.Keys() {
-		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-		if !ok { // Shouldn't happen
-			continue
-		}
-		// typecast val to obj,
-		// shouldn't error either
-		obj, ok := val.(object)
-		if !ok {
-			continue
-		}
-		obj.callCounter.swap()
-	}*/
-
-	/*for _, obj := range b.odAddrs {
-		obj.callCounter.swap()
-	}*/
 
 	// 3. If the success_rate_ejection configuration field is set, run the success rate algorithm.
 	if b.odCfg.SuccessRateEjection != nil {
@@ -752,27 +679,6 @@ func (b *outlierDetectionBalancer) run() {
 	if b.odCfg.FailurePercentageEjection != nil {
 		b.failurePercentageAlgorithm()
 	}
-
-	/*
-	func (b *outlierDetectionBalancer) objects() []*object {
-		var objs []*object
-		for _, addr := range b.odAddrs.Keys() {
-			val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-			if !ok { // Shouldn't happen
-				continue
-			}
-			// typecast val to obj,
-			// shouldn't error either
-			obj, ok := val.(*object)
-			if !ok {
-				continue
-			}
-			objs = append(objs, obj)
-		}
-		return objs // what happens when you range over a nil slice?
-	}
-	*/
-
 
 	// can't really pull stuff out, I think it's fine to switch each for each Address to this
 
@@ -813,44 +719,13 @@ func (b *outlierDetectionBalancer) run() {
 		b.odCfg.BaseEjectionTime.Nanoseconds()
 	}
 
-
-
-
-
-	// For each address in the map:
-	/*for addr, obj := range b.odAddrs {
-		// If the address is not ejected and the multiplier is greater than 0, decrease the multiplier by 1.
-		if obj.latestEjectionTimestamp.IsZero() && obj.ejectionTimeMultiplier > 0 {
-			obj.ejectionTimeMultiplier--
-			continue
-		}
-		// If it hits here the address is ejected
-
-		// If the address is ejected, and the current time is after
-		// ejection_timestamp + min(base_ejection_time (type: time.Time) * multiplier (type: int),
-		// max(base_ejection_time (type: time.Time), max_ejection_time (type: time.Time))), un-eject the address.
-		// obj.latestEjectionTimestamp /*ejection_timestamp + /*min(bet * multiplier, max(bet, met))
-
-		// min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))
-
-		// max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds())
-
-		if time.Now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) {
-			// uneject address - see algorithm, either do that in a function or do it inline
-			b.unejectAddress(addr)
-		}
-
-		b.odCfg.BaseEjectionTime.Nanoseconds()
-
-	}*/
-
 }
 
 // numAddrsWithAtLeastRequestVolume returns the number of addresses present in the map
 // that have request volume of at least requestVolume.
-func (b *outlierDetectionBalancer) numAddrsWithAtLeastRequestVolume(/*requestVolume uint32 - you don't need this, you can pull this from config stored in balancer*/) uint32 { // either have this return a boolean or just return the number
-	var numAddrs uint32 // will probably need to change this type
-	for _, obj := range b.objects() { // "at least"
+func (b *outlierDetectionBalancer) numAddrsWithAtLeastRequestVolume() uint32 {
+	var numAddrs uint32
+	for _, obj := range b.objects() {
 		if uint32(obj.callCounter.inactiveBucket.requestVolume) >= b.odCfg.SuccessRateEjection.RequestVolume {
 			numAddrs++
 		}
@@ -860,7 +735,7 @@ func (b *outlierDetectionBalancer) numAddrsWithAtLeastRequestVolume(/*requestVol
 
 // meanAndStdDevOfSucceseesAtLeastRequestVolume returns the mean and std dev of the number of requests
 // of addresses that have at least requestVolume.
-func (b *outlierDetectionBalancer) meanAndStdDevOfSuccessesAtLeastRequestVolume(/*requestVolume uint32 - you don't need this, you can pull this from config stored in balancer*/) (float64, float64) {
+func (b *outlierDetectionBalancer) meanAndStdDevOfSuccessesAtLeastRequestVolume() (float64, float64) {
 	// 2. Calculate the mean and standard deviation of the fractions of
 	// successful requests among addresses with total request volume of at least
 	// success_rate_ejection.request_volume.
@@ -901,17 +776,6 @@ func (b *outlierDetectionBalancer) meanAndStdDevOfSuccessesAtLeastRequestVolume(
 }
 
 func (b *outlierDetectionBalancer) successRateAlgorithm() {
-	// b.config.fields
-
-
-	// request volume I think is num of success + num of failures, either have
-	// this as a field of call counter or calculate it every time.
-
-	// request volume is used in a lot of places in this algorithm, seems like
-	// it should be precalculated within the counter object. Also, it's used as
-	// the denominator for a lot of parts of the algorithm (successes + failures).
-
-	// ^^^ vvv field of call counter or calculate it every time?
 
 	// Also need success rate (num of successes) / (num of successes + num of
 	// failures), again, either have this as a field of call counter or
@@ -938,7 +802,7 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 
 
 
-	if b.numAddrsWithAtLeastRequestVolume()/*number of addresses with request volume of at least success_rate_ejection.request volume*/ < b.odCfg.SuccessRateEjection.MinimumHosts {
+	if b.numAddrsWithAtLeastRequestVolume() < b.odCfg.SuccessRateEjection.MinimumHosts {
 		return
 	}
 
@@ -970,22 +834,9 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 
 	mean, stddev := b.meanAndStdDevOfSuccessesAtLeastRequestVolume()
 
-	/*
-	for _, addr := range b.odAddrs.Keys() {
-			val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-			if !ok { // Shouldn't happen
-				continue
-			}
-			// typecast val to obj,
-			// shouldn't error either
-			obj, ok := val.(*object)
-			if !ok {
-				continue
-			}
-	*/
-	for _, addr := range b.odAddrs.Keys() {
-		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-		if !ok {                       // Shouldn't happen
+	for _, addr := range b.odAddrs.Keys() { // This for is so you can get addr, and also val, I don't see a way you can do it in a helper function
+		val, ok := b.odAddrs.Get(addr)
+		if !ok {
 			continue
 		}
 		// typecast val to obj,
@@ -994,6 +845,8 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 		if !ok {
 			continue
 		}
+		// If the percentage of ejected addresses is greater than max_ejection_percent, stop.
+
 		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
 			// stop.
 			return
@@ -1021,41 +874,6 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 			}
 		}
 	}
-	// 3. For each address:
-	/*for addr, obj := range b.odAddrs {
-		// If the percentage of ejected addresses is greater than max_ejection_percent, stop.
-		//
-		if float64(b.numAddrsEjected) / float64(len(b.odAddrs)) * 100 > float64(b.odCfg.MaxEjectionPercent) {
-			// stop.
-			return
-		}
-
-		// If the address's total request volume is less than success_rate_ejection.request_volume, continue to the next address.
-		if obj.callCounter.inactiveBucket.requestVolume < int64(b.odCfg.SuccessRateEjection.RequestVolume) {
-			continue
-		}
-
-		// ccb := obj.callCounter.inactiveBucket (both of these would get rid of a lot of verbosity)
-		// sre := b.odCfg.SuccessRateEjection
-
-		//  If the address's success rate is less than (mean - stdev *
-		//  (success_rate_ejection.stdev_factor / 1000)), then choose a random
-		//  integer in [0, 100). If that number is less than
-		//  success_rate_ejection.enforcement_percentage, eject that address.
-		successRate := obj.callCounter.inactiveBucket.numSuccesses / obj.callCounter.inactiveBucket.requestVolume // This needs to be a float, not an int
-		if float64(successRate) < (mean - stddev * (float64(b.odCfg.SuccessRateEjection.StdevFactor) / 1000) ) {
-
-			// choose a random integer in [0, 100). If that number is less than
-			// success_rate_ejection.enforcement_percentage, eject that address.
-			if uint32(rand.Int31n(100)) < b.odCfg.SuccessRateEjection.EnforcementPercentage {
-				b.ejectAddress(addr)
-			}
-		}
-	}*/
-
-	// 	3a. If the percentage of ejected addresses is greater than max_ejection_percent, stop.
-	//  3b. If the address's total request volume is less than success_rate_ejection.request_volume, continue to the next address.
-	//  3c. If the address's success rate is less than (mean - stdev * (success_rate_ejection.stdev_factor / 1000)), then choose a random integer in [0, 100). If that number is less than success_rate_ejection.enforcement_percentage, eject that address.
 
 	// Ejecting the addresses logically means: (addresses get unejected at the end of the steps that are tied to the interval timer going off)
 	// (see function ^^^ but I think it makes more sense to do this inline)
@@ -1074,7 +892,6 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 	// of addresses ejected, and then eventually stops once percentage of
 	// ejected addresses is greater than max_ejection_percent.
 
-	// Request volume (num successes + num failures) <- per address
 
 
 
@@ -1083,26 +900,11 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 		return
 	}
 
-	/*
-		for _, addr := range b.odAddrs.Keys() {
-				val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-				if !ok { // Shouldn't happen
-					continue
-				}
-				// typecast val to obj,
-				// shouldn't error either
-				obj, ok := val.(*object)
-				if !ok {
-					continue
-				}
-	*/
 	for _, addr := range b.odAddrs.Keys() {
-		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-		if !ok {                       // Shouldn't happen
+		val, ok := b.odAddrs.Get(addr)
+		if !ok {
 			continue
 		}
-		// typecast val to obj,
-		// shouldn't error either
 		obj, ok := val.(*object)
 		if !ok {
 			continue
@@ -1114,7 +916,6 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 		// for loop through addrs, count number of ejected addresses/ len(b.odAddrs)
 
 		// Needs to be a float * 100 VVV
-		// float64(b.numAddrsEjected) / float64(len(b.odAddrs)) * 100 > float64(b.odCfg.MaxEjectionPercent)
 		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
 			// stop.
 			return
@@ -1133,42 +934,9 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 			b.ejectAddress(addr)
 		}
 	}
-
-	// 2. for each address
-	/*for addr, obj := range b.odAddrs {
-		// If the percentage of ejected addresses is greater than max_ejection_percent, stop.
-
-		// ejected address int as state, add 1 to it when ejected, subtract 1 from it when unejected
-
-		// for loop through addrs, count number of ejected addresses/ len(b.odAddrs)
-
-		// Needs to be a float * 100 VVV
-		// float64(b.numAddrsEjected) / float64(len(b.odAddrs)) * 100 > float64(b.odCfg.MaxEjectionPercent)
-		if float64(b.numAddrsEjected) / float64(len(b.odAddrs)) * 100 > float64(b.odCfg.MaxEjectionPercent) {
-			// stop.
-			return
-		}
-		// If the address's total request volume is less than failure_percentage_ejection.request_volume, continue to the next address.
-		if uint32(obj.callCounter.inactiveBucket.requestVolume) < b.odCfg.FailurePercentageEjection.RequestVolume {
-			continue
-		}
-		//  2c. If the address's failure percentage is greater than
-		//  failure_percentage_ejection.threshold, then choose a random integer
-		//  in [0, 100). If that number is less than
-		//  failiure_percentage_ejection.enforcement_percentage, eject that
-		//  address.
-		failurePercentage := obj.callCounter.inactiveBucket.numFailures / obj.callCounter.inactiveBucket.requestVolume
-		if uint32(failurePercentage) > b.odCfg.FailurePercentageEjection.EnforcementPercentage {
-			b.ejectAddress(addr)
-		}
-	}*/
-
 }
 
-func (b *outlierDetectionBalancer) ejectAddress(addr resolver.Address/*key entry of map - o(1) access*/) { // I think it makes more sense to do this inline
-	// To eject an address (i.e. a single map entry in the map this balancer holds):
-	// obj := b.odAddrs[key] (to remove verbosity)
-
+func (b *outlierDetectionBalancer) ejectAddress(addr resolver.Address) {
 	val, ok := b.odAddrs.Get(addr)
 	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
 		return
@@ -1184,13 +952,13 @@ func (b *outlierDetectionBalancer) ejectAddress(addr resolver.Address/*key entry
 	obj.latestEjectionTimestamp = b.ejectionTime/*timestamp that was recorded when the timer fired - need to plumb this in somehow*/
 	// increase the ejection time multiplier by 1
 	obj.ejectionTimeMultiplier++
-	// call eject() on each subchannel wrapper in that address's subchannel wrapper list. (plural! on all the subchannels that connect to that upstream)
+	// call eject() on each subchannel wrapper in that address's subchannel wrapper list.
 	for _, sbw := range obj.sws {
 		sbw.eject()
 	}
 }
 
-func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address/*key entry of map - o(1) access*/) {
+func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address) {
 	val, ok := b.odAddrs.Get(addr)
 	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
 		return
@@ -1209,18 +977,17 @@ func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address/*key ent
 	}
 }
 
-type object struct { // Now that this is a pointer, does this break anything?
+type object struct { // Now that this is a pointer, does this break anything?*
 	// The call result counter object
 	callCounter callCounter
 
 	// The latest ejection timestamp, or null if the address is currently not ejected
-	// time.Time?
-	latestEjectionTimestamp time.Time // Pointer allows branching logic on the null
+	latestEjectionTimestamp time.Time // We represent the branching logic on the null with a time.Zero() value
 
 	// The current ejection time multiplier, starting at 0
 	ejectionTimeMultiplier int64
 
-	// A list of subchannel wrapper objects that correspond to this address - [] plural!
+	// A list of subchannel wrapper objects that correspond to this address
 	sws []subConnWrapper
 }
 
@@ -1349,5 +1116,18 @@ type object struct { // Now that this is a pointer, does this break anything?
 // Interval timer going off and triggering eject/uneject behavior (also synced with others based on run() operation? Does that sound right?)
 
 
+
 // I don't think any of these operations has sync issues if we put it on the run goroutine
 // I should write out the logic for each operation, and then see if any weird racey things pop up
+
+// 2. Figure out run() goroutine and syncing operations
+
+// I try to avoid a run goroutine as much as possible
+// But if I need a run(), I will probably try to move all the operations there
+// Unless it's to just forward the update, without needing to sync any field
+
+// Syncing fields require either putting operations in run() or lock unlock
+// on mutex. So figure out which ones are just forward without syncing field
+// - these operations don't have to be synced by putting in the run() goroutine
+
+// Can also intermingle cleanup with 2 after you fix odAddrs

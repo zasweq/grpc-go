@@ -20,6 +20,7 @@ package outlierdetection
 import (
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/resolver"
 )
 
 type subConnWrapper struct {
@@ -39,6 +40,8 @@ type subConnWrapper struct {
 
 	ejected bool // Read by od balancer to...not send updates downward if ejected in UpdateSubConnState()...I guess the balancer will persist it as well.
 	// Yup, in clusterimpl.go the balancer writes to this field (atomically since it can be read and written concurrently)
+
+	addresses []resolver.Address // For use in plurality checks in UpdateAddresses()
 }
 
 // In regards to synchronization, this eject/uneject method
