@@ -491,7 +491,7 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 	// }
 
 	// Have 0 be a special case of multiple. Wait, if 0 is a special case of
-	// multiple, addrs[0] will cause a nil panic.
+	// switch to multiple, addrs[0] will cause a nil panic. What do we do in that situation?
 
 	// if len(scw.addresses) == 0 if it supports that, thus it being 1 is the logical conditional
 	if len(scw.addresses) == 1 {
@@ -524,7 +524,9 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 
 			// MAKE SURE SCW POINTS TO THE CORRECT OBJ AT THE END OF THIS
 
-		} else {
+		} else { // switch to multiple, addrs[0] will cause a nil panic. What do we do in that situation? This never reads addrs[0], so we're good. This is simply using the old address list to clean up resources
+			// What do we want to do when we switch to an address of empty length?
+
 			// single to multiple algorithm
 
 			// the problem is we have only the subchannel
@@ -552,7 +554,7 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 				scw.obj.callCounter.inactiveBucket = bucket{}
 			}
 		}
-	} else if len(scw.addresses) > 1 { // s else
+	} else { // s else
 		if len(addrs) == 1 {
 			// multiple to single algorithm
 			val, ok := b.odAddrs.Get(addrs[0])
@@ -584,6 +586,7 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 
 
 		} // else is multiple to multiple - no op, continued to be ignored by outlier detection load balancer
+		// switch to multiple, addrs[0] will cause a nil panic. What do we do in that situation? We don't deal with it though, continue to ignore
 		/*else {
 			// multiple to multiple algorithm - no op, you don't even need this else just a no-op
 		}*/
@@ -658,12 +661,11 @@ func (b *outlierDetectionBalancer) run() {
 		}
 	}
 
+	// Grounded blob: look over/cleanup/make sure this algorithm is correct.
 	// Interval trigger:
-	b.timerStartTime = time.Now() // could also use this for ejection time, unless something can also write to it before reading...
+	b.timerStartTime = time.Now() // could also use this for ejection time, are these two logically the same? I.e. do they start/get cleared/etc. at the same time and in the same instances
 	// 1. Record the timestamp for use when ejecting addresses in this iteration. "timestamp that was recorded when the timer fired"
 	b.ejectionTime = time.Now() // I can write it here - is it because it's not a value..."referenced by the subchannel wrapper that was picked" - so object value needs to be a pointer?
-	// ejectionTime could be a field plumbed through methods defined - but writing to a field
-	// makes more sense?
 
 	// 2. For each address, swap the call counter's buckets in that address's map entry.
 	for _, obj := range b.objects() {
@@ -680,45 +682,31 @@ func (b *outlierDetectionBalancer) run() {
 		b.failurePercentageAlgorithm()
 	}
 
-	// can't really pull stuff out, I think it's fine to switch each for each Address to this
-
-	// for addr, obj := range b.odAddrs (what is logically equivalent to ranging over map entry)
+	// 5. For each address in the map:
 	for _, addr := range b.odAddrs.Keys() {
-		val, ok := b.odAddrs.Get(addr) // value interface{}, ok bool
-		if !ok { // Shouldn't happen
+		val, ok := b.odAddrs.Get(addr)
+		if !ok {
 			continue
 		}
-		// typecast val to obj,
-		// shouldn't error either
 		obj, ok := val.(*object)
 		if !ok {
 			continue
 		}
-		// Logically equivalent, you have addr, obj in the for each
 		// If the address is not ejected and the multiplier is greater than 0, decrease the multiplier by 1.
 		if obj.latestEjectionTimestamp.IsZero() && obj.ejectionTimeMultiplier > 0 {
 			obj.ejectionTimeMultiplier--
 			continue
 		}
-		// If it hits here the address is ejected
-
 		// If the address is ejected, and the current time is after
-		// ejection_timestamp + min(base_ejection_time (type: time.Time) * multiplier (type: int),
-		// max(base_ejection_time (type: time.Time), max_ejection_time (type: time.Time))), un-eject the address.
-		// obj.latestEjectionTimestamp /*ejection_timestamp*/ + /*min(bet * multiplier, max(bet, met))*/
-
-		// min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))
-
-		// max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds())
-
+		// ejection_timestamp + min(base_ejection_time (type: time.Time) *
+		// multiplier (type: int), max(base_ejection_time (type: time.Time),
+		// max_ejection_time (type: time.Time))), un-eject the address.
 		if time.Now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) {
-			// uneject address - see algorithm, either do that in a function or do it inline
 			b.unejectAddress(addr)
 		}
 
 		b.odCfg.BaseEjectionTime.Nanoseconds()
 	}
-
 }
 
 // numAddrsWithAtLeastRequestVolume returns the number of addresses present in the map
@@ -776,130 +764,19 @@ func (b *outlierDetectionBalancer) meanAndStdDevOfSuccessesAtLeastRequestVolume(
 }
 
 func (b *outlierDetectionBalancer) successRateAlgorithm() {
-
-	// Also need success rate (num of successes) / (num of successes + num of
-	// failures), again, either have this as a field of call counter or
-	// calculate it every time. (I think is the same as "fractions of successful
-	// requests")
-
-
-
-	// Percentage of ejected addresses (num of addresses ejected) <- (easy to
-	// increment and decrement every time address ejected/unejected, as this
-	// whole algorithm happens synchronously) / (total number of addresses -
-	// len(b.addressMap))
-
-
 	// 1. If the number of addresses with request volume of at least
 	// success_rate_ejection.request_volume is less than
 	// success_rate_ejection.minimum_hosts, stop.
-
-	// Can either do a o(n) linear search of the map, or persist this over time
-
-	// persisting this over time would be hard since this gets incremented every time a request volume
-	// hits, which would require updating every time callback hits, which won't be able to
-	// read this balancer.
-
-
-
-	if b.numAddrsWithAtLeastRequestVolume() < b.odCfg.SuccessRateEjection.MinimumHosts {
+	if b.numAddrsWithAtLeastRequestVolume() < b.odCfg.SuccessRateEjection.MinimumHosts { // TODO: O(n) search, is there a way to optimize this?
 		return
 	}
 
 	// 2. Calculate the mean and standard deviation of the fractions of
 	// successful requests among addresses with total request volume of at least
 	// success_rate_ejection.request_volume.
-	/*var totalRequests int64 // could also pull this out into a helper for cleanliness
-	var mean float64 // Right type?
-	var stddev float64 // Right type?
-
-	for _, obj := range b.odAddrs {
-		// "of at least success_rate_ejection.request_volume"
-		if uint32(obj.callCounter.inactiveBucket.requestVolume) >= b.odCfg.SuccessRateEjection.RequestVolume { // Is inactive bucket the right one to look at?
-			totalRequests += obj.callCounter.inactiveBucket.numSuccesses
-		}
-	}
-	mean = totalRequests / len(b.odAddrs) // TODO: Figure out types - should this be a float and what's on the left? I feel like with means/std dev you need float for decimal
-
-
-	// to calculate std dev:
-	// Find each scores deviation from the mean
-
-	// Square each deviation from the mean
-
-	// Find the sum of squares
-
-	// Find the variance - divide the sum of the squares by n (it's population because you use every data point)
-	// Take square root of the variance - you now have std dev*/
-
 	mean, stddev := b.meanAndStdDevOfSuccessesAtLeastRequestVolume()
 
-	for _, addr := range b.odAddrs.Keys() { // This for is so you can get addr, and also val, I don't see a way you can do it in a helper function
-		val, ok := b.odAddrs.Get(addr)
-		if !ok {
-			continue
-		}
-		// typecast val to obj,
-		// shouldn't error either
-		obj, ok := val.(*object)
-		if !ok {
-			continue
-		}
-		// If the percentage of ejected addresses is greater than max_ejection_percent, stop.
-
-		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
-			// stop.
-			return
-		}
-
-		// If the address's total request volume is less than success_rate_ejection.request_volume, continue to the next address.
-		if obj.callCounter.inactiveBucket.requestVolume < int64(b.odCfg.SuccessRateEjection.RequestVolume) {
-			continue
-		}
-
-		// ccb := obj.callCounter.inactiveBucket (both of these would get rid of a lot of verbosity)
-		// sre := b.odCfg.SuccessRateEjection
-
-		//  If the address's success rate is less than (mean - stdev *
-		//  (success_rate_ejection.stdev_factor / 1000)), then choose a random
-		//  integer in [0, 100). If that number is less than
-		//  success_rate_ejection.enforcement_percentage, eject that address.
-		successRate := obj.callCounter.inactiveBucket.numSuccesses / obj.callCounter.inactiveBucket.requestVolume // This needs to be a float, not an int
-		if float64(successRate) < (mean - stddev * (float64(b.odCfg.SuccessRateEjection.StdevFactor) / 1000) ) {
-
-			// choose a random integer in [0, 100). If that number is less than
-			// success_rate_ejection.enforcement_percentage, eject that address.
-			if uint32(rand.Int31n(100)) < b.odCfg.SuccessRateEjection.EnforcementPercentage {
-				b.ejectAddress(addr)
-			}
-		}
-	}
-
-	// Ejecting the addresses logically means: (addresses get unejected at the end of the steps that are tied to the interval timer going off)
-	// (see function ^^^ but I think it makes more sense to do this inline)
-
-}
-
-func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
-	// Mathematical properties calculated from the system at each interval timer going off:
-	// Failure percentage is (num of failures) / (num of successes + num of failures)
-	// ^^^ similar question to successRateEjection
-
-	// Percentage of ejected addresses (num of addresses ejected) <- (easy to
-	// increment and decrement every time address ejected/unejected, as this
-	// whole algorithm happens synchronously) / (total number of addresses -
-	// len(b.addressMap)) <- makes sense, as keeps ejecting and incrementing num
-	// of addresses ejected, and then eventually stops once percentage of
-	// ejected addresses is greater than max_ejection_percent.
-
-
-
-
-	// 1. If the number of addresses (len(map)) is less than failure_percentage_ejection.minimum_hosts, stop.
-	if uint32(b.odAddrs.Len()) < b.odCfg.FailurePercentageEjection.MinimumHosts {
-		return
-	}
-
+	// 3. For each address:
 	for _, addr := range b.odAddrs.Keys() {
 		val, ok := b.odAddrs.Get(addr)
 		if !ok {
@@ -909,27 +786,75 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 		if !ok {
 			continue
 		}
-		// If the percentage of ejected addresses is greater than max_ejection_percent, stop.
-
-		// ejected address int as state, add 1 to it when ejected, subtract 1 from it when unejected
-
-		// for loop through addrs, count number of ejected addresses/ len(b.odAddrs)
-
-		// Needs to be a float * 100 VVV
+		ccb := obj.callCounter.inactiveBucket
+		sre := b.odCfg.SuccessRateEjection
+		// i. If the percentage of ejected addresses is greater than
+		// max_ejection_percent, stop.
 		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
-			// stop.
 			return
 		}
-		// If the address's total request volume is less than failure_percentage_ejection.request_volume, continue to the next address.
-		if uint32(obj.callCounter.inactiveBucket.requestVolume) < b.odCfg.FailurePercentageEjection.RequestVolume {
+
+		// ii. If the address's total request volume is less than
+		// success_rate_ejection.request_volume, continue to the next address.
+		if ccb.requestVolume < int64(sre.RequestVolume) {
+			continue
+		}
+
+		//  iii. If the address's success rate is less than (mean - stdev *
+		//  (success_rate_ejection.stdev_factor / 1000))
+		successRate := float64(ccb.numSuccesses) / float64(ccb.requestVolume)
+		if successRate < (mean - stddev * (float64(sre.StdevFactor) / 1000) ) {
+			// then choose a random integer in [0, 100). If that number is less
+			// than success_rate_ejection.enforcement_percentage, eject that
+			// address.
+			if uint32(rand.Int31n(100)) < sre.EnforcementPercentage {
+				b.ejectAddress(addr)
+			}
+		}
+	}
+}
+
+func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
+	// 1. If the number of addresses (len(map)) is less than
+	// failure_percentage_ejection.minimum_hosts, stop.
+	if uint32(b.odAddrs.Len()) < b.odCfg.FailurePercentageEjection.MinimumHosts {
+		return
+	}
+
+	// 2. For each address:
+	for _, addr := range b.odAddrs.Keys() {
+		val, ok := b.odAddrs.Get(addr)
+		if !ok {
+			continue
+		}
+		obj, ok := val.(*object)
+		if !ok {
+			continue
+		}
+		ccb := obj.callCounter.inactiveBucket
+		fpe := b.odCfg.FailurePercentageEjection
+		// i. If the percentage of ejected addresses is greater than
+		// max_ejection_percent, stop.
+		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
+			return
+		}
+		// ii. If the address's total request volume is less than
+		// failure_percentage_ejection.request_volume, continue to the next
+		// address.
+		if uint32(ccb.requestVolume) < fpe.RequestVolume {
 			continue
 		}
 		//  2c. If the address's failure percentage is greater than
-		//  failure_percentage_ejection.threshold, then choose a random integer
-		//  in [0, 100). If that number is less than
-		//  failiure_percentage_ejection.enforcement_percentage, eject that
-		//  address.
-		failurePercentage := obj.callCounter.inactiveBucket.numFailures / obj.callCounter.inactiveBucket.requestVolume
+		//  failure_percentage_ejection.threshold
+		failurePercentage := (float64(obj.callCounter.inactiveBucket.numFailures) / float64(obj.callCounter.inactiveBucket.requestVolume)) * 100
+		if failurePercentage > float64(b.odCfg.FailurePercentageEjection.Threshold) {
+			// then choose a random integer in [0, 100). If that number is less
+			// than failiure_percentage_ejection.enforcement_percentage, eject
+			// that address.
+			if uint32(rand.Int31n(100)) < b.odCfg.FailurePercentageEjection.EnforcementPercentage {
+				b.ejectAddress(addr)
+			}
+		}
 		if uint32(failurePercentage) > b.odCfg.FailurePercentageEjection.EnforcementPercentage {
 			b.ejectAddress(addr)
 		}
@@ -938,21 +863,22 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 
 func (b *outlierDetectionBalancer) ejectAddress(addr resolver.Address) {
 	val, ok := b.odAddrs.Get(addr)
-	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
+	if !ok { // Shouldn't happen
 		return
 	}
 	obj, ok := val.(*object)
-	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
+	if !ok { // Shouldn't happen
 		return
 	}
 
 	b.numAddrsEjected++
 
-	// set the current ejection timestamp to the timestamp that was recorded when the timer fired
-	obj.latestEjectionTimestamp = b.ejectionTime/*timestamp that was recorded when the timer fired - need to plumb this in somehow*/
-	// increase the ejection time multiplier by 1
+	// To eject an address, set the current ejection timestamp to the timestamp
+	// that was recorded when the timer fired, increase the ejection time
+	// multiplier by 1, and call eject() on each subchannel wrapper in that
+	// address's subchannel wrapper list.
+	obj.latestEjectionTimestamp = b.ejectionTime/*can either be ejectionTime or timerFired - can you combine into one?*/
 	obj.ejectionTimeMultiplier++
-	// call eject() on each subchannel wrapper in that address's subchannel wrapper list.
 	for _, sbw := range obj.sws {
 		sbw.eject()
 	}
@@ -960,18 +886,21 @@ func (b *outlierDetectionBalancer) ejectAddress(addr resolver.Address) {
 
 func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address) {
 	val, ok := b.odAddrs.Get(addr)
-	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
+	if !ok { // Shouldn't happen
 		return
 	}
 	obj, ok := val.(*object)
-	if !ok { // Shouldn't happen - perhaps I should see how other places in the codebase use it
+	if !ok { // Shouldn't happen
 		return
 	}
 	b.numAddrsEjected--
-	// set the current ejection timestamp to null (doesn't he mean latest ejection timestamp?)
-	obj.latestEjectionTimestamp = time.Time{} // or nil if not currently ejected - logically equivalent to time zero value
 
-	// call uneject() on each subchannel wrapper in that address's subchannel wrapper list
+	// To un-eject an address, set the current ejection timestamp to null
+	// (doesn't he mean latest ejection timestamp?, in Golang null for time is
+	// logically equivalent in practice to the time zero value) and call
+	// uneject() on each subchannel wrapper in that address's subchannel wrapper
+	// list.
+	obj.latestEjectionTimestamp = time.Time{}
 	for _, sbw := range obj.sws {
 		sbw.uneject()
 	}
@@ -1131,3 +1060,7 @@ type object struct { // Now that this is a pointer, does this break anything?*
 // - these operations don't have to be synced by putting in the run() goroutine
 
 // Can also intermingle cleanup with 2 after you fix odAddrs
+
+
+
+// 
