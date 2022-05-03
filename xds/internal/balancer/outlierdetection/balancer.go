@@ -23,6 +23,7 @@ package outlierdetection
 import (
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/connectivity"
 	"math"
 	"math/rand"
 	"time"
@@ -47,6 +48,9 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 	return &outlierDetectionBalancer{
 		cc: cc,
 		odAddrs: am,
+		// new sc  -> scw map
+		// operations from child: typecast? See cluster impl for how that did it
+		scWrappers: make(map[balancer.SubConn]*subConnWrapper),
 	}
 }
 
@@ -112,7 +116,7 @@ type outlierDetectionBalancer struct {
 
 	numAddrsEjected int // For fast calculations of percentage of addrs ejected
 
-	ejectionTime time.Time // timestamp used ejecting addresses per iteration, don't make state?
+	ejectionTime time.Time // timestamp used ejecting addresses per iteration, can you merge this with timerStartTime logically?
 
 	odCfg *LBConfig
 
@@ -120,15 +124,15 @@ type outlierDetectionBalancer struct {
 
 	child balancer.Balancer // cluster impl - when is this built? See others for example, is it in Build()?
 
-	timerStartTime time.Time
+	timerStartTime time.Time // The outlier_detection LB policy will store the timestamp of the most recent timer start time.
 
-	intervalTimer time.Timer
+	intervalTimer *time.Timer
 
 
 	// map sc (all parent knows about) -> scw (all children know about, this balancer wraps scs in scw)
-
+	scWrappers map[balancer.SubConn]*subConnWrapper // a pointer...scws? clusterimpl also has a mutex protecting this
 	// I plan to sync all operations with a run() goroutine - so no need for mutexes? Wrong,
-	// sometimes interspliced between reading in non run() and operations synced in run()
+	// sometimes interspliced between reading in non run() and operations synced in run() **
 }
 
 // noopConfig returns whether this balancer is configured with a logical no-op
@@ -148,53 +152,37 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 
 	// Perhaps move to a handle function - after coding/putting in run() goroutine
 
-
 	// When the outlier_detection LB policy receives an address update, it will
 	// create a map entry for each subchannel address in the list, and remove
-	// each map entry for a subchannel address not in the list, then pass the
-	// address list along to the child policy.
-
-	// When the outlier_detection LB policy receives an address update, it will
-	// create a map entry for each subchannel address in the list, and remove
-	// each map entry for a subchannel address not in the list
-	addrs := make(map[resolver.Address]bool) // for fast lookups during deletion phase
+	// each map entry for a subchannel address not in the list.
+	addrs := make(map[resolver.Address]bool)
 	for _, addr := range s.ResolverState.Addresses {
 		addrs[addr] = true
-
-		// Cool, stores a pointer, so will affect underlying heap memory and not make a copy
-		b.odAddrs.Set(addr, &object{}) // Do we need to initialize any part of this or are zero values sufficient?
+		b.odAddrs.Set(addr, &object{}) // Do we need to initialize any part of this or are zero values sufficient? make([]sws)?
 	}
-
-	// remove each map entry for a subchannel address not in the list
-	for _, addr := range b.odAddrs.Keys() { // []Address, full object struct, I think once you get evaluate this expression, it is immutable
+	for _, addr := range b.odAddrs.Keys() {
 		if !addrs[addr] {
 			b.odAddrs.Delete(addr)
 		}
 	}
 
-
-
 	// When a new config is provided, if the timer start timestamp is unset, set
 	// it to the current time and start the timer for the configured interval,
-	// then for each address, reset the call counters. If the timer start
-	// timestamp is set, instead cancel the existing timer and start the timer
-	// for the configured interval minus the difference between the current time
-	// and the previous start timestamp, or 0 if that would be negative.
+	// then for each address, reset the call counters.
 	var interval time.Duration
 	if b.timerStartTime.IsZero() {
 		b.timerStartTime = time.Now()
-		// for each address, "reset the call counters" << what does this mean I'm pretty sure it means clear both active and inactive
 		for _, obj := range b.objects() {
 			obj.callCounter.activeBucket = bucket{}
 			obj.callCounter.inactiveBucket = bucket{}
 		}
 		interval = b.odCfg.Interval
 	} else {
-		// cancel the existing timer and start the timer
-		// for the configured interval minus the difference between the current time
-		// and the previous start timestamp, or 0 if that would be negative.
-		// configured interval - (current time - previous start timestamp (b.timerStartTime)), if negative make 0
-		interval := b.odCfg.Interval - (time.Now().Sub(b.timerStartTime))
+		// If the timer start timestamp is set, instead cancel the existing
+		// timer and start the timer for the configured interval minus the
+		// difference between the current time and the previous start timestamp,
+		// or 0 if that would be negative.
+		interval = b.odCfg.Interval - (time.Now().Sub(b.timerStartTime))
 		if interval < 0 {
 			interval = 0
 		}
@@ -207,9 +195,11 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		// `failure_percentage_ejection` fields unset, skip starting the timer and
 		// unset the timer start timestamp."
 		b.timerStartTime = time.Time{}
-		// Do we need to clear the timer as well? Or when it fires it will be logical no-op (from no-op config) and not count...
-	} // Do we need to move somewhere else? I.e. beginning of function
-
+		// Do we need to clear the timer as well? Or when it fires it will be
+		// logical no-op (from no-op config) and not count... How else is the
+		// no-op config plumbed through system? Does this gate at beginning of
+		// interval timer?
+	}
 
 	// then pass the address list along to the child policy.
 	return b.child.UpdateClientConnState(s)
@@ -227,7 +217,7 @@ func (b *outlierDetectionBalancer) ResolverError(err error) {
 
 	// Graceful switch simply forwards the error downward (to either current or pending)
 
-	// What happens to all the state when you receive an error? (Again, see other xds balancers), what does a resolver error signify logically? Are we clearing out this balancer's state?
+	// What happens to all the state when you receive an error? (Again, see other xds balancers), what does a resolver error signify logically? Are we clearing out this balancer's state - ask team?
 	// Clearing out map + lb config etc. until you get a new Client Conn update with a good config? Is this the state machine?
 }
 
@@ -239,11 +229,19 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	// Impl persists a map that maps sc -> scw...see how it's done in other
 	// parts of codebase.
 
-	scw, ok := sc.(subConnWrapper) // Need to get scw data from a map, this is wrong, parent has no knowledge of the wrapper
+	// MAPIMPL: For sure need read on sc -> scw map to figure out, do you need child != nil wrapper?
+	// 			delete if SHUTDOWN
+
+	scw, ok := b.scWrappers[sc]
 	if !ok {
 		// Return, shouldn't happen if passed up scw
+		// Because you wrap subconn always, clusterimpl i think only some
+		return
 	}
-
+	if state.ConnectivityState == connectivity.Shutdown {
+		// Remove this SubConn from the map on Shutdown.
+		delete(b.scWrappers, scw.SubConn)
+	}
 	scw.latestState = state
 	if !scw.ejected { // eject() - "stop passing along updates from the underlying subchannel."
 		b.child.UpdateSubConnState(scw, state)
@@ -251,10 +249,12 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 }
 
 func (b *outlierDetectionBalancer) Close() {
-	// This operation isn't defined in the gRFC. Pass through? If so, I don't think you need to sync.
-	// If not pass through, and it actually does something you'd need to sync. (See other balancers)
+	// This operation isn't defined in the gRFC. Def requires synchronization points,
+	// stuff in the balancer shouldn't happen after Close().
 
-	// Cleanup stage - go specific cleanup
+	// Cleanup stage - go specific cleanup, clean up goroutines and memory? See
+	// other balancers on how they implement close() and what they put in
+	// close().
 }
 
 func (b *outlierDetectionBalancer) ExitIdle() {
@@ -267,6 +267,22 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 
 	// Exit Idle - go specific logic, see other balancers, I'm pretty sure
 	// this simply forwards this call down the balancer hierarchy, typecast, etc.
+
+	// Cluster Impl -
+	/*
+	if b.childLB == nil {
+			return
+		}
+		if ei, ok := b.childLB.(balancer.ExitIdler); ok {
+			ei.ExitIdle()
+			return
+		}
+		// Fallback for children that don't support ExitIdle -- connect to all
+		// SubConns.
+		for _, sc := range b.scWrappers { // Do we now need this in od since top level?
+			sc.Connect()
+		}
+	*/
 }
 
 
@@ -344,7 +360,10 @@ func (b *outlierDetectionBalancer) UpdateState(s balancer.State) {
 		},
 	})
 
-	// What to do with connectivity state? Simply forward, or does it affect anything here?
+	// What to do with connectivity state? Simply forward, or does it affect
+	// anything here? Similar question to ResolverError coming in and affecting
+	// balancer state. Nothing explicitly defined in gRFC, but there can
+	// probably be go specific logic.
 
 	// related to algorithms: is no-op logically treated same as any config with
 	// both unset, if both are unset other parts of config can be set that
@@ -367,11 +386,12 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	if err != nil {
 		return nil, err
 	}
-	scw := &subConnWrapper{
+	scw := &subConnWrapper{ // constructing a subConnWrapper on the heap
 		SubConn: sc,
 		addresses: addrs,
 	}
-	if len(addrs) != 1 { // This addresses list plurality can change from A (what it is right now, in this call) to B, which can cause logic changes in UpdateAddresses. How do I persist here so I know A?
+	b.scWrappers[sc] = scw
+	if len(addrs) != 1 {
 		return scw, nil
 	}
 
@@ -380,10 +400,14 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 		return scw, nil
 	}
 
+
 	// Does this actually write to the corresponding heap memory?
 	obj, ok := val.(*object) // is this right?
 
-	obj.sws = append(obj.sws, *scw) // or do we make this an array of pointers to scw and don't dereference?
+	obj.sws = append(obj.sws, scw) // or do we make this an array of pointers to scw and don't dereference?
+	// VVV even related to the typecast of sc.(subConnWrapper). Does this typecast to pointer? Aren't go
+	// interfaces implicitly pointers?
+
 
 	// If that address is currently ejected, that subchannel wrapper's eject
 	// method will be called.
@@ -393,19 +417,41 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	return scw, nil
 }
 
+func (b *outlierDetectionBalancer) RemoveSubConn(sc balancer.SubConn) {
+	scw, ok := sc.(*subConnWrapper)
+	if !ok { // Shouldn't happen
+		return
+	}
+	// Remove the wrpaped SubConn from the parent Client Conn. We don't remove
+	// from map entry until we get a Shutdown state for the SubConn, as we need
+	// that data to forward that state down.
+	b.cc.RemoveSubConn(scw.SubConn)
+}
+
 func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []resolver.Address) {
 	// Comes from child lb - so implicitly a scw
 	// typecast to scw
-	scw, ok := sc.(subConnWrapper)
+	scw, ok := sc.(*subConnWrapper) // Seems like these two are only places this can happen, any others?
 	if !ok {
 		// Return, shouldn't happen if passed up scw
+		return
 	}
 
 	// see if scw is ejected, if so don't forward? I'm pretty sure. This is the question that started it in the first place.
-	if scw.ejected {
-		// Don't forward?
+	if scw.ejected { // Wait, this update addresses can cause it to move to a new subchannel and thus a new ejected - merge this logic with the UpdateAddresses algorithm.
+		// Don't forward? Wait, this is about addresses, which affects map, not about relaying state and stuff.
+		// UpdateState() gets called who knows
+
+		// "will stop passing along updates from the underlying subchannel."
+
+		// uneject(): The wrapper will report a state update with the latest
+		// update from the underlying subchannel, and resume passing along
+		// updates from the underlying subchannel.
+
+		// Would we need to persist the recent []address change as well just like connectivity state?
 	}
 
+	// WHEN GET BACK: ^^^ FIGURE OUT EJECTED LOGIC, AND CLEANUP THIS UPDATEADDRESSES OPERATION.
 
 	// what data do you have now, can you scale it up
 
@@ -597,6 +643,10 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 	scw.addresses = addrs
 }
 
+// ResolveNow()
+
+// Target()
+
 func max(x, y int64) int64 {
 	if x < y {
 		return y
@@ -663,6 +713,7 @@ func (b *outlierDetectionBalancer) run() {
 
 	// Grounded blob: look over/cleanup/make sure this algorithm is correct.
 	// Interval trigger:
+	// When the timer fires, set the timer start timestamp to the current time.
 	b.timerStartTime = time.Now() // could also use this for ejection time, are these two logically the same? I.e. do they start/get cleared/etc. at the same time and in the same instances
 	// 1. Record the timestamp for use when ejecting addresses in this iteration. "timestamp that was recorded when the timer fired"
 	b.ejectionTime = time.Now() // I can write it here - is it because it's not a value..."referenced by the subchannel wrapper that was picked" - so object value needs to be a pointer?
@@ -917,7 +968,7 @@ type object struct { // Now that this is a pointer, does this break anything?*
 	ejectionTimeMultiplier int64
 
 	// A list of subchannel wrapper objects that correspond to this address
-	sws []subConnWrapper
+	sws []*subConnWrapper
 }
 
 
@@ -1063,4 +1114,50 @@ type object struct { // Now that this is a pointer, does this break anything?*
 
 
 
-// 
+
+
+// Do another pass - cleanup/look for blobs of functionality that still need to be implemented
+
+
+// List of blobs of functionality that still need to be implemented here
+
+// sc -> scw map, parent only knows sc, children know scw
+// and also all the logic this entails, see other examples in codebase
+
+// * Cluster impl literally just has it to convert UpdateSubConnState() from parent (only knows sc)
+// to child (only knows scw), do we need it for any other operation? *Triage
+
+// **Done...
+
+
+// Should scws[] be pointers to heap memory or value types...to map and how pointers work
+// logically.
+
+// A zero value struct is simply a struct variable where each key's value is set
+// to their respective zero value. So different than pointer nil vs. not nil, underlying heap memory
+// vs. struct copyyyyy?
+
+// ** Switched to [] of pointers to heap memory
+
+
+// Can merge these two VVV
+
+// The passthrough? passthrough or not operations
+
+// Cleanup...another pass, UpdateAddresses needs some cleaning up
+
+
+
+
+// Ping Doug/Menghan for help in regards to syncing operations, esp once you get all the operations down/a mental model of operations in your head
+
+// Esp in regards to his perf comment about stepping back and thinking about codepaths/operations etc. I have all the data structures, operations, etc. Just need to sync them
+
+// Operations to put in the run goroutine, fields to sync with mutexes if outside of run() goroutine
+
+// When you switch to run, need to move stuff around to handleClientConnUpdate etc.
+
+
+
+// I plan to sync all operations with a run() goroutine - so no need for mutexes? Wrong,
+// sometimes interspliced between reading in non run() and operations synced in run() **
