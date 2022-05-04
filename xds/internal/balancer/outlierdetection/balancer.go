@@ -48,8 +48,6 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 	return &outlierDetectionBalancer{
 		cc: cc,
 		odAddrs: am,
-		// new sc  -> scw map
-		// operations from child: typecast? See cluster impl for how that did it
 		scWrappers: make(map[balancer.SubConn]*subConnWrapper),
 	}
 }
@@ -122,15 +120,18 @@ type outlierDetectionBalancer struct {
 
 	cc balancer.ClientConn // Priority parent right?
 
-	child balancer.Balancer // cluster impl - when is this built? See others for example, is it in Build()?
+	child balancer.Balancer // cluster impl - when is this built? See others for example, is it in Build()? This gets built in different places in cluster impl, so, it has nil checks on forwawrding it
+	// clusterimpl config as part of the OD config, can be different enough to warrant a creation of this child?
 
 	timerStartTime time.Time // The outlier_detection LB policy will store the timestamp of the most recent timer start time.
 
 	intervalTimer *time.Timer
 
 
-	// map sc (all parent knows about) -> scw (all children know about, this balancer wraps scs in scw)
-	scWrappers map[balancer.SubConn]*subConnWrapper // a pointer...scws? clusterimpl also has a mutex protecting this
+	// map sc (all parent knows about) -> scw (all children know about, this balancer wraps scs in scw)...explain and talk about why you need this map
+	// clusterimpl also has a mutex protecting this
+	scWrappers map[balancer.SubConn]*subConnWrapper
+
 	// I plan to sync all operations with a run() goroutine - so no need for mutexes? Wrong,
 	// sometimes interspliced between reading in non run() and operations synced in run() **
 }
@@ -219,6 +220,13 @@ func (b *outlierDetectionBalancer) ResolverError(err error) {
 
 	// What happens to all the state when you receive an error? (Again, see other xds balancers), what does a resolver error signify logically? Are we clearing out this balancer's state - ask team?
 	// Clearing out map + lb config etc. until you get a new Client Conn update with a good config? Is this the state machine?
+
+
+	// Closed check
+
+	// if childLB != nil
+	//    forward
+
 }
 
 func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
@@ -333,19 +341,7 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 
 
 func (b *outlierDetectionBalancer) UpdateState(s balancer.State) {
-	// this needs to do not the counting if the config is unset
-	// hold up...do you ever **not determined by update addrs (i.e. map state), determined by config state***, a synced operation with UpdateClientConnState
-
-	// gate it here...but then a config update can cause a Picker update..., for sync stuff tho
-	// UpdateClientConnState causes inline UpdateState callback. This callback/function writes to a buffer
-	// then picked up by run goroutine operations now synced.
-
-	// Update Client Conn state can cause an inline UpdateState |||| but happens before, so write that determines
-	// noopConfig will be read here
-
-
-
-	b.cc.UpdateState(balancer.State{ // Is this all you need?
+	b.cc.UpdateState(balancer.State{
 		ConnectivityState: s.ConnectivityState,
 		// The outlier_detection LB policy will provide a picker that delegates to
 		// the child policy's picker, and when the request finishes, increment the
@@ -383,10 +379,12 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	// in the parent policy. Thus, it has no knowledge of this types scw. like
 	// cluster impl, need a map from sc -> scw (how is this keyed?)
 
+	// Reword all three of these comments ^^^.
+
 	if err != nil {
 		return nil, err
 	}
-	scw := &subConnWrapper{ // constructing a subConnWrapper on the heap
+	scw := &subConnWrapper{
 		SubConn: sc,
 		addresses: addrs,
 	}
@@ -400,14 +398,8 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 		return scw, nil
 	}
 
-
-	// Does this actually write to the corresponding heap memory?
-	obj, ok := val.(*object) // is this right?
-
-	obj.sws = append(obj.sws, scw) // or do we make this an array of pointers to scw and don't dereference?
-	// VVV even related to the typecast of sc.(subConnWrapper). Does this typecast to pointer? Aren't go
-	// interfaces implicitly pointers?
-
+	obj, ok := val.(*object)
+	obj.sws = append(obj.sws, scw)
 
 	// If that address is currently ejected, that subchannel wrapper's eject
 	// method will be called.
@@ -428,14 +420,51 @@ func (b *outlierDetectionBalancer) RemoveSubConn(sc balancer.SubConn) {
 	b.cc.RemoveSubConn(scw.SubConn)
 }
 
+// addMapEntryIfNeeded adds a map entry for an address if required, and returns
+// the corresponding map entry (object) associated with that address.
+func (b *outlierDetectionBalancer) addMapEntryIfNeeded(addr resolver.Address) *object { // Have these be methods on the map type?
+	val, ok := b.odAddrs.Get(addr)
+	var obj *object
+	if !ok {
+		// Add map entry for that Address if applicable (i.e. if not already
+		// there).
+		obj = &object{}
+		b.odAddrs.Set(addr, obj)
+	} else {
+		obj , ok = val.(*object)
+		if !ok {
+			// shouldn't happen, logical no-op
+			obj = &object{} // to protect against nil panic
+		}
+	}
+	return obj
+}
+
+// 2a. Remove Subchannel from Addresses map entry (if singular address changed).
+// 2b. Remove the map entry if only subchannel for that address
+func (b *outlierDetectionBalancer) removeSubConnFromAddressesMapEntry(scw *subConnWrapper) {
+	for i, sw := range scw.obj.sws {
+		if scw == sw {
+			scw.obj.sws = append(scw.obj.sws[:i], scw.obj.sws[i+1:]...)
+			if len(scw.obj.sws) == 0 {
+				// []resolver.Address just automatically use [0], invariant of the caller
+				b.odAddrs.Delete(scw.addresses[0]) // invariant that used to be single (top level if), guarantee this never becomes nil
+				scw.obj = nil // does this cause any negative downstream effects?
+			}
+			break
+		}
+	}
+}
+
 func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []resolver.Address) {
-	// Comes from child lb - so implicitly a scw
-	// typecast to scw
-	scw, ok := sc.(*subConnWrapper) // Seems like these two are only places this can happen, any others?
+	scw, ok := sc.(*subConnWrapper) // Seems like these two are only places this typecast can happen, any others?
 	if !ok {
 		// Return, shouldn't happen if passed up scw
 		return
 	}
+
+	// This can start as ejected, or transition into ejected. I'm pretty sure this question is moot, because you still
+	// UpdateClientConnState() with new addresses, and relay UpdateState() down and that is what we decided to do.
 
 	// see if scw is ejected, if so don't forward? I'm pretty sure. This is the question that started it in the first place.
 	if scw.ejected { // Wait, this update addresses can cause it to move to a new subchannel and thus a new ejected - merge this logic with the UpdateAddresses algorithm.
@@ -453,169 +482,65 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 
 	// WHEN GET BACK: ^^^ FIGURE OUT EJECTED LOGIC, AND CLEANUP THIS UPDATEADDRESSES OPERATION.
 
-	// what data do you have now, can you scale it up
-
-	// Pluralities L (the len(addrs) of old subconn) -> R: Right side is addrs function argument
-	len(scw.addresses)
-	// len(addrs) = 0...what happens here, can this happen? Or is this equivalent to remove subconn? This adds a massive
-	// amount of permutation to the space
-
-	// len(addrs) = 1, single
-
-	// len(addrs) > 1, multiple
 
 
 
-	// How to determine left side? I.e. is this subconn -> address list persisted, implicit (no), or what? ***See other parts of codebase
+	// Have 0 be a special case of multiple.
 
-
-	// Where to determine the plurality list? Helper function?
-
-
-	// 1 single to single:
-
-	// 1a. Forward the update to the Client Conn.
-	//    b.cc.UpdateAddresses(sc, addrs)
-
-	// 1b. Update (create/delete map entries) the map of addresses if applicable.
-	// There's a lot to this ^^^
-
-	// 1c. Relay state with eject() recalculated
-
-	/*
-	if !obj.latestEjectionTimestamp.IsZero() {
-			scw.eject()
-		}
-	*/
-
-
-
-
-
-	// 2 single to multiple:
-
-	// 2a. Remove Subchannel from Addresses map entry.
-	//    delete from mapEntry.sws...how to do this in non linear time?
-
-	// 2b. Remove the map entry if only subchannel for that address
-    //    if len(mapEntry.sws) == 0
-	//         delete(mapEntry)
-
-	// 2c. Clear the Subchannel wrapper's Call Counter entry
-	//    scw.obj.callCounter = callCounter{} // <- something like this
-
-
-
-	// 3 multiple to single:
-
-	// 3a. Add map entry for that Address if applicable (i.e. if not already there)
-	//    if right (single) is not a key in map, add a whole new map entry
-
-
-	// 3b. Add Subchannel to Addresses map entry.
-	//   mapValue.sws = append(mapValue.sws, sc)
-
-
-
-	// 4 multiple to multiple
-		// no-op, subchannel continues to be ignored by outlier detection load balancer
-
-
-	// I think best way is (if zero add another if at the top, will have 9 possibilities
-	// if single {
-		// if new single {
-		//     single -> single algorithm
-		// } else if multiple { // or just else
-		//     single -> multiple algorithm
-		// }
-	// else if multiple { // or just else
-		// if new single {
-		//     single -> single algorithm
-		// } else if multiple { // or just else
-		//     single -> multiple algorithm
-		// }
-	// }
-
-	// Have 0 be a special case of multiple. Wait, if 0 is a special case of
-	// switch to multiple, addrs[0] will cause a nil panic. What do we do in that situation?
-
-	// if len(scw.addresses) == 0 if it supports that, thus it being 1 is the logical conditional
 	if len(scw.addresses) == 1 {
 		if len(addrs) == 1 {
-			// single to single algorithm - make helper function?
+			// single to single algorithm - make helper function? Can you update to same address?
 
 			// 1a. Forward the update to the Client Conn.
-			//    b.cc.UpdateAddresses(sc, addrs)
-			b.cc.UpdateAddresses(sc, addrs) // callback inline
-
-
+			b.cc.UpdateAddresses(sc, addrs) // possible UpdateState() callback inline
 
 			// 1b. Update (create/delete map entries) the map of addresses if applicable.
 			// There's a lot to this ^^^, draw out each step and what goes on in each step, check it for correctness and try to break
 
-			scw.addresses[0] // old single address
+			// scw.addresses[0] // old single address - delete if SubConnWrapper was last one in the map entry
 
-			addrs[0] // new single address
+			b.removeSubConnFromAddressesMapEntry(scw)
+			// Similar functionality to below - pull out into a helper?
 
+			// 2a. Remove Subchannel from Addresses map entry (only if singular address changed).
+			// 2b. Remove the map entry if only subchannel for that address
 
+			// addrs[0] // new single address
 
+			obj := b.addMapEntryIfNeeded(addrs[0])
 
 			// 1c. Relay state with eject() recalculated
-			// call it with latest state like uneject
-			// scw.ejected = false // this can now be true or false always
-			scw.ejected = /*mapEntry.latestEjectionTimestamp.IsZero()*/
 
-			// always send down?
-			// scw.childPolicy.UpdateSubConnState(sc/*scw.SubConn or scw (I think just sc i.e. scw.SubConn)*/, scw.latestState)
-
-			// MAKE SURE SCW POINTS TO THE CORRECT OBJ AT THE END OF THIS
-
-		} else { // switch to multiple, addrs[0] will cause a nil panic. What do we do in that situation? This never reads addrs[0], so we're good. This is simply using the old address list to clean up resources
-			// What do we want to do when we switch to an address of empty length?
-
-			// single to multiple algorithm
-
-			// the problem is we have only the subchannel
-			scw.addresses // wait this is old addresses
-
-
+			if obj.latestEjectionTimestamp.IsZero() {
+				scw.eject() // will send down correct SubConnState and set bool
+			} else {
+				scw.uneject() // will send down correct SubConnState and set bool - the one where it can race with the latest state from client conn vs. persisted state, but this race is ok
+			}
+			scw.obj = obj
+			obj.sws = append(obj.sws, scw)
+		} else {
+			// single to multiple algorithm:
 
 			// 2a. Remove Subchannel from Addresses map entry.
-			//    delete from mapEntry.sws...how to do this in non linear time?
-			scw.obj.sws // []subConnWrapper, search through this and delete subchannel if you found it
-
 			// 2b. Remove the map entry if only subchannel for that address
-			//    if len(mapEntry.sws) == 0
-			//         delete(mapEntry)
-			if len(scw.obj.sws) == 0 {
-				b.odAddrs.Delete(scw.addresses[0]) // invariant that used to be single (top level if), guarantee this never becomes nil
-				// delete the pointer
-				scw.obj = nil // does this cause any negative downstream effects?
-			}
+			b.removeSubConnFromAddressesMapEntry(scw)
 
 			// 2c. Clear the Subchannel wrapper's Call Counter entry - this might not be tied to an Address you want to count, as you potentially
-			// delete the whole map entry
+			// delete the whole map entry - wait, but only a single SubConn left this address list, are we sure we want to clear in this situation?
 			if scw.obj != nil {
 				scw.obj.callCounter.activeBucket = bucket{}
 				scw.obj.callCounter.inactiveBucket = bucket{}
 			}
 		}
-	} else { // s else
+	} else {
+		// Wait, but what if the multiple goes from 0 -> something
+		// This can be start with 0 addresses if it hits this else block...***document this, how 0 addresses are supported and len(0)
+		// I think this should be fine if it starts out with zero, correctly adds the singular address no harm done no difference
+		// from switching from multiple.
 		if len(addrs) == 1 {
 			// multiple to single algorithm
-			val, ok := b.odAddrs.Get(addrs[0])
-			var obj *object
-			if !ok {
-				// 3a. Add map entry for that Address if applicable (i.e. if not already there)
-				obj = &object{}
-				b.odAddrs.Set(addrs[0], obj)
-			} else {
-				obj , ok = val.(*object)
-				if !ok {
-					// shouldn't happen, logical no-op
-				}
-			}
-
+			// 3a. Add map entry for that Address if applicable (i.e. if not already there)
+			obj := b.addMapEntryIfNeeded(addrs[0])
 
 			// 3b. Add Subchannel to Addresses map entry. **Note, look over,
 			// this should come coupled with adding and removing (updating what
@@ -623,29 +548,18 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 			// object anymore or added to an object)
 			scw.obj = obj
 			obj.sws = append(obj.sws, scw)
-
-
-
-			// is that really the best way to get the object? Yes, might be
-			// brand new. But you need to update the object the subchannel
-			// points to
-
-
-		} // else is multiple to multiple - no op, continued to be ignored by outlier detection load balancer
-		// switch to multiple, addrs[0] will cause a nil panic. What do we do in that situation? We don't deal with it though, continue to ignore
-		/*else {
-			// multiple to multiple algorithm - no op, you don't even need this else just a no-op
-		}*/
+		} // else is multiple to multiple - no op, continued to be ignored by outlier detection load balancer.
 	}
 
 	// MAKE SURE YOU UPDATE THE OBJECT THE SUBCHANNEL WRAPPER IS POINTING TO WHEN YOU NEED TO
 	// scw.addresses (data used for previous addresses - can clear out now because already used) = addrs
 	scw.addresses = addrs
+	b.cc.UpdateAddresses(scw.SubConn, addrs)
 }
 
-// ResolveNow()
+// ResolveNow() - cluster impl balancer doesn't have it because it embeds a ClientConn, do we want that or just declared?
 
-// Target()
+// Target() - cluster impl balancer doesn't have it because it embeds ClientConn, do we want that or just pass through?
 
 func max(x, y int64) int64 {
 	if x < y {
@@ -676,12 +590,8 @@ func (b *outlierDetectionBalancer) objects() []*object {
 		}
 		objs = append(objs, obj)
 	}
-	return objs // what happens when you range over a nil slice?
+	return objs
 }
-
-// We also don't need just []{object, object, object, object}
-
-// We need []{{addr, obj}, {addr, obj}, {addr, obj}, {addr, obj}}, what is best data type/way to represent this? did that inline
 
 func (b *outlierDetectionBalancer) run() {
 	// ** Triage other xds balancers to see what operations they sync
@@ -1140,11 +1050,17 @@ type object struct { // Now that this is a pointer, does this break anything?*
 // ** Switched to [] of pointers to heap memory
 
 
+
+
+
+// The passthrough? passthrough or not operations, or even if some of them are defined or not.
+// This relates to when the child balancer is built (at config receive time because that has the config
+// for the child balancer)/cleared/rebuilt **See other balancers for example
+
 // Can merge these two VVV
-
-// The passthrough? passthrough or not operations
-
 // Cleanup...another pass, UpdateAddresses needs some cleaning up
+
+
 
 
 
@@ -1153,7 +1069,9 @@ type object struct { // Now that this is a pointer, does this break anything?*
 
 // Esp in regards to his perf comment about stepping back and thinking about codepaths/operations etc. I have all the data structures, operations, etc. Just need to sync them
 
-// Operations to put in the run goroutine, fields to sync with mutexes if outside of run() goroutine
+// Operations to put in the run goroutine, fields to sync with mutexes if outside of run() goroutine, maybe atomics
+
+// Fields in balancer, SubConn (and methods), callcounter, etc.
 
 // When you switch to run, need to move stuff around to handleClientConnUpdate etc.
 

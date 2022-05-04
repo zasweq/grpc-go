@@ -52,7 +52,7 @@ type subConnWrapper struct {
 
 // eject(): The wrapper will report a state update (which way?) with the TRANSIENT_FAILURE
 // state, and will stop passing along updates from the underlying subchannel.
-func (scw *subConnWrapper) eject() {
+func (scw *subConnWrapper) eject() { // mutex protecting this call?
 	// Report a TRANSIENT_FAILIURE state
 	// scw.cc.UpdateSubConnState(sc, connectivity.State) // <- will need to hold a reference to sc (itself?) and also cc
 
@@ -62,7 +62,7 @@ func (scw *subConnWrapper) eject() {
 
 	// if we send down update here instead of in od balancer,
 	// this needs to hold onto balancer field.
-	scw.childPolicy.UpdateSubConnState(sc/*scw.SubConn or scw (I think just sc i.e. scw.SubConn)*/, balancer.SubConnState{
+	scw.childPolicy.UpdateSubConnState(scw, balancer.SubConnState{
 		ConnectivityState: connectivity.TransientFailure,
 	})
 }
@@ -81,7 +81,7 @@ func (scw *subConnWrapper) uneject() {
 
 	scw.ejected = false
 
-	scw.childPolicy.UpdateSubConnState(sc/*scw.SubConn or scw (I think just sc i.e. scw.SubConn)*/, scw.latestState) // latestState is synced with UpdateSubConnState calls right (if there in same run() goroutine)
+	scw.childPolicy.UpdateSubConnState(scw, scw.latestState) // latestState is synced with UpdateSubConnState calls right (if there in same run() goroutine)
 }
 
 // intercept update state to persist most recent and don't forward
