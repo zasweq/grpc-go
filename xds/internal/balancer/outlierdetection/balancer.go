@@ -1037,7 +1037,7 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 		}
 		//  2c. If the address's failure percentage is greater than
 		//  failure_percentage_ejection.threshold
-		failurePercentage := (float64(obj.callCounter.inactiveBucket.numFailures) / float64(obj.callCounter.inactiveBucket.requestVolume)) * 100
+		failurePercentage := (float64(ccb.numFailures) / float64(ccb.requestVolume)) * 100
 		if failurePercentage > float64(b.odCfg.FailurePercentageEjection.Threshold) {
 			// then choose a random integer in [0, 100). If that number is less
 			// than failiure_percentage_ejection.enforcement_percentage, eject
@@ -1096,7 +1096,7 @@ func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address) {
 
 type object struct { // Now that this is a pointer, does this break anything?*
 	// The call result counter object
-	callCounter callCounter
+	callCounter callCounter // should this be a pointer?
 
 	// The latest ejection timestamp, or null if the address is currently not ejected
 	latestEjectionTimestamp time.Time // We represent the branching logic on the null with a time.Zero() value
@@ -1109,42 +1109,7 @@ type object struct { // Now that this is a pointer, does this break anything?*
 }
 
 
-
-// Today after cold brew:
-
-// Learn logically what a subchannel is
-
-// Implement the two objects since they are dependencies and can help you learn main implementation
-// sync issues seem to be a question
-
-// The actual balancer.go implementation
-
-
-// Stop forwarding State downward to child...
-
-
-// Need to document in gRFC:
-// No-op logic max int being treated differently
-// Update Address...needs to be documented what behavior should be
-// Can keep subconn but change addresss...totally possible in go...discussed in whiteboarding meeting
-
-// Interval timer clarification added to gRFC
-
-// You can ask if someone has conflict
-
-// Finish algorithm definition (fix type problems, finish the rest of unimplemented)
-//
-// Add sync stuff (run go routine)
-//
-// Operations regarding the interval timer should be fine and never called concurrently (i.e. downstream of interval timer)
-// UpdateClientConnState and trigger interval need to be synced
-// What about other operations? I.e. SubConns, the other operations both ways, whether dealing with a wrapped SubConn or not. (Do any operations not get synced?, Which are just pass through?)?
-// How is SubConn linked to Client Conn. Is the Outlier Detection balancer a Client Conn. Yes, because intercepts UpdateState()
-// Interval timer stuff (5 + 3, not wait 8)
-//
-// Finish sub channel wrapper (Eric’s algorithm for Update Addresses, but downward flow is set in regards to UpdateState).
-//
-// Tests
+// Tests (add to testing file)
 //
 // Balancer test
 // Unit tests
@@ -1152,30 +1117,15 @@ type object struct { // Now that this is a pointer, does this break anything?*
 // Also cleanup
 
 
-
-
-
-
-// (Do any operations not get synced?, Which are just pass through?)
-// Which operations can get called concurrently?
-
-// -> represents this outlier detection balancer...how do we sync these and any interesting things if we wrap each operation atomically
-// Operations from grpc -> balancer
-
-// UpdateClientConnState() can go ahead and start implementing this, but maybe think about operations first, dependent on logical thought
-// Has both persissitng of the config (not defined in gRFC), and also the updating of the map as defined by gRFC and then forward downward
-
-// ResolverError(error) <- simply forward down?
-
-// ** UpdateSubConnState() <- wrapper deals with, intercepts call if ejected to persist most recent config
-// sends down this once unejected, does this happen implicitly in wrapped SubConn or do you need to do something special?
-
 // This operation, rather than being defined on the SubConn, actually seems to be interfacing with a wrapped SubConn's
-// state it persists from getting called and written to
+// state it persists from getting called and written to***, how do we get ref to child for this
 
 // eject/uneject changes internal state
 
-// can also persist recent update state by writing directly to it (with a mutex protecting it)
+// can also persist recent update state by writing directly to it (with a mutex protecting it), what blobs write to each
+// field in the scws and how do we protect - rw mutex
+
+
 
 // Two things:
 // scw (two blobs of functionality) - track the latest state from the underlying subchannel,
@@ -1598,21 +1548,11 @@ type object struct { // Now that this is a pointer, does this break anything?*
 
 
 
-
-// Ping Doug/Menghan for help in regards to syncing operations, esp once you get all the operations down/a mental model of operations in your head
-
-// Esp in regards to his perf comment about stepping back and thinking about codepaths/operations etc. I have all the data structures, operations, etc. Just need to sync them
-
-// Operations to put in the run goroutine, fields to sync with mutexes if outside of run() goroutine, maybe atomics
-
 // Fields in balancer, SubConn (and methods), callcounter, etc.
 
 // When you switch to run, need to move stuff around to handleClientConnUpdate etc.
 
 
-
-// I plan to sync all operations with a run() goroutine - so no need for mutexes? Wrong,
-// sometimes interspliced between reading in non run() and operations synced in run() **
 
 // mutex locks/unlocks first
 
@@ -1625,6 +1565,3 @@ type object struct { // Now that this is a pointer, does this break anything?*
 
 // defensive programming against close() is grpc violating the balancer API, I think I want to add
 // this regardless though
-
-
-// UpdateClientConnState and interval timer algo triggering def need sync
