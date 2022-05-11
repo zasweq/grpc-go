@@ -62,7 +62,7 @@ func (scw *subConnWrapper) eject() { // mutex protecting this call?
 
 	// if we send down update here instead of in od balancer,
 	// this needs to hold onto balancer field.
-	scw.childPolicy.UpdateSubConnState(scw, balancer.SubConnState{
+	scw.childPolicy.UpdateSubConnState(scw, balancer.SubConnState{ // this needs to ref to the child policy in the od balancer..., not store it here, this can get closed etc.
 		ConnectivityState: connectivity.TransientFailure,
 	})
 }

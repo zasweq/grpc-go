@@ -115,27 +115,215 @@ func (bb) Name() string {
 
 type outlierDetectionBalancer struct {
 	// TODO: The fact that this is an address string + attributes needs to be documented in the gRFC?
-	odAddrs *resolver.AddressMap
+	odAddrs *resolver.AddressMap // concurrent accesses - determines behavior etc.
+
+	// map[string]object{A, B, C, D}
+	// read/write to object protect it from happening concurrently
+	// map only thing with reference to value...? Scw? Can you use that
+	// to protect writes
+
+	// if you want object to be protected, if map only ref than can do it that way atomic(read + write)
+	// if other things have pointer to object (on the heap part of memory), I'm pretty sure scw does then you need to gate
+	// that as well with a mutex
+
+	// scw.obj read/written to in Picker Callback when an RPC is done...
+	// also read/written to in UpdateAddresses scw.obj
+
+	// Two refs to obj - from map when you get map and also from scw which has a ref to object, both refs are used to
+	// update object in this balancer, so if you sync those 3 or 4 or 5 events will this be covered?
+
+	// event pinging picker update, needs to have a significant diff from
+	// previous picker and also (picker != nil) special case first update
+
+
+	// lock
+	// obj := map.Get (simplified) // this access needs to be synced, multiple accesses cannot be performed concurrently
+	// obj.write (write to object) // (obj.write, obj.write)
+	// unlock
+
+	// (scw.obj) = nil // pointer read/write needs to be synced
+	// obj := map.Get, map.Set(obj)
+
+	// writing to what that pointer points to also needs sync
+
+	/*
+	type object struct { // Now that this is a pointer, does this break anything?*
+		// The call result counter object
+		callCounter callCounter
+
+		// The latest ejection timestamp, or null if the address is currently not ejected
+		latestEjectionTimestamp time.Time // We represent the branching logic on the null with a time.Zero() value
+
+		// The current ejection time multiplier, starting at 0
+		ejectionTimeMultiplier int64
+
+		// A list of subchannel wrapper objects that correspond to this address
+		sws []*subConnWrapper
+	}
+	*/
+
+	// Can you concurrently write a.b and a.c? if a is just a pointer, but write to b would displace c right?
+
+	// All 4 data points of type object need sync.
+
+	// callCounter gets called/written to a lot (should we have mutex only for call counter - inside the object and at what level?)
+	// latestEjectionTimeStamp gets read to determine if an address has been ejected...
+	// ejectionTimeMultiplier is called happens before in interval timer algo going off
+	// sws gets read/written to a lot
+
+	// only callCounter (activeBucket and inactiveBucket) and sws get written to
+	// through scw...sws not the actual data type, just the array of pointers
+	// appended/deleted from
+
+
+
+	// "Multiple accesses may not be performed concurrently."
+
+	// Most important underlying data structure:
+	// Read and written to in UpdateClientConnState, updating map based on address diff, add/delete(addr, object ref), does go have implicit ref counting?
+
+	// Read in NewSubConn to determine whether to add to scw list
+
+	// Read/written to in UpdateAddresses (a lot) to update map with new subconn's address
+
+	// Read a lotttttt in interval timer algo
+	// also, value types are the things that interface with the object
+
+	// mutex lock
+
+	// read value from map
+	// value.callCounter/wrappedSubConn write/read
+
+	// mutex unlock
+
+
+
+	// mutex lock
+
+	// read value from map
+	// value.callCounter/wrappedSubConn write/read
+
+	// mutex unlock
+
+	// implicitly protects callCounter/wrappedSubConn ^^^ since inside the mutex
+	// (scw needs to call with dedicated mutex/sync thing such as run() or an
+	// atomic protecting)
+
+
+	// mutex lock
+
+	// read value from map
+
+	// mutex unlock
+
+	// value.callCounter/wrappedSubConn write/read...have two things that read this pointer to the
+	// heap and concurrently write to it, you now have a race condition
+
+
+
+
+
+	// behaviors to keep consistent?
+
+
+	// Avoid overtraining (cardio 1+ hour), you miss the next day anyway, so
+	// it's like the same time except much more optimal an hour a day, and
+	// alcohol *** please, so you don't get depressed/sick/suicidal
+
+	// two things differentiate me: I am healthy with real food,
+	// I am working a hyper intellectual job
+
+
 
 	numAddrsEjected int // For fast calculations of percentage of addrs ejected
+	// read, read, read, write, write ... etc. all happen
+	// in atomic Interval timer algo...do we need to make this atomic with every other operation
+	// or just UpdateClientConnState?
+
 
 	odCfg *LBConfig
+	// If we sync UpdateClientConnState and interval timer algo, this doesn't
+	// need protecting happens before with the two...any other reads or writes
+	// or usages in other operations? If not, syncing those two events will protect this
+
+	// Synced:
+	// UpdateClientConnState()
+	// Interval Timer algo(), a lotttt of reads
+
+	// More:
+	// wrong, this gets read to determine no-op picker in UpdateState()...
+	// that's it, "race with picker update", determines if no-op config
+
 
 	cc balancer.ClientConn // Priority parent right?
+	// Only written to at build time so no protection needed
+
+
+
 
 	bOpts balancer.BuildOptions
+	// Only written to at build time so no protection needed
 
-	child balancer.Balancer // cluster impl - when is this built? See others for example, is it in Build()? This gets built in different places in cluster impl, so, it has nil checks on forwawrding it
-	// clusterimpl config as part of the OD config, can be different enough to warrant a creation of this child?
+
+	child balancer.Balancer // cluster impl - when is this built? See others for example, is it in Build()? This gets built in different places in cluster impl, so, it has nil checks on forwarding it
+	// clusterimpl config as part of the OD config, can be different enough to warrant a new creation of this child?
+	// built on UpdateClientConnState (i.e. written to) (already synced with entire interval timer algorithm)
+
+	// read/called in all the other pass throughs
+
+	// also written to in Close() - nilled (and read to bal.Close()) (sync whole operation or just write?)
+
+
+	// pass through read/call:
+	// mu protecting read
+	// if child != nil
+	// mu protecting read
+
+	// Another event can happen right here...i.e. closing and clearing of balancer...think back to graceful switch and how that handled it
+
+	//     child.method
+
+
+	// mu lock (graceful switch did this UpdateSubConnState with another mu so balancer would
+	// not be closed)
+
+	// if child != nil
+	//     child.method
+
+	// mu unlock
+
+	// if that child.method call calls back into this, then you have problems
+
+
+
+
 
 	timerStartTime time.Time // The outlier_detection LB policy will store the timestamp of the most recent timer start time. Also used for ejecting addresses per iteration
+	// If we sync UpdateClientConnState and interval timer algo, this doesn't need any protecting, reads
+	// and writes happen happens before and never concurrently, we're good here
+
+
 
 	intervalTimer *time.Timer
+	// Again, written to in UpdateClientConnState()
+	// channel receive in run()
+	// No sync needed
 
 
 	// map sc (all parent knows about) -> scw (all children know about, this balancer wraps scs in scw)...explain and talk about why you need this map
 	// clusterimpl also has a mutex protecting this
-	scWrappers map[balancer.SubConn]*subConnWrapper
+	scWrappers map[balancer.SubConn]*subConnWrapper // concurrent accesses - determines behavior etc. think deeply about this
+	// read in UpdateSubConnState to try and map subconn sent from parent
+	// to subconn wrapper.
+	// written to in UpdateSubConnState (deleting any SubConns with state shutdown)
+
+	// written to in NewSubConn (duh, when it constructs the wrapper from the subconn the parent creates,
+	// it needs a way of mapping that to correct SubConn)
+
+
+
+
+	// These two vvv can help with synchronization problems reasoned about ^^^
 
 	// I plan to sync all operations with a run() goroutine - so no need for mutexes? Wrong,
 	// sometimes interspliced between reading in non run() and operations synced in run() **
@@ -272,8 +460,9 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	// through typecasting (I don't think would work) or the map thing. Cluster
 	// Impl persists a map that maps sc -> scw...see how it's done in other
 	// parts of codebase.
-
+	// mu lock
 	scw, ok := b.scWrappers[sc]
+	// mu unlock
 	if !ok {
 		// Return, shouldn't happen if passed up scw
 		// Because you wrap subconn always, clusterimpl i think only some
@@ -281,9 +470,14 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	}
 	if state.ConnectivityState == connectivity.Shutdown {
 		// Remove this SubConn from the map on Shutdown.
-		delete(b.scWrappers, scw.SubConn)
+		// mu lock
+		delete(b.scWrappers, scw.SubConn) // Just deletes from map doesn't touch underlying heap memory
+		// mu unlock
 	}
-	scw.latestState = state
+	scw.latestState = state // do we need this write if shutdown?, also this gets read in uneject()...I think interval timer can run concurrently
+	// what if subconn gets deleted here? from another call to UpdateSubConnState()?, no, UpdateSubConnState()
+	// calls are guaranteed to be called synchronously, only thing that can happen is NewSubConn makes
+	// a new map entry
 	if !scw.ejected && b.child != nil { // eject() - "stop passing along updates from the underlying subchannel."
 		b.child.UpdateSubConnState(scw, state)
 	}
@@ -355,7 +549,7 @@ func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 		return balancer.PickResult{}, err
 	}
 
-	done := func(di balancer.DoneInfo) {
+	done := func(di balancer.DoneInfo) { // This function can literally be called whenever...a callback by grpc once done, increments counter scw.obj.callCounter.activeBucket.(numSuccesses||numFailures)++
 		if !wp.noopPicker {
 			incrementCounter(pr.SubConn, di)
 		}
@@ -430,7 +624,9 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 		SubConn: sc,
 		addresses: addrs,
 	}
+	// mu lock
 	b.scWrappers[sc] = scw
+	// mu unlock
 	if len(addrs) != 1 {
 		return scw, nil
 	}
@@ -655,7 +851,9 @@ func (b *outlierDetectionBalancer) run() {
 		}
 	}
 
-	// Grounded blob: look over/cleanup/make sure this algorithm is correct.
+	// Grounded blob: look over/cleanup/make sure this algorithm is correct. **Do this, because I already
+	// found a few correctness issues with it.
+
 	// Interval trigger:
 	// When the timer fires, set the timer start timestamp to the current time. Record the timestamp for use when ejecting addresses in this iteration. "timestamp that was recorded when the timer fired"
 	// these are logically the same thing
@@ -847,9 +1045,6 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 			if uint32(rand.Int31n(100)) < b.odCfg.FailurePercentageEjection.EnforcementPercentage {
 				b.ejectAddress(addr)
 			}
-		}
-		if uint32(failurePercentage) > b.odCfg.FailurePercentageEjection.EnforcementPercentage {
-			b.ejectAddress(addr)
 		}
 	}
 }
@@ -1128,7 +1323,8 @@ type object struct { // Now that this is a pointer, does this break anything?*
 // Mutex locks/whether to put in run goroutine for some operations
 
 // Do we even need some operations such as target() or resolveNow()...this is related to overall question of embedding vs. implementing
-// important to think about and learn
+// important to think about and learn, my gut tells me to implement target and resolve now and have balancer implement ClientConn,
+// and maybe have wrapped picker also wrap not embed?
 
 // Syncing reads and writes to other declared objects...
 
@@ -1169,6 +1365,239 @@ type object struct { // Now that this is a pointer, does this break anything?*
 
 
 
+// Behavior to keep consistent:
+// currentMu makes sure UpdateSubConnState() happens atomically
+// with Close()
+
+// Not an interspliced read/write
+
+// but UpdateSubConnState()
+// (
+// 1 // read, still protected with read/write mutex so ok in regards to concurrent read/write
+// Close interspliced here - concurrently, not protected with mutex - behavior mutex - this is wrong (looks like you can have one mutex serve both functionalities)
+// 2
+// ) bad behavior
+
+
+// (
+// 1
+// 2
+// ) A
+
+// (
+// Close
+// ) B
+
+// AB or BA, not interspliced...is everything else ok with AB BA or does stuff happen that causes wonky behavior?
+
+// And then reads and writes
+
+// Make sure you're not holding mutex when calling into another system
+
+
+
+// Precedence:
+
+// Reads and writes (most basic)...correctness issue for sure guaranteed, seems
+// like there, two big ones to reason about is map address -> obj (including obj
+// itself), scw->obj (*when get back, triage gives you a grounding point - what
+// parts of obj does this access? Same as when accessed threw map or just scw),
+// and the sc[scw]map (easier for reads and writes, harder/then need to think
+// about what behaviors break it)
+
+// three places need to sync state:
+// scw.objref
+// map.objref
+// obj.each 4 field
+// 2 fields in the obj have even more data that needs to be synced
+
+
+// Behaviors (similar to how Close() put in between the UpdateSubConnState
+// function block) would break API - see if there is undesirable things that could
+// happen. I.e. can any concurrent shit happen that causes wonky behavior?
+
+// readmu.lock
+// read field
+// readmu.unlock
+
+// now...can any weird shit happen logically concurrently
+// i.e. Closing() of the current balancer
+// what menghan said close() after creating new subconn, not remove subconn
+// which would leak it
+
+
+
+// (guarantee of synchronous calls from grpc -> balancer.Balancer (including UpdateSubConnState(), two reads),
+// but could race with UpdateState() deleting current), both reads atomic, similar to how we want whole interval timer algo
+// to run atomic wrt odCfg and UpdateClientConnState
+
+// After mutex protection - things to put in a run() goroutine
+// Cons: blocking, waits for one operation to complete and doesn't do operation immediately, can't return
+// Pros: prevents deadlocks...in a mutex being locked, call into another system
+// can call back with mutex lock
+
+
+
+
+
+// mutexes for reading/writing state:
+
+
+// Behavior mutex - UpdateClientConnState and interval timer algo (AB BA), does any other behavior
+// need to be synced here? If something else intersplices with these two behaviors, does it cause
+// undefined/unwanted behavior?
+
+// Make a precedence list of synchronization to see dependencies and if
+// anything covers another
+
+// If we sync UpdateClientConnState() and interval timer algo
+// these data still need mutex (irrespective of behavior):
+
+// 1. odAddrs and its complications
+
+// If you decide to sync whole other operations, do these reads and writes at
+// each level of the data tree implicitly get synced? (i.e. already atomic)
+
+// AB vs BA induce any weird behavior for this od addrs tree?
+// Or any weird orderings here VVV? (i.e. whether to initially eject, I think eventually the scw eject method will be called)
+
+// Operations to sync (only add if necessary):
+// UpdateClientConnState *
+// Close (this is already synced with UpdateClientConnState as part of same balancer API)
+// Interval Timer * Def,  what started it all
+// Picker update?
+
+// sc -> scw state mutex
+
+
+
+// 2. odCfg - synced if sync in UpdateClientConnState (write) and
+// Interval timer algo (read - can happen concurrently because timer), but picker update (read - can happen concurrently because balancer->grpc) is dependent on this
+// can get written to in UpdateClientConnState, do we sync picker update alongside
+// other two events?
+
+// Noop picker is determined by odCfg
+
+// so if odCfg comes in that changes (read old config noop vs. new one but first check would break it) noopConfig()...? or always ping?
+// needs to send a new picker update, would send with counting, if a picker update
+// comes in from child will send a new picker again with counting
+
+// If you protect A B in regards to Atomicity (
+
+// Update Client Conn State comes in, writes a config
+// Picker update sends picker based on config
+
+// Picker update sends picker (without an initial UpdateClientConnState() config
+// and building of child, no picker will ever get sent up, so good there)
+// UpdateClientConnState() comes in, writes a new config, pings picker
+// to send a new picker, good here ***triage on how other balancer handle this
+
+
+
+
+
+
+// 3. child - built on first UpdateClientConnState() received using config, then
+// forwarded down, forwarded down if already there, ***this is also called in
+// eject() and uneject() in the scw
+
+// other operations after outlier detection specific logic
+// if child != nil {
+
+// can close and nil here, unless you sync Close() as a whole atomic operation
+// with all the other operations, see how other balancers do it
+
+// child.sameOperation
+// }
+
+// niled during close
+
+// Doesn't get read in interval timer algo
+
+// Written in UpdateClientConnState (built on first successful update)
+// Written in Close (niled "cleared" on Close())
+// Read (should be same pointer I think) in eject and uneject...how do we do this? (even if not same pointer, still in state closed or not closed), can't update after close
+
+// eject() gets called in, child.UpdateSubConnState(scw, TRANSIENT_FAILURE)
+
+// 1. NewSubConn() (synced with close since update from grpc)
+// 2. UpdateAddresses (not synced with close since balancer -> grpc)
+// 3. interval timer algo (for sure gonna sync with UpdateClientConnState(), should I also sync with close()), have one operation happen at once interval timer, updateClientConnState(), and Close()?
+
+// uneject() gets called in, child.UpdateSubConnState(scw, scw.latestState)
+
+// 1. UpdateAddresses (not synced with close since balancer -> grpc)
+// 2. interval timer algo
+
+
+
+// How graceful switch handled this child being closed problem: Had the whole
+// operation be atomic with Close()...close on an updateState() call, read in
+// UpdateSubConnState() (and only UpdateSubConnState() had this problem with
+// Close()). Now, read in UpdateAddresses and interval timer algo, (and
+// NewSubConn() - but synced with close()).
+
+// Find examples in the codebase: forwarding an update down, with something that
+// can concurrently close the balancer in between if child == nil { (child gets
+// deleted) child.forward }
+
+
+
+// Read for other forwarding operations...
+
+
+// Close() is guaranteed to be called sync with other balancer methods
+// if closed.HasFired() (too defensive, up to you if you want to add)
+
+// nil check on child balancer - handles nil on close and hasn't been built
+// you're good, this doesn't need sync with close because it can't be closed
+// during a sync call grpc -> balancer, unlike balancerCurrent which can be deleted
+// by a concurrent UpdateState() call.
+
+// none of the balancer.Balancer calls can happen sync
+
+// Buckets of stuff that can happen sync (balancer.Balancer API, interval timer algo, balancer.ClientConn method1, balancer.ClientConn method2, balancer.ClientConn method3)
+// but you're syncing UpdateClientConnState from balancer.Balancer and interval timer
+
+
+
+// 4. scWrappers
+
+// read in UpdateSubConnState() to map sc (from parent) -> scw (what child knows)
+
+// What if in between reading scw = scw[sc]
+
+// scw gets removed...does this break it, scw can't get removed because no concurrent balancer.Balancer call
+
+// UpdateSubConnState(scw, state) // if this call is in mutex, I feel like this can callback and get deadlocked
+
+// written to in UpdateSubConnState() deleting any SubConns with state SHUTDOWN
+
+
+// written to in NewSubConn to persist the sc -> scw relationship (has both data
+// types in that function)
+
+// My initial feeling tells me no weird behavior things if you just protect the
+// reads and writes, the NewSubConn write simply appends to the the map (and only thing that can happen concurrently), not
+// deletes what is currently there.
+
+
+// Say you sync the three operations UpdateClientConnState, interval timer algo
+// and Close(), and also scWrappers read/write, what other things would you have to sync
+
+// Mu lock
+
+// mu unlock
+
+// can be closed before updating, but need to release lock earlier to
+// prevent deadlock
+// UpdateClientConnState has child.UpdateClientConnState (can call back inline)
+
+// Can protect the whole operation and make each operation atomic
+// if you put into a run() goroutine...but that's last resort "no right answer"
+
+
+
 
 // Ping Doug/Menghan for help in regards to syncing operations, esp once you get all the operations down/a mental model of operations in your head
 
@@ -1194,4 +1623,8 @@ type object struct { // Now that this is a pointer, does this break anything?*
 // a call being blocking rather than put on a run, parent waits for it to return before calling
 // another operation that is a plus
 
-// defensive programming against close() is grpc violating the balancer API
+// defensive programming against close() is grpc violating the balancer API, I think I want to add
+// this regardless though
+
+
+// UpdateClientConnState and interval timer algo triggering def need sync
