@@ -343,6 +343,8 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	// Close guard
 	// if b.closed
 
+	// behavior mu lock
+
 	lbCfg, ok := s.BalancerConfig.(*LBConfig)
 	if !ok {
 		// b.logger.Warningf("xds: unexpected LoadBalancingConfig type: %T", s.BalancerConfig)
@@ -420,6 +422,12 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		// no-op config plumbed through system? Does this gate at beginning of
 		// interval timer?
 	}
+
+	// mus protecting reads
+
+	// behavior mu unlock
+
+	// Any weird behavior here...child can't be niled so you're good
 
 	// then pass the address list along to the child policy.
 	return b.child.UpdateClientConnState(balancer.ClientConnState{
@@ -518,7 +526,7 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 			sc.Connect()
 		}
 	*/
-	if b.child == nil {
+	if b.child == nil { // implicitly wraps a close guard as well
 		return
 	}
 	if ei, ok := b.child.(balancer.ExitIdler); ok {
@@ -567,9 +575,9 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 		// Shouldn't happen, as comes from child
 		return
 	}
-	if info.Err != nil {
+	if info.Err != nil { // s/queue that aggregates stats for you, other locks aren't
 		// Is there anything else that is required to make this a successful RPC?
-		scw.obj.callCounter.activeBucket.numSuccesses++ // is this the thing that needs to protected by the mutex?
+		scw.obj.callCounter.activeBucket.numSuccesses++ // is this the thing that needs to protected by the mutex? Any wonky behavior that can come from ordering of this? Can this obj/scw be deleted concurrently
 	} else {
 		scw.obj.callCounter.activeBucket.numFailures++
 	}
@@ -638,6 +646,7 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 
 	obj, ok := val.(*object)
 	obj.sws = append(obj.sws, scw)
+	scw.obj = obj
 
 	// If that address is currently ejected, that subchannel wrapper's eject
 	// method will be called.
@@ -714,6 +723,8 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 		return
 	}
 
+	b.cc.UpdateAddresses(scw.SubConn, addrs)
+
 	// Note that 0 addresses is a valid update/state for a SubConn to be in.
 	// This is correctly handled by this algorithm (handled as part of a non singular
 	// old address/new address).
@@ -729,8 +740,7 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 
 
 
-			// 1a. Forward the update to the Client Conn.
-			b.cc.UpdateAddresses(sc, addrs)
+			// 1a. Forward the update to the Client Conn. (handled earlier)
 
 			// 1b. Update (create/delete map entries) the map of addresses if applicable.
 			// There's a lot to this ^^^, draw out each step and what goes on in each step, check it for correctness and try to break
@@ -776,7 +786,6 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 	}
 
 	scw.addresses = addrs
-	b.cc.UpdateAddresses(scw.SubConn, addrs)
 }
 
 // ResolveNow() - cluster impl balancer doesn't have it because it embeds a ClientConn, do we want that or just declared?
@@ -1096,7 +1105,7 @@ func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address) {
 
 type object struct { // Now that this is a pointer, does this break anything?*
 	// The call result counter object
-	callCounter callCounter // should this be a pointer?
+	callCounter callCounter // should this be a pointer? yes TODO: switch to pointer
 
 	// The latest ejection timestamp, or null if the address is currently not ejected
 	latestEjectionTimestamp time.Time // We represent the branching logic on the null with a time.Zero() value
@@ -1125,67 +1134,13 @@ type object struct { // Now that this is a pointer, does this break anything?*
 // can also persist recent update state by writing directly to it (with a mutex protecting it), what blobs write to each
 // field in the scws and how do we protect - rw mutex
 
+// Figure out linkage between a wrapped SubConn and the balancer, see example somewhere in codebase?
 
-
-// Two things:
-// scw (two blobs of functionality) - track the latest state from the underlying subchannel,
-// don't pass updates along if ejected, update SubConn with TRANSIENT FAILURE state
-// once unejected pass latest state update from underlying subchannel
-
-// not an API that the balancer talks to, but state that changes based off operations
-// that happen in this balancer that also determine logic in other operations that happen in the balancer...
 
 // why does this hold the map entry?
 // the scw that was picker by picker will increase counter in map entry once picked
 
-// vs. (when do you use either of these? i.e. ignore you could use old sc not scw...)
-// sc plain
 
-
-
-
-// Close()
-
-// ExitIdle()
-
-
-
-// Operations from balancer -> grpc
-
-// ** NewSubConn() - Intercepted to wrap subconn
-
-// RemoveSubConn() - pass through?
-
-// UpdateAddresses() - complicated algorithm Eric mentioned
-
-// ** UpdateState() -> also wraps picker, language from gRFC about picker that
-// delegates to child and "increment the corresponding counter in the map entry
-// referenced by the subchannel wrapper that was picked" this wraps picker in this types picker.
-// The wrapping isn't dependent on SubConnWrapper logic but the picker logic def is (done func())
-
-// ResolveNow()
-
-// Target()
-
-
-
-// Figure out operations...and also this whole per subchannel attributes
-
-
-
-// Figure out linkage between a wrapped SubConn and the balancer...the SubConn API doesn't do anything.
-// The SubConn is part of the balancer.Balancer API, and is an expression in some of the return/arguments.
-// See example somewhere in codebase?
-
-
-// Wrapped picker that increments corresponding counter in map entry <- this I don't know if it's an operation or part of an existing part of UpdateState!
-
-// Interval timer going off and triggering eject/uneject behavior (also synced with others based on run() operation? Does that sound right?)
-
-
-
-// I don't think any of these operations has sync issues if we put it on the run goroutine
-// I should write out the logic for each operation, and then see if any weird racey things pop up
 
 // 2. Figure out run() goroutine and syncing operations
 
@@ -1193,32 +1148,11 @@ type object struct { // Now that this is a pointer, does this break anything?*
 // But if I need a run(), I will probably try to move all the operations there
 // Unless it's to just forward the update, without needing to sync any field
 
-// Syncing fields require either putting operations in run() or lock unlock
-// on mutex. So figure out which ones are just forward without syncing field
-// - these operations don't have to be synced by putting in the run() goroutine
 
-// Can also intermingle cleanup with 2 after you fix odAddrs
-
-
-
-
-
-// Do another pass - cleanup/look for blobs of functionality that still need to be implemented
-
-
-// List of blobs of functionality that still need to be implemented here
-
-// sc -> scw map, parent only knows sc, children know scw
-// and also all the logic this entails, see other examples in codebase
-
-// * Cluster impl literally just has it to convert UpdateSubConnState() from parent (only knows sc)
-// to child (only knows scw), do we need it for any other operation? *Triage
-
-// **Done...
 
 
 // Should scws[] be pointers to heap memory or value types...to map and how pointers work
-// logically.
+// logically. Decided to make scws pointers, this same question applies to the callCounter object
 
 // A zero value struct is simply a struct variable where each key's value is set
 // to their respective zero value. So different than pointer nil vs. not nil, underlying heap memory
@@ -1229,44 +1163,7 @@ type object struct { // Now that this is a pointer, does this break anything?*
 
 
 
-
-// The passthrough? passthrough or not operations, or even if some of them are defined or not.
-// This relates to when the child balancer is built (at config receive time because that has the config
-// for the child balancer)/cleared/rebuilt **See other balancers for example
-
-// Close - clear child and a sync point where other operations can't happen after Close()
-
-// Can merge these two VVV
-// Cleanup...another pass, UpdateAddresses needs some cleaning up (kinda done)
-
-// Pass through operations are dependent on the state of childLB (i.e. childLB != nil)
-// so figure this out first in terms of the possible states of the childLB over time
-
-// childLB starts out as nil when it's being built - as hasn't received the config yet
-
-// Built in UpdateClientConnState using child policy config, cleared in Close() (closed as well)
-// closed if type switched and call new balancer (this is the one question - do we need type change guard?)
-
-// Assuming it can't change type over time...but it can in clusterimpl, why? seems to
-// be weighted target only
-
-
-// Def need if nil checks gating passing operations down, as the child LB can be nil
-
-// What can trigger build? Only ClientConnUpdates right (no watch updates like cluster resolver) Yup
-
-
-
-// Add check for same address for single -> single in UpdateAddresses() (Done)
-
-// Build on client conn update, the only question is if we gate against child type switching (no)
-// FINISHING BUILDING ON CLIENT CONN - Same logic as cluster impl (I think done)
-
-// nil checks around passing operations down, FINISH CALLING OPERATIONS ON CHILD WITH NIL CHECK (Done)
-
-// Close/clear on this balancer closing, (Done)
-
-// Close() event synchronization, inside run goroutine, or all in Close()
+// Close() event synchronization, inside run goroutine*** need to sync with others, or all in Close()
 
 // Def a Close() guard in all the other operations (event that fires)
 
@@ -1291,58 +1188,19 @@ type object struct { // Now that this is a pointer, does this break anything?*
 
 // Then sync the rest of operations - how do I go about thinking about this
 
-// Example of thought: interval timer going off and algorithm running dependent on config, config written to in UpdateClientConnState
-// so those must be synced atomic operations
-
-// Other balancers have some operations in run(), some not with just mutex protecting stuff...how do you decide which one to put where
-
-// Fields and behaviors to keep consistent, inline/mutex, or put everything into run...
-
-// if you have a method that has a return...you can't put in goroutine
 
 // incoming and outgoing calls...keep one direction in goroutine and one in mutex/inline
 // keep things out of goroutine as much as possible, can't run in parallel, causes deadlock if inline, but inline/mutex can cause deadlocks
 // goroutine you don't need mutex
 
 
-// Should I write a document for sync stuff wrt Outlier Detection?
-// Close
-// Operations from grpc -> balancer
-// no xdsclient, so guarantee Close() will not happen
+// Should I write a document for sync stuff wrt Outlier Detection? Take what I wrote in notebook and put in a google doc ***
 
-// However, balancer -> grpc has no guarantee of this...
+// buckets, state, etc.
 
 
 
 
-// Behavior to keep consistent:
-// currentMu makes sure UpdateSubConnState() happens atomically
-// with Close()
-
-// Not an interspliced read/write
-
-// but UpdateSubConnState()
-// (
-// 1 // read, still protected with read/write mutex so ok in regards to concurrent read/write
-// Close interspliced here - concurrently, not protected with mutex - behavior mutex - this is wrong (looks like you can have one mutex serve both functionalities)
-// 2
-// ) bad behavior
-
-
-// (
-// 1
-// 2
-// ) A
-
-// (
-// Close
-// ) B
-
-// AB or BA, not interspliced...is everything else ok with AB BA or does stuff happen that causes wonky behavior?
-
-// And then reads and writes
-
-// Make sure you're not holding mutex when calling into another system
 
 
 

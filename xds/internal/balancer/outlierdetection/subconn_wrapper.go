@@ -30,7 +30,7 @@ type subConnWrapper struct {
 	// The subchannel wrappers created by the outlier_detection LB policy will
 	// hold a reference to its map entry in the LB policy, if that map entry
 	// exists. Used to update call counter per RPC "when the request finishes" from picker.
-	obj *object // or do we need the whole map entry?
+	obj *object // this can be nil - add nil checks
 	// The subchannel wrapper will track the latest state update from the
 	// underlying subchannel. By default, it will simply pass those updates
 	// along. Problem: state updates come from Client Conn in grpc-go?
