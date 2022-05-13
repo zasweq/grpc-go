@@ -24,10 +24,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/internal/buffer"
 	"google.golang.org/grpc/internal/grpcsync"
 	"math"
 	"math/rand"
+	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/resolver"
@@ -54,6 +58,8 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 
 		odAddrs: am,
 		scWrappers: make(map[balancer.SubConn]*subConnWrapper),
+		scUpdateCh: buffer.NewUnbounded(),
+		countingUpdateCh: buffer.NewUnbounded(),
 	}
 }
 
@@ -111,6 +117,20 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 
 func (bb) Name() string {
 	return Name
+}
+
+// subConn balancer.SubConn, scw implements this
+
+// scUpdate wraps a subConn update to be sent to the child balancer. This can come from
+// an explicit call from gRPC, or from an eject/uneject call.
+type scUpdate struct {
+	// subConn balancer.SubConn, scw implements this
+	subConn balancer.SubConn
+	state balancer.SubConnState
+}
+
+type countingUpdate struct {
+	// data here that is enough to know how to increment a counter
 }
 
 type outlierDetectionBalancer struct {
@@ -241,7 +261,7 @@ type outlierDetectionBalancer struct {
 	// or just UpdateClientConnState?
 
 
-	odCfg *LBConfig
+	odCfg *LBConfig // races with UpdateState -> add a mutex for this field (mutex ok here because not on RPC data flow)
 	// If we sync UpdateClientConnState and interval timer algo, this doesn't
 	// need protecting happens before with the two...any other reads or writes
 	// or usages in other operations? If not, syncing those two events will protect this
@@ -327,6 +347,55 @@ type outlierDetectionBalancer struct {
 
 	// I plan to sync all operations with a run() goroutine - so no need for mutexes? Wrong,
 	// sometimes interspliced between reading in non run() and operations synced in run() **
+
+
+
+	// Behavior mu
+
+	// behaviorMu guards UpdateClientConnState(), the interval timer algorithm, (UpdateAddresses(), and Close().) no longer, see ***wait below
+
+	// It protects against these wonky behaviors: (if too verbose, put in sync design doc)
+
+	// Closing the balancer before forwarding updates down *** wait, the scw update channel handles this for you, have the goroutine
+	// read process it, need to clean up that goroutine once balancer closed
+
+	// interval timer goes off, outlier detection algorithm starts running based on knobs in odCfg.
+	// in the middle of running the algorithm, a ClientConn update comes in and writes to odCfg.
+	// This causes undefined behavior for the algorithm.
+
+	intervalMu sync.Mutex // Data structures should represent the most current state based on other operations so should allow the others to run concurrently
+
+
+
+	// closeMu guards against run() reading a subconn update, reading that the child is not nil,
+	// and then a Close() call comes in, clears the balancer, and then run() continues to try
+	// and write the SubConn update to the child.
+
+	// The rest of the child balancer calls are guaranteed to be called concurrently with Close(),
+	// as they are present in operations defined as part of the balancer.Balancer API.
+
+	// but close() has to wait for the component to clean up right
+	closeMu sync.Mutex
+
+
+
+
+
+	// Any read/write mutexes here in a group they represent
+
+
+
+	// run() goroutine processes both of these VVV
+
+	// sc update ch (triage on how other balancers), desired seems to be an unbounded buffer
+	// process sc updates async **do when get back (write scw to this)
+	scUpdateCh *buffer.Unbounded // TODO when get back: define/figure out type to put on this channel, see cluster resolver and rls for examples
+
+	// counting update ch - aggregates counting data - figure out what to put on it, maybe just scw
+	// to not have RPC flow have to grab a lock per RPC
+	countingUpdateCh *buffer.Unbounded
+
+
 	closed *grpcsync.Event // Fires off when close hits
 	done *grpcsync.Event // Waits until the resources are cleaned up? fires once run() goroutine returns (implicitly cleaning things up), maybe
 	// represents run() goroutine as a resource being cleaned up?
@@ -371,7 +440,14 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		// What if this is nil? clusterimpl has an explicit check for this
 		b.child = bb.Build(b /*Again, do we want to make this a functioning ClientConn or just embed?*/, b.bOpts)
 	}
+
+	// behavior mu lock
+	b.intervalMu.Lock()
+	// read mu?
 	b.odCfg = lbCfg
+	// read mu?
+	b.intervalMu.Unlock()
+
 
 
 	// When the outlier_detection LB policy receives an address update, it will
@@ -380,7 +456,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	addrs := make(map[resolver.Address]bool)
 	for _, addr := range s.ResolverState.Addresses {
 		addrs[addr] = true
-		b.odAddrs.Set(addr, &object{}) // Do we need to initialize any part of this or are zero values sufficient? make([]sws)?
+		b.odAddrs.Set(addr, newObject()) // Do we need to initialize any part of this or are zero values sufficient? make([]sws)? Yes, no that callCounter is a pointer, construct all the way down for heap memory, doesn't have default values, once figure out here do it elsewhere you are constructing object
 	}
 	for _, addr := range b.odAddrs.Keys() {
 		if !addrs[addr] {
@@ -395,8 +471,8 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	if b.timerStartTime.IsZero() {
 		b.timerStartTime = time.Now()
 		for _, obj := range b.objects() {
-			obj.callCounter.activeBucket = bucket{}
-			obj.callCounter.inactiveBucket = bucket{}
+			atomic.StorePointer(&obj.callCounter.activeBucket, unsafe.Pointer(&bucket{}))
+			obj.callCounter.inactiveBucket = &bucket{}
 		}
 		interval = b.odCfg.Interval
 	} else {
@@ -487,7 +563,11 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	// calls are guaranteed to be called synchronously, only thing that can happen is NewSubConn makes
 	// a new map entry
 	if !scw.ejected && b.child != nil { // eject() - "stop passing along updates from the underlying subchannel."
-		b.child.UpdateSubConnState(scw, state)
+		b.scUpdateCh.Put(&scUpdate{
+			subConn: scw,
+			state: state,
+		})
+		// b.child.UpdateSubConnState(scw, state)
 	}
 }
 
@@ -547,6 +627,7 @@ type wrappedPicker struct {
 	// childPicker, embedded or wrapped, I think wrapped is right, maybe see how other parts of codebase do it? I'm pretty sure I based it off other parts of codebase
 	childPicker balancer.Picker
 	noopPicker bool
+	countingUpdateCh *buffer.Unbounded
 }
 
 func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
@@ -575,12 +656,38 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 		// Shouldn't happen, as comes from child
 		return
 	}
+
+	obj := (*object)(atomic.LoadPointer(&scw.obj))
+	if obj == nil {
+		return
+	}
+
+	// if it hits here this won't be nil
+	// these two pointers in whole data dereference are only ones that can
+	// race (be written to concurrently), why these specifically in the tree are the LoadPointer
+	ab := (*bucket)(atomic.LoadPointer(&obj.callCounter.activeBucket))
+
 	if info.Err != nil { // s/queue that aggregates stats for you, other locks aren't
 		// Is there anything else that is required to make this a successful RPC?
-		scw.obj.callCounter.activeBucket.numSuccesses++ // is this the thing that needs to protected by the mutex? Any wonky behavior that can come from ordering of this? Can this obj/scw be deleted concurrently
+		// This access will require a read lock, so instead switch this whole thing to access it here
+		// (remember, scw.obj can be nil, need to add that check around this)
+
+		// Overall problem: when this done callback finishes, the scw is pointing to a certain object.
+		// In between writing this to the countingUpdateCh, an UpdateAddresses call can come in and move what this scw
+		// was pointing to, and this writes to the new address even though it's for the old address
+
+		// state := (*balancer.State)(atomic.LoadPointer(&cpw.state)) the read of the pointer into memory like this, now you have
+		// a local var which points to the data on the heap
+		// this write will not have a concurrent read or write, you are good here
+		// race if activeBucket gets swapped after being read, this simply writes to memory that won't be accessed again, that is fine
+		// is this the thing that needs to protected by the mutex? Any wonky behavior that can come from ordering of this? Can this obj/scw be deleted concurrently
+		atomic.AddInt64(&ab.numSuccesses, 1)
 	} else {
-		scw.obj.callCounter.activeBucket.numFailures++
+		// this deref is dangerous - see other examples for a multi dimensional data structure that has atomics
+		// high level problem: mutex is slow, but can solve with atomic read or pushing onto channel
+		atomic.AddInt64(&ab.numFailures, 1)
 	}
+	atomic.AddInt64(&ab.requestVolume, 1)
 }
 
 
@@ -597,6 +704,7 @@ func (b *outlierDetectionBalancer) UpdateState(s balancer.State) { // Can this r
 			// `failure_percentage_ejection` fields are unset in the
 			// configuration, the picker should not do that counting.
 			noopPicker: b.noopConfig(),
+			countingUpdateCh: b.countingUpdateCh,
 		},
 	})
 
@@ -631,6 +739,7 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	scw := &subConnWrapper{
 		SubConn: sc,
 		addresses: addrs,
+		scUpdateCh: b.scUpdateCh,
 	}
 	// mu lock
 	b.scWrappers[sc] = scw
@@ -646,7 +755,9 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 
 	obj, ok := val.(*object)
 	obj.sws = append(obj.sws, scw)
-	scw.obj = obj
+	// do we even need to make this atomic, I'm going to do it for defensive sake
+	// scw.obj = unsafe.Pointer(obj)
+	atomic.StorePointer(&scw.obj, unsafe.Pointer(obj))
 
 	// If that address is currently ejected, that subchannel wrapper's eject
 	// method will be called.
@@ -675,13 +786,13 @@ func (b *outlierDetectionBalancer) addMapEntryIfNeeded(addr resolver.Address) *o
 	if !ok {
 		// Add map entry for that Address if applicable (i.e. if not already
 		// there).
-		obj = &object{}
+		obj = newObject()
 		b.odAddrs.Set(addr, obj)
 	} else {
 		obj , ok = val.(*object)
 		if !ok {
 			// shouldn't happen, logical no-op
-			obj = &object{} // to protect against nil panic
+			obj = newObject() // to protect against nil panic
 		}
 	}
 	return obj
@@ -690,13 +801,18 @@ func (b *outlierDetectionBalancer) addMapEntryIfNeeded(addr resolver.Address) *o
 // 2a. Remove Subchannel from Addresses map entry (if singular address changed).
 // 2b. Remove the map entry if only subchannel for that address
 func (b *outlierDetectionBalancer) removeSubConnFromAddressesMapEntry(scw *subConnWrapper) {
-	for i, sw := range scw.obj.sws {
+	obj := (*object)(atomic.LoadPointer(&scw.obj))
+	if obj == nil { // This shouldn't happen, but incldue it for defensive programming.
+		return
+	}
+	for i, sw := range obj.sws {
 		if scw == sw {
-			scw.obj.sws = append(scw.obj.sws[:i], scw.obj.sws[i+1:]...)
-			if len(scw.obj.sws) == 0 {
+			obj.sws = append(obj.sws[:i], obj.sws[i+1:]...)
+			if len(obj.sws) == 0 {
 				// []resolver.Address just automatically use [0], invariant of the caller
 				b.odAddrs.Delete(scw.addresses[0]) // invariant that used to be single (top level if), guarantee this never becomes nil
-				scw.obj = nil // does this cause any negative downstream effects?
+				// Switch to atomic load of nil into scw.obj
+				obj = nil // does this cause any negative downstream effects? yes, add nil check
 			}
 			break
 		}
@@ -723,7 +839,10 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 		return
 	}
 
-	b.cc.UpdateAddresses(scw.SubConn, addrs)
+	b.cc.UpdateAddresses(scw.SubConn, addrs) // This it to cc
+
+	// behaviorMu.Lock()
+	// defer behaviorMu.Unlock() s/UpdateSubConnState here to write to a channel (i.e. in eject())
 
 	// Note that 0 addresses is a valid update/state for a SubConn to be in.
 	// This is correctly handled by this algorithm (handled as part of a non singular
@@ -756,7 +875,7 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 			} else {
 				scw.uneject() // will send down correct SubConnState and set bool - the one where it can race with the latest state from client conn vs. persisted state, but this race is ok
 			}
-			scw.obj = obj
+			atomic.StorePointer(&scw.obj, unsafe.Pointer(obj))
 			obj.sws = append(obj.sws, scw)
 		} else { // single address to multiple addresses
 			// 2a. Remove Subchannel from Addresses map entry.
@@ -765,9 +884,10 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 
 			// 2c. Clear the Subchannel wrapper's Call Counter entry - this might not be tied to an Address you want to count, as you potentially
 			// delete the whole map entry - wait, but only a single SubConn left this address list, are we sure we want to clear in this situation?
-			if scw.obj != nil {
-				scw.obj.callCounter.activeBucket = bucket{}
-				scw.obj.callCounter.inactiveBucket = bucket{}
+			obj := (*object)(atomic.LoadPointer(&scw.obj))
+			if obj != nil {
+				atomic.StorePointer(&obj.callCounter.activeBucket, unsafe.Pointer(&bucket{}))
+				obj.callCounter.inactiveBucket = &bucket{}
 			}
 		}
 	} else {
@@ -780,8 +900,8 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 			obj := b.addMapEntryIfNeeded(addrs[0])
 
 			// 3b. Add Subchannel to Addresses map entry.
-			scw.obj = obj
-			obj.sws = append(obj.sws, scw)
+			atomic.StorePointer(&scw.obj /*protecting this memory and only this memory - 64? bit pointer to an arbitrary data type*/, unsafe.Pointer(obj))
+			obj.sws = append(obj.sws, scw) // ^^ because of this, this should be fine in regards to concurrency
 		} // else is multiple to multiple - no op, continued to be ignored by outlier detection load balancer.
 	}
 
@@ -841,9 +961,23 @@ func (b *outlierDetectionBalancer) run() {
 		// UpdateSubConnState?
 		// Close (like graceful switch, this is an event that can be synced in many different ways)
 			// cleanup any resources, close/nil child, return from this goroutine (cleans this one up)
+
+			// closeMu lock
+			b.closeMu.Lock()
 			if b.child != nil {
-				b.child.Close()
 				b.child = nil
+				// either a. closeMu unlock (would reduce chance of
+				// deadlock), I think this is correct, since you can't nil
+				// concurrently, and it won't proceed with the operation if it
+				// is niled, which means that at some point the child will be
+				// Closed(), doesn't really matter when (see graceful switch),
+				// jsut sometime in the future. The other operations (outside of
+				// interval timer algo and UpdateAddresses) are guaranteed to be
+				// called concurrently (balancer.Balancer API), so you don't
+				// need to wait for this mutex.
+				b.closeMu.Unlock()
+				b.child.Close()
+				// or b. closeMu unlock (I think A
 			}
 
 		// NewSubConn (yes for sure, adds to map - or protect map with mutex like cluster impl)
@@ -855,6 +989,18 @@ func (b *outlierDetectionBalancer) run() {
 
 		// Should I finish all of these operations before figuring any of this out? I.e. ordering of operations
 
+
+		case u := <-b.scUpdateCh.Get():
+			update := u.(*scUpdate)
+			b.scUpdateCh.Load()
+			b.closeMu.Lock()
+			if b.child != nil {
+				b.child.UpdateSubConnState(update.subConn /*<- should be a scw*/, update.state)
+			}
+			b.closeMu.Unlock()
+
+		// case <-b.countingCh:
+
 		case <-b.intervalTimer.C:
 			// Outlier Detection algo here. Quite large, so maybe make a helper function - "logic can either be inline or in a handle function"
 		}
@@ -862,6 +1008,9 @@ func (b *outlierDetectionBalancer) run() {
 
 	// Grounded blob: look over/cleanup/make sure this algorithm is correct. **Do this, because I already
 	// found a few correctness issues with it.
+
+	b.intervalMu.Lock()
+	defer b.intervalMu.Unlock() // however you want to represent this interval timer algorithm
 
 	// Interval trigger:
 	// When the timer fires, set the timer start timestamp to the current time. Record the timestamp for use when ejecting addresses in this iteration. "timestamp that was recorded when the timer fired"
@@ -1105,7 +1254,7 @@ func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address) {
 
 type object struct { // Now that this is a pointer, does this break anything?*
 	// The call result counter object
-	callCounter callCounter // should this be a pointer? yes TODO: switch to pointer
+	callCounter *callCounter // should this be a pointer? yes TODO: switch to pointer, poointer, doesn't race since doesn't get written to
 
 	// The latest ejection timestamp, or null if the address is currently not ejected
 	latestEjectionTimestamp time.Time // We represent the branching logic on the null with a time.Zero() value
@@ -1116,6 +1265,44 @@ type object struct { // Now that this is a pointer, does this break anything?*
 	// A list of subchannel wrapper objects that correspond to this address
 	sws []*subConnWrapper
 }
+
+func newObject() *object {
+	return &object{
+		callCounter: newCallCounter(),
+		sws: make([]*subConnWrapper, 0),
+	}
+}
+
+// Syncing access to this ^^^, rather than mutex, what can we make atomic
+// Obviously can't make everything atomic
+
+// Seems like we're only making callCounter atomic, as that is the only thing on the RPC flow
+// of this struct.
+
+// scw.obj.callCounter.activeBucket.numSuccesses++
+
+// scw.*.*.*.*.int (unsafe pointer at each level, or just at the ones we want to read atomically?)
+
+// do we need to load this step by step
+
+// is loadPtr(scw.obj.callCounter.activeBucket) <- that's a read right
+
+// loadPtr(scw.obj)
+
+// this read cannot happen concurrently with a write to this right
+// loadPtr (obj.callCounter).activeBucket{} // If this gets cleared (at any level of the tree), will write to cleared memory in other places (other places don't have pointer to it) (this is only ref), ok right?
+
+// activeBucket.numSuccess/Failures++
+
+
+// then just use that, atomically update activeBucket(how do we make sure this
+// doesn't get niled), seems like a race that doesn't matter according to doug
+// if it counts it for previous interval and goes to next one basically a no-op
+
+// load the atomic pointer obj from memory, have each pointer, or
+// interface with a uint32
+
+
 
 
 // Tests (add to testing file)

@@ -20,7 +20,9 @@ package outlierdetection
 import (
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/internal/buffer"
 	"google.golang.org/grpc/resolver"
+	"unsafe"
 )
 
 type subConnWrapper struct {
@@ -30,7 +32,12 @@ type subConnWrapper struct {
 	// The subchannel wrappers created by the outlier_detection LB policy will
 	// hold a reference to its map entry in the LB policy, if that map entry
 	// exists. Used to update call counter per RPC "when the request finishes" from picker.
-	obj *object // this can be nil - add nil checks
+	// obj *object // this can be nil - add nil checks
+
+	obj unsafe.Pointer // *object
+
+	// If you make this an unsafe.Pointer and have it Loaded every time, can do a nil check then
+
 	// The subchannel wrapper will track the latest state update from the
 	// underlying subchannel. By default, it will simply pass those updates
 	// along. Problem: state updates come from Client Conn in grpc-go?
@@ -42,6 +49,8 @@ type subConnWrapper struct {
 	// Yup, in clusterimpl.go the balancer writes to this field (atomically since it can be read and written concurrently)
 
 	addresses []resolver.Address // For use in plurality checks in UpdateAddresses()
+
+	scUpdateCh *buffer.Unbounded
 }
 
 // In regards to synchronization, this eject/uneject method
@@ -62,9 +71,15 @@ func (scw *subConnWrapper) eject() { // mutex protecting this call?
 
 	// if we send down update here instead of in od balancer,
 	// this needs to hold onto balancer field.
-	scw.childPolicy.UpdateSubConnState(scw, balancer.SubConnState{ // this needs to ref to the child policy in the od balancer..., not store it here, this can get closed etc.
-		ConnectivityState: connectivity.TransientFailure,
+	scw.scUpdateCh.Put(&scUpdate{
+		subConn: scw,
+		state:  balancer.SubConnState{
+			ConnectivityState: connectivity.TransientFailure,
+		},
 	})
+	/*scw.childPolicy.UpdateSubConnState(scw, balancer.SubConnState{ // this needs to ref to the child policy in the od balancer..., not store it here, this can get closed etc.
+		ConnectivityState: connectivity.TransientFailure,
+	})*/
 }
 
 // uneject(): The wrapper will report a state update with the latest update from
@@ -80,8 +95,11 @@ func (scw *subConnWrapper) uneject() {
 	// scw.cc.UpdateSubConnState(sc, scw.recentState) <- this is balancer.Balancer so...? lol
 
 	scw.ejected = false
-
-	scw.childPolicy.UpdateSubConnState(scw, scw.latestState) // latestState is synced with UpdateSubConnState calls right (if there in same run() goroutine)
+	scw.scUpdateCh.Put(&scUpdate{
+		subConn: scw,
+		state:  scw.latestState,
+	})
+	// scw.childPolicy.UpdateSubConnState(scw, scw.latestState) // latestState is synced with UpdateSubConnState calls right (if there in same run() goroutine) no, need to sync with a read mu
 }
 
 // intercept update state to persist most recent and don't forward
