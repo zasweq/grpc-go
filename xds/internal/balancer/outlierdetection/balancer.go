@@ -59,7 +59,7 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 		odAddrs: am,
 		scWrappers: make(map[balancer.SubConn]*subConnWrapper),
 		scUpdateCh: buffer.NewUnbounded(),
-		countingUpdateCh: buffer.NewUnbounded(),
+		pickerUpdateCh: buffer.NewUnbounded(),
 	}
 }
 
@@ -129,9 +129,6 @@ type scUpdate struct {
 	state balancer.SubConnState
 }
 
-type countingUpdate struct {
-	// data here that is enough to know how to increment a counter
-}
 
 type outlierDetectionBalancer struct {
 	// TODO: The fact that this is an address string + attributes needs to be documented in the gRFC?
@@ -261,6 +258,11 @@ type outlierDetectionBalancer struct {
 	// or just UpdateClientConnState?
 
 
+
+
+	// cfgMu protects access to the config and to the picker logic for resending update
+	// on UpdateClientConnState()
+	cfgMu sync.Mutex
 	odCfg *LBConfig // races with UpdateState -> add a mutex for this field (mutex ok here because not on RPC data flow)
 	// If we sync UpdateClientConnState and interval timer algo, this doesn't
 	// need protecting happens before with the two...any other reads or writes
@@ -273,7 +275,8 @@ type outlierDetectionBalancer struct {
 	// More:
 	// wrong, this gets read to determine no-op picker in UpdateState()...
 	// that's it, "race with picker update", determines if no-op config
-
+	childState balancer.State
+	recentPickerNoop bool
 
 	cc balancer.ClientConn // Priority parent right?
 	// Only written to at build time so no protection needed
@@ -329,9 +332,10 @@ type outlierDetectionBalancer struct {
 	// channel receive in run()
 	// No sync needed
 
-
-	// map sc (all parent knows about) -> scw (all children know about, this balancer wraps scs in scw)...explain and talk about why you need this map
+	// scwMu protects access to scWrappers.
+	scwMu sync.Mutex
 	// clusterimpl also has a mutex protecting this
+	// map sc (all parent knows about) -> scw (all children know about, this balancer wraps scs in scw)...explain and talk about why you need this map
 	scWrappers map[balancer.SubConn]*subConnWrapper // concurrent accesses - determines behavior etc. think deeply about this
 	// read in UpdateSubConnState to try and map subconn sent from parent
 	// to subconn wrapper.
@@ -393,8 +397,9 @@ type outlierDetectionBalancer struct {
 
 	// counting update ch - aggregates counting data - figure out what to put on it, maybe just scw
 	// to not have RPC flow have to grab a lock per RPC
-	countingUpdateCh *buffer.Unbounded
+	// countingUpdateCh *buffer.Unbounded
 
+	pickerUpdateCh *buffer.Unbounded
 
 	closed *grpcsync.Event // Fires off when close hits
 	done *grpcsync.Event // Waits until the resources are cleaned up? fires once run() goroutine returns (implicitly cleaning things up), maybe
@@ -441,11 +446,12 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		b.child = bb.Build(b /*Again, do we want to make this a functioning ClientConn or just embed?*/, b.bOpts)
 	}
 
-	// behavior mu lock
 	b.intervalMu.Lock()
 	// read mu?
+	b.cfgMu.Lock()
 	b.odCfg = lbCfg
 	// read mu?
+	b.cfgMu.Unlock()
 	b.intervalMu.Unlock()
 
 
@@ -486,7 +492,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		}
 	}
 
-	if !b.noopConfig() {
+	if !b.noopConfig() { // Can't get concurrently written, guard at callsite
 		b.intervalTimer = time.NewTimer(interval)
 	} else {
 		// "If a config is provided with both the `success_rate_ejection` and
@@ -501,7 +507,16 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 
 	// mus protecting reads
 
-	// behavior mu unlock
+	// behavior mu unlock (already unlocked earlier)
+
+	b.cfgMu.Lock() // I see, so if you move this to run, this will guard agianst the case update state comes in, reads new config, sends correct no-op picker
+	noopCfg := b.noopConfig()
+	if b.childState.Picker != nil && b.recentPickerNoop != b.noopConfig() {
+		b.cfgMu.Unlock()
+		// write to a channel - when get back figure out a. is this correct? and b. how do we ping over a channel?
+		// put a struct on the channel - will this not send too many updates...
+	}
+	b.cfgMu.Unlock()
 
 	// Any weird behavior here...child can't be niled so you're good
 
@@ -544,9 +559,9 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	// through typecasting (I don't think would work) or the map thing. Cluster
 	// Impl persists a map that maps sc -> scw...see how it's done in other
 	// parts of codebase.
-	// mu lock
+	b.scwMu.Lock()
 	scw, ok := b.scWrappers[sc]
-	// mu unlock
+	b.scwMu.Unlock()
 	if !ok {
 		// Return, shouldn't happen if passed up scw
 		// Because you wrap subconn always, clusterimpl i think only some
@@ -554,9 +569,9 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	}
 	if state.ConnectivityState == connectivity.Shutdown {
 		// Remove this SubConn from the map on Shutdown.
-		// mu lock
+		b.scwMu.Lock()
 		delete(b.scWrappers, scw.SubConn) // Just deletes from map doesn't touch underlying heap memory
-		// mu unlock
+		b.scwMu.Unlock()
 	}
 	scw.latestState = state // do we need this write if shutdown?, also this gets read in uneject()...I think interval timer can run concurrently
 	// what if subconn gets deleted here? from another call to UpdateSubConnState()?, no, UpdateSubConnState()
@@ -627,7 +642,6 @@ type wrappedPicker struct {
 	// childPicker, embedded or wrapped, I think wrapped is right, maybe see how other parts of codebase do it? I'm pretty sure I based it off other parts of codebase
 	childPicker balancer.Picker
 	noopPicker bool
-	countingUpdateCh *buffer.Unbounded
 }
 
 func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
@@ -662,6 +676,9 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 		return
 	}
 
+	// even here obj can become deprecated, so will race but again like activeBucket simply
+	// write to deprecated heap memory no harm done
+
 	// if it hits here this won't be nil
 	// these two pointers in whole data dereference are only ones that can
 	// race (be written to concurrently), why these specifically in the tree are the LoadPointer
@@ -692,6 +709,31 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 
 
 func (b *outlierDetectionBalancer) UpdateState(s balancer.State) { // Can this race with anything???? esp that b.noopConfig()
+	// cfgMu lock
+	b.cfgMu.Lock()
+	b.childState = s
+	noopCfg := b.noopConfig()
+	b.recentPickerNoop = noopCfg
+	b.cfgMu.Unlock()
+	// b.sentFirstPicker = true
+	// noopCfg := b.noopConfig() this is right even if it gets pinged on calculation of diff, since it can diff either way
+	// b.recentPickerNoop = true
+	// persist the bool to represent the state of the most recent picker forwarded up
+	// use this to determine whether to ping this
+
+	// still need to determine whether picker has been sent - separate bool sentFirstPicker?
+	// if sentFirstPicker && recentPickerNoop != newCfgNoop // WHEN GET BACK FINISH THIS IMPLEMENTATION
+
+	// cfgMu unlock
+
+	// Two things here - the actual read/write protection
+
+	// and the behavior of this needing to update when received a substantially
+	// different config in UpdateClientConnState()
+
+	// how is this event communicated/synced...can't just explicitly call b.UpdateState() imo,
+	// channel like cluster impl?
+
 	b.cc.UpdateState(balancer.State{
 		ConnectivityState: s.ConnectivityState,
 		// The outlier_detection LB policy will provide a picker that delegates to
@@ -703,8 +745,7 @@ func (b *outlierDetectionBalancer) UpdateState(s balancer.State) { // Can this r
 			// If both the `success_rate_ejection` and
 			// `failure_percentage_ejection` fields are unset in the
 			// configuration, the picker should not do that counting.
-			noopPicker: b.noopConfig(),
-			countingUpdateCh: b.countingUpdateCh,
+			noopPicker: noopCfg,
 		},
 	})
 
@@ -741,9 +782,9 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 		addresses: addrs,
 		scUpdateCh: b.scUpdateCh,
 	}
-	// mu lock
+	b.scwMu.Lock()
 	b.scWrappers[sc] = scw
-	// mu unlock
+	b.scwMu.Unlock()
 	if len(addrs) != 1 {
 		return scw, nil
 	}
