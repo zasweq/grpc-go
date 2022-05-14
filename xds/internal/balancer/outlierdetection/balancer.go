@@ -509,14 +509,15 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 
 	// behavior mu unlock (already unlocked earlier)
 
-	b.cfgMu.Lock() // I see, so if you move this to run, this will guard agianst the case update state comes in, reads new config, sends correct no-op picker
+	/*b.cfgMu.Lock() // I see, so if you move this to run, this will guard agianst the case update state comes in, reads new config, sends correct no-op picker
 	noopCfg := b.noopConfig()
 	if b.childState.Picker != nil && b.recentPickerNoop != b.noopConfig() {
 		b.cfgMu.Unlock()
 		// write to a channel - when get back figure out a. is this correct? and b. how do we ping over a channel?
 		// put a struct on the channel - will this not send too many updates...
 	}
-	b.cfgMu.Unlock()
+	b.cfgMu.Unlock()*/
+	b.pickerUpdateCh.Put(lbCfg)
 
 	// Any weird behavior here...child can't be niled so you're good
 
@@ -709,8 +710,9 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 
 
 func (b *outlierDetectionBalancer) UpdateState(s balancer.State) { // Can this race with anything???? esp that b.noopConfig()
+	b.pickerUpdateCh.Put(s)
 	// cfgMu lock
-	b.cfgMu.Lock()
+	/*b.cfgMu.Lock()
 	b.childState = s
 	noopCfg := b.noopConfig()
 	b.recentPickerNoop = noopCfg
@@ -747,7 +749,7 @@ func (b *outlierDetectionBalancer) UpdateState(s balancer.State) { // Can this r
 			// configuration, the picker should not do that counting.
 			noopPicker: noopCfg,
 		},
-	})
+	})*/
 
 	// What to do with connectivity state? Simply forward, or does it affect
 	// anything here? Similar question to ResolverError coming in and affecting
@@ -1040,7 +1042,50 @@ func (b *outlierDetectionBalancer) run() {
 			}
 			b.closeMu.Unlock()
 
-		// case <-b.countingCh:
+		case update := <-b.pickerUpdateCh.Get():
+			b.pickerUpdateCh.Load()
+			// closed guard? - how to make sure this doesn't send updates to grpc after it's been closed
+			switch u := update.(type) {
+			case balancer.State:
+				b.childState = u
+				b.cfgMu.Lock()
+				noopCfg := b.noopConfig()
+				b.cfgMu.Unlock()
+				b.recentPickerNoop = noopCfg
+				b.cc.UpdateState(balancer.State{
+					ConnectivityState: b.childState.ConnectivityState,
+					// The outlier_detection LB policy will provide a picker that delegates to
+					// the child policy's picker, and when the request finishes, increment the
+					// corresponding counter in the map entry referenced by the subchannel
+					// wrapper that was picked.
+					Picker: &wrappedPicker{
+						childPicker: b.childState.Picker,
+						// If both the `success_rate_ejection` and
+						// `failure_percentage_ejection` fields are unset in the
+						// configuration, the picker should not do that counting.
+						noopPicker: noopCfg,
+					},
+				})
+			case *LBConfig:
+				noopCfg := u.SuccessRateEjection == nil && u.FailurePercentageEjection == nil
+				if b.childState.Picker != nil && noopCfg != b.recentPickerNoop {
+					b.recentPickerNoop = noopCfg
+					b.cc.UpdateState(balancer.State{
+						ConnectivityState: b.childState.ConnectivityState,
+						// The outlier_detection LB policy will provide a picker that delegates to
+						// the child policy's picker, and when the request finishes, increment the
+						// corresponding counter in the map entry referenced by the subchannel
+						// wrapper that was picked.
+						Picker: &wrappedPicker{
+							childPicker: b.childState.Picker,
+							// If both the `success_rate_ejection` and
+							// `failure_percentage_ejection` fields are unset in the
+							// configuration, the picker should not do that counting.
+							noopPicker: noopCfg,
+						},
+					})
+				}
+			}
 
 		case <-b.intervalTimer.C:
 			// Outlier Detection algo here. Quite large, so maybe make a helper function - "logic can either be inline or in a handle function"
