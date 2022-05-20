@@ -121,7 +121,7 @@ type clusterImplBalancer struct {
 	// This keeps a map from original SubConn to wrapper, so that when
 	// forwarding the SubConn state update, the child policy will get the
 	// wrappers.
-	scWrappers map[balancer.SubConn]*scWrapper
+	scWrappers map[balancer.SubConn]*scWrapper // Written to once constructed, read for UpdateSubConnState(), deleted from once received Shutdown State
 
 	// childState/drops/requestCounter keeps the state used by the most recently
 	// generated picker. All fields can only be accessed in run(). And run() is
@@ -252,7 +252,7 @@ func (b *clusterImplBalancer) UpdateClientConnState(s balancer.ClientConnState) 
 	}
 
 	// If child policy is a different type, recreate the sub-balancer.
-	if b.config == nil || b.config.ChildPolicy.Name != newConfig.ChildPolicy.Name {
+	if b.config == nil || b.config.ChildPolicy.Name != newConfig.ChildPolicy.Name { // Because refactor, this check, we don't need this check
 		if b.childLB != nil {
 			b.childLB.Close()
 		}
@@ -288,6 +288,7 @@ func (b *clusterImplBalancer) ResolverError(err error) {
 	}
 
 	if b.childLB != nil {
+		// can this not get niled during call?
 		b.childLB.ResolverError(err)
 	}
 }
@@ -318,7 +319,7 @@ func (b *clusterImplBalancer) UpdateSubConnState(sc balancer.SubConn, s balancer
 		}
 	}
 	b.scWrappersMu.Unlock()
-	if b.childLB != nil {
+	if b.childLB != nil { // Why this nil check?
 		b.childLB.UpdateSubConnState(sc, s)
 	}
 }
@@ -346,7 +347,7 @@ func (b *clusterImplBalancer) ExitIdle() {
 	}
 	// Fallback for children that don't support ExitIdle -- connect to all
 	// SubConns.
-	for _, sc := range b.scWrappers {
+	for _, sc := range b.scWrappers { // Do we now need this in od since top level?
 		sc.Connect()
 	}
 }
@@ -542,3 +543,4 @@ func (b *clusterImplBalancer) run() {
 		}
 	}
 }
+// blocking vs. not blocking

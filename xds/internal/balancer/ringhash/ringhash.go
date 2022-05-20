@@ -165,7 +165,7 @@ type ringhashBalancer struct {
 	config *LBConfig
 
 	subConns map[resolver.Address]*subConn // `attributes` is stripped from the keys of this map (the addresses)
-	scStates map[balancer.SubConn]*subConn
+	scStates map[balancer.SubConn]*subConn // Read on UpdateSubConnStateUpdate to convert to this SubConn, written to in UpdateAddrs, deleted on shutdown
 
 	// ring is always in sync with subConns. When subConns change, a new ring is
 	// generated. Note that address weights updates (they are keys in the
@@ -212,7 +212,7 @@ func (b *ringhashBalancer) updateAddresses(addrs []resolver.Address) bool {
 		}
 		aNoAttrs.Metadata = w
 		addrsSet[aNoAttrs] = struct{}{}
-		if scInfo, ok := b.subConns[aNoAttrs]; !ok {
+		if scInfo, ok := b.subConns[aNoAttrs]; !ok { // Extra logic here with regards to addresses and SubConns and linking them
 			// When creating SubConn, the original address with attributes is
 			// passed through. So that connection configurations in attributes
 			// (like creds) will be used.

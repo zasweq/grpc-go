@@ -50,6 +50,13 @@ type callCounter struct {
 	activeBucket unsafe.Pointer // *bucket updates every time a call finishes (from picker passed to Client Conn)
 	inactiveBucket *bucket // active/inactiveBucket get swapped every interval (timer going off). this is two things writing to it, and a race condition, need to sync. "Used by picker" in design docs and cluster impl balancer scWrapper field.
 
+	// Read throughout interval timer algo
+	// written to in swap - happens non concurrently with ^^^
+	// UpdateClientConnState() can clear
+	// UpdateAddresses() can also clear
+
+
+
 	// The active bucket is updated each time a call finishes. When the timer
 	// triggers, the inactive bucket is zeroed and swapped with the active
 	// bucket. Then the inactive bucket contains the number of successes and
@@ -61,24 +68,28 @@ type callCounter struct {
 
 func (cc *callCounter) clear() {
 	atomic.StorePointer(&cc.activeBucket, unsafe.Pointer(&bucket{}))
+	// inactive mu lock? - but then all the reads will be super slow but that's fine?
 	cc.inactiveBucket = &bucket{}
+	// inactive mu unlock?
 }
 
 // When the timer triggers, the inactive bucket is zeroed and swapped with the active bucket.
 
 // How are we swapping state? Does caller do it or do we define methods here?
 func (cc *callCounter) swap() { // Called when the interval timer triggers in outlierdetection/balancer.go
-	ab := (*bucket)(atomic.LoadPointer(&cc.activeBucket))
+	ab := (*bucket)(atomic.LoadPointer(&cc.activeBucket)) // or...we can make this swap and have atomic reads in interval timer algo, write the algorithm as written in Michael's document
 	// Don't do it exactly like defined but the same logically, as picker reads
 	// ref to active bucket so instead of swapping the pointers (inducing race
 	// conditions where picker writes to inactive bucket which is being used for
 	// outlier detection algorithm, copy active bucket to new memory on heap)
+
+	// inactive mu lock?
 	cc.inactiveBucket = &bucket{
 		numSuccesses: atomic.LoadInt64(&ab.numSuccesses),
 		numFailures: atomic.LoadInt64(&ab.numFailures),
 		requestVolume: atomic.LoadInt64(&ab.requestVolume),
 	}
-
+	// inactive mu unlock?
 	atomic.StorePointer(&cc.activeBucket, unsafe.Pointer(&bucket{}))
 
 	// result: the inactive bucket contains the number of successes and failures since the last time the timer

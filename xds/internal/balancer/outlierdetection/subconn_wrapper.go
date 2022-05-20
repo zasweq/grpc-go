@@ -41,16 +41,25 @@ type subConnWrapper struct {
 	// The subchannel wrapper will track the latest state update from the
 	// underlying subchannel. By default, it will simply pass those updates
 	// along. Problem: state updates come from Client Conn in grpc-go?
+
+	// written in UpdateSubConnState(), can this race?
+	// uneject() which can get called from UpdateAddresses/interval timer
 	latestState balancer.SubConnState // This can either be stored in the wrapper or the balancer...
-	// Read by od balancer...I think so? To write and send downward once this gets unejected
-	childPolicy balancer.Balancer
+
+	// ejected gets written in eject() and uneject() which can get called from UpdateAddresses/interval timer
+
+	// NewSubConn and gets written in UpdateSubConnState, eventually will reach
+	// consistency, if you simply protect with a mutex
 
 	ejected bool // Read by od balancer to...not send updates downward if ejected in UpdateSubConnState()...I guess the balancer will persist it as well.
 	// Yup, in clusterimpl.go the balancer writes to this field (atomically since it can be read and written concurrently)
 
 	addresses []resolver.Address // For use in plurality checks in UpdateAddresses()
+	// gets written to at heap construction time, read in a happens before algorithm in UpdateAddresses(),
+	// you're good no need to sync
 
 	scUpdateCh *buffer.Unbounded
+	// No need for sync
 }
 
 // In regards to synchronization, this eject/uneject method
@@ -65,6 +74,8 @@ func (scw *subConnWrapper) eject() { // mutex protecting this call?
 	// Report a TRANSIENT_FAILIURE state
 	// scw.cc.UpdateSubConnState(sc, connectivity.State) // <- will need to hold a reference to sc (itself?) and also cc
 
+	// s/putting something on a update channel
+	//     ejectedUpdate(scw, ejected = true)
 
 	// stop passing along updates from the underlying subchannel...bool?
 	scw.ejected = true
@@ -93,6 +104,9 @@ func (scw *subConnWrapper) uneject() {
 	// toward grpc?)
 
 	// scw.cc.UpdateSubConnState(sc, scw.recentState) <- this is balancer.Balancer so...? lol
+
+	// s/putting something on a update channel
+	//      ejectedUpate(scw, ejected = false)
 
 	scw.ejected = false
 	scw.scUpdateCh.Put(&scUpdate{
