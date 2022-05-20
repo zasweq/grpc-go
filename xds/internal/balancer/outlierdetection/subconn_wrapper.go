@@ -19,7 +19,6 @@ package outlierdetection
 
 import (
 	"google.golang.org/grpc/balancer"
-	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal/buffer"
 	"google.golang.org/grpc/resolver"
 	"unsafe"
@@ -77,8 +76,13 @@ func (scw *subConnWrapper) eject() { // mutex protecting this call?
 	// s/putting something on a update channel
 	//     ejectedUpdate(scw, ejected = true)
 
+	scw.scUpdateCh.Put(&ejectedUpdate{
+		scw: scw,
+		ejected: true,
+	})
+	// VVV functionality got moved to run(), also handles sync
 	// stop passing along updates from the underlying subchannel...bool?
-	scw.ejected = true
+	/*scw.ejected = true
 
 	// if we send down update here instead of in od balancer,
 	// this needs to hold onto balancer field.
@@ -87,7 +91,7 @@ func (scw *subConnWrapper) eject() { // mutex protecting this call?
 		state:  balancer.SubConnState{
 			ConnectivityState: connectivity.TransientFailure,
 		},
-	})
+	})*/
 	/*scw.childPolicy.UpdateSubConnState(scw, balancer.SubConnState{ // this needs to ref to the child policy in the od balancer..., not store it here, this can get closed etc.
 		ConnectivityState: connectivity.TransientFailure,
 	})*/
@@ -108,11 +112,17 @@ func (scw *subConnWrapper) uneject() {
 	// s/putting something on a update channel
 	//      ejectedUpate(scw, ejected = false)
 
-	scw.ejected = false
+	scw.scUpdateCh.Put(&ejectedUpdate{
+		scw: scw,
+		ejected: false,
+	})
+
+	// vvv functionality got moved to run() goroutine
+	/*scw.ejected = false
 	scw.scUpdateCh.Put(&scUpdate{
 		subConn: scw,
 		state:  scw.latestState,
-	})
+	})*/
 	// scw.childPolicy.UpdateSubConnState(scw, scw.latestState) // latestState is synced with UpdateSubConnState calls right (if there in same run() goroutine) no, need to sync with a read mu
 }
 

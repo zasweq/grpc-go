@@ -129,7 +129,7 @@ func (bb) Name() string {
 // an explicit call from gRPC, or from an eject/uneject call.
 type scUpdate struct {
 	// subConn balancer.SubConn, scw implements this
-	subConn balancer.SubConn // s/ sc, but scope is big so I think this may be right
+	scw *subConnWrapper // s/ sc, but scope is big so I think this may be right
 	state balancer.SubConnState
 	// all the knobs that are needed for sync - tell it ejected/unejected (which then determines this data...sent upward)
 }
@@ -139,7 +139,7 @@ type scUpdate struct {
 // eject/uneject subconn
 
 type ejectedUpdate struct {
-	subConn balancer.SubConn
+	scw *subConnWrapper
 	ejected bool // t for ejected, false for unejected
 }
 
@@ -600,8 +600,13 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	// s/putting something on a update channel
 
 	//     scUpdate(scw, latestState)
+	b.scUpdateCh.Put(&scUpdate{
+		scw: scw,
+		state: state,
+	})
 
-	scw.latestState = state // do we need this write if shutdown?, also this gets read in uneject()...I think interval timer can run concurrently
+	// VVV This functionality got moved to run() (syncs state)
+	/*scw.latestState = state // do we need this write if shutdown?, also this gets read in uneject()...I think interval timer can run concurrently
 	// what if subconn gets deleted here? from another call to UpdateSubConnState()?, no, UpdateSubConnState()
 	// calls are guaranteed to be called synchronously, only thing that can happen is NewSubConn makes
 	// a new map entry
@@ -611,7 +616,7 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 			state: state,
 		})
 		// b.child.UpdateSubConnState(scw, state)
-	}
+	}*/
 
 }
 
@@ -696,7 +701,7 @@ func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 }
 
 func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
-	scw, ok := sc.(subConnWrapper)
+	scw, ok := sc.(*subConnWrapper)
 	if !ok {
 		// Shouldn't happen, as comes from child
 		return
@@ -1067,15 +1072,31 @@ func (b *outlierDetectionBalancer) run() {
 
 		// Should I finish all of these operations before figuring any of this out? I.e. ordering of operations
 
-
-		case u := <-b.scUpdateCh.Get(): // s this to also handle eject logic and latest state, that will sync scw.ejected and scw.latestState implicitly and keep behavior consistent?
-			update := u.(*scUpdate)
+		// try and break these two sync points
+		case update := <-b.scUpdateCh.Get(): // s this to also handle eject logic and latest state, that will sync scw.ejected and scw.latestState implicitly and keep behavior consistent?
+			// update := u.(*scUpdate)
 			b.scUpdateCh.Load()
-			b.closeMu.Lock()
-			if b.child != nil {
-				b.child.UpdateSubConnState(update.subConn /*<- should be a scw*/, update.state)
+			switch u := update.(type) {
+			case scUpdate:
+				// scw := u.scw (would this make it cleaner?)
+				u.scw.latestState = u.state
+				b.closeMu.Lock() // won't need this if you sync close and add it to run goroutine because then b.child won't race
+				if !u.scw.ejected && b.child != nil {
+					b.child.UpdateSubConnState(u.scw, u.state) // can this call back and close, no close comes from higher level...
+				}
+				b.closeMu.Unlock()
+			case ejectedUpdate:
+				u.scw.ejected = u.ejected
+				var stateToUpdate balancer.SubConnState
+				if u.ejected {
+					stateToUpdate = balancer.SubConnState{
+						ConnectivityState: connectivity.TransientFailure,
+					}
+				} else {
+					stateToUpdate = u.scw.latestState // wait what if this is nil? (uneject a SubConn initially that has never been ejected, will this be a possibility of hitting?)
+				}
+				b.child.UpdateSubConnState(u.scw, stateToUpdate)
 			}
-			b.closeMu.Unlock()
 
 		// case update := <-b.scUpdateCh.Get():
 
