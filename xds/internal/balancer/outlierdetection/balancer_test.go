@@ -312,7 +312,8 @@ func (tb *testClusterImplBalancer) waitForClientConnUpdate(ctx context.Context, 
 // and updated properly.
 func (s) TestUpdateClientConnState(t *testing.T) {
 	// setup
-	od, _ := setup(t)
+	od, _ := setup(t) // can also have a cancel returned from this that does od.Close() itself
+	defer od.Close()
 
 	// updateClientConnState
 	od.UpdateClientConnState(balancer.ClientConnState{

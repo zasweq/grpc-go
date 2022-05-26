@@ -242,7 +242,12 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	}
 
 	if !b.noopConfig() {
-		b.intervalTimer = time.NewTimer(interval)
+		if b.intervalTimer != nil {
+			b.intervalTimer.Stop()
+		}
+		b.intervalTimer = time.AfterFunc(interval, func() {
+			b.intervalTimerAlgorithm()
+		})
 	} else {
 		// "If a config is provided with both the `success_rate_ejection` and
 		// `failure_percentage_ejection` fields unset, skip starting the timer and
@@ -321,12 +326,16 @@ func (b *outlierDetectionBalancer) Close() {
 	b.closed.Fire()
 	if b.child != nil {
 		b.closeMu.Lock()
+		child := b.child
 		b.child = nil
 		b.closeMu.Unlock()
-		b.child.Close()
+		child.Close()
 	}
 
 	// Any other cleanup needs to happen (subconns, other resources?)?
+	if b.intervalTimer != nil {
+		b.intervalTimer.Stop()
+	}
 }
 
 func (b *outlierDetectionBalancer) ExitIdle() {
@@ -761,9 +770,6 @@ func (b *outlierDetectionBalancer) run() {
 		// reset or newtimer should not be done concurrent to this receive
 
 		// this starts nil, gets written to in update client conn state....
-
-		case <-b.intervalTimer.C: // will this ever be nil? yes, this also races with the write in UpdateClientConnState
-			b.intervalTimerAlgorithm()
 		case <-b.closed.Done():
 			return
 		}
