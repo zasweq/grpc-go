@@ -193,7 +193,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	}
 
 	// Reject whole config if any errors, don't persist it for later
-	bb := balancer.Get(lbCfg.ChildPolicy.Name)
+	bb := balancer.Get(lbCfg.ChildPolicy.Name) // can nil panic, but child config already validated, (does parsing actually make sure child config is there?)
 	if bb == nil {
 		return fmt.Errorf("balancer %q not registered", lbCfg.ChildPolicy.Name)
 	}
@@ -369,7 +369,9 @@ func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 		if !wp.noopPicker {
 			incrementCounter(pr.SubConn, di)
 		}
-		pr.Done(di)
+		if pr.Done != nil {
+			pr.Done(di)
+		}
 	}
 	return balancer.PickResult{
 		SubConn: pr.SubConn,

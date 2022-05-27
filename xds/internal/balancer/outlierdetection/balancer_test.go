@@ -21,8 +21,10 @@ package outlierdetection
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/resolver"
 	"testing"
@@ -315,7 +317,6 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 	od, _ := setup(t) // can also have a cancel returned from this that does od.Close() itself
 	defer od.Close()
 
-	// updateClientConnState
 	od.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: &LBConfig{
 			// noop || valid/full fields default fields**
@@ -342,27 +343,189 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 		},
 	})
 
-	// The only other downstream effect is it creates entries in address map ** should we test creation and deletion of address map
+	// The only other downstream effect is it creates entries in address map ** should we test creation and deletion of address map?
 
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	// verify that the child balancer received the update - or read into a variable
-	od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
 		BalancerConfig: testClusterImplBalancerConfig{},
-	})
-}
-
-/*
-func (s) TestUpdateAddresses(t *testing.T) {
-	// setup to what state?
-
-	// first test case: one created SubConn with a certain address,
-	// UpdateAddresses that created SubConn to a new address, should delete old map
-	// entry and create new ones
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
 }
 
 func (s) TestUpdateState(t *testing.T) {
+	od, tcc := setup(t)
+	defer od.Close()
+
+	od.UpdateClientConnState(balancer.ClientConnState{
+		BalancerConfig: &LBConfig{
+			// noop || valid/full fields default fields**
+			Interval:           10 * time.Second,
+			BaseEjectionTime:   30 * time.Second,
+			MaxEjectionTime:    300 * time.Second,
+			MaxEjectionPercent: 10,
+			SuccessRateEjection: &SuccessRateEjection{
+				StdevFactor:           1900,
+				EnforcementPercentage: 100,
+				MinimumHosts:          5,
+				RequestVolume:         100,
+			},
+			FailurePercentageEjection: &FailurePercentageEjection{
+				Threshold:             85,
+				EnforcementPercentage: 5,
+				MinimumHosts:          5,
+				RequestVolume:         50,
+			},
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+	// child getting update doesn't matter but that is normal flow, noopPicker being nil won't happen UpdateClientConnState() write, new invariant of system -> UpdateState()
+
+	// all UpdateState does is write to a channel for it to send
+	od.UpdateState(balancer.State{
+		ConnectivityState: connectivity.Ready,
+		Picker: &testutils.TestConstPicker{},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		t.Fatalf("timeout while waiting for a UpdateState call on the ClientConn")
+	case picker := <-tcc.NewPickerCh:
+		pi, err := picker.Pick(balancer.PickInfo{})
+		if err != nil {
+			t.Fatalf("Picker.Pick should not have errored")
+		}
+		pi.Done(balancer.DoneInfo{}) // make sure this doesn't cause any problems...
+	}
+	// verify a picker gets sent to CC...use the picker to make sure it works
+
+	// also need to make sure Done() works...
+
+	// also need to test counting somehow but orthgonal to this test...
+
+	// Maybe test sync stuff too here (i.e. noopPickerFlips)
+
+	// Do UpdateAddresses first and then revisit ^^^
+}
+
+func (s) TestUpdateAddresses(t *testing.T) {
+	// setup to what state?
+	od, tcc := setup(t)
+	defer od.Close()
+
+	od.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+			},
+		},
+		BalancerConfig: &LBConfig{ // TODO: S/ variable
+			Interval:           10 * time.Second,
+			BaseEjectionTime:   30 * time.Second,
+			MaxEjectionTime:    300 * time.Second,
+			MaxEjectionPercent: 10,
+			SuccessRateEjection: &SuccessRateEjection{
+				StdevFactor:           1900,
+				EnforcementPercentage: 100,
+				MinimumHosts:          5,
+				RequestVolume:         100,
+			},
+			FailurePercentageEjection: &FailurePercentageEjection{
+				Threshold:             85,
+				EnforcementPercentage: 5,
+				MinimumHosts:          5,
+				RequestVolume:         50,
+			},
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+			},
+		},
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+
+
+
+	// one created SubConn with a certain address, switch to another, also can test the knobs on address map?
+	scw, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address1",
+		},
+	}, balancer.NewSubConnOptions{})
+
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	// verify that NewSubConn gets called on client conn
+	select {
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for NewSubConn to be called on test Client Conn")
+	case <-tcc.NewSubConnCh:
+	}
+	// verify scw is actually a scw
+	_, ok := scw.(*subConnWrapper)
+	if !ok {
+		t.Fatalf("SubConn passed downward should have been a subConnWrapper")
+	}
+
+	// newSubConn call should wrap it - make sure it a. pings Client Conn
+	// and b. sends down a scw to child
+	od.UpdateAddresses(scw /*I think even though not typecast, still technically a type that implements, so just pass the ref to an interface*/, []resolver.Address{
+		{
+			Addr: "address2",
+		},
+	})
+
+	// verify that update addresses gets forwarded to ClientConn
+	select {
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for UpdateAddresses to be called on test Client Conn")
+	case <-tcc.UpdateAddressesAddrsCh:
+	}
+
+	// What is the expected thing to happen? Delete map entry and create new one: <- how to verify this...
+	// *** do this verification after it passes lol and no nil pointer exceptions
+
+	// delete old map entry - how do we verify this?!?!?
+	// create new map entry - perhaps test an invariant of the obj (i.e. old one had 1 1 2 for call counter, s/ and now 0, 0, 0)?!?!?!
+
+
+	// s/ scw to multiple addresses
+
+
+	// s/ scw back to single address
+
+}
+
+/*
+
+1. func (s) TestUpdateState(t *testing.T) {
 	// UpdateState with noop sends no counting picker plus correct connectivity state
 	// UpdateState with reg sends counting picker plus correct connectivity state
 	od, tcc := setup(t)
@@ -374,6 +537,17 @@ func (s) TestUpdateState(t *testing.T) {
 	})
 }
 
+
+2. func (s) TestUpdateAddresses(t *testing.T) {
+	// setup to what state?
+
+	// first test case: one created SubConn with a certain address,
+	// UpdateAddresses that created SubConn to a new address, should delete old map
+	// entry and create new ones
+}
+
+2. Do something with UpdateSubConn/RemoveSubConn (or combine with ^^^)?, UpdateSubConnState and desired downstream effects?
+
 // Ping UpdateClientConnState with a no-op config and then flip.
 // Combine with UpdateState() permutations so that you test the most updated
 // picker sent to TestCC
@@ -382,4 +556,344 @@ func (s) TestNoopPickerFlips(t *testing.T) {
 
 	tcc.NewPickerCh // receive off of this and verify it's a certain picker, either no-op or not
 	// also test the knob of a certain connectivity state being pinged, two synced knobs
+
+	// how to verify this? You call done twice with err being nil, see if it counts or not (for both initial picker, should have correct counts and no-op picker)
+
+
 }*/
+
+func (s) TestPicker(t *testing.T) {
+	od, tcc := setup(t)
+	defer od.Close()
+
+	// need addresses to count...
+	od.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+			},
+		},
+		BalancerConfig: &LBConfig{ // TODO: S/ variable
+			Interval:           10 * time.Second,
+			BaseEjectionTime:   30 * time.Second,
+			MaxEjectionTime:    300 * time.Second,
+			MaxEjectionPercent: 10,
+			SuccessRateEjection: &SuccessRateEjection{
+				StdevFactor:           1900,
+				EnforcementPercentage: 100,
+				MinimumHosts:          5,
+				RequestVolume:         100,
+			},
+			FailurePercentageEjection: &FailurePercentageEjection{
+				Threshold:             85,
+				EnforcementPercentage: 5,
+				MinimumHosts:          5,
+				RequestVolume:         50,
+			},
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+			},
+		},
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+
+	// create a new subconn with address 1
+	// one created SubConn with a certain address, switch to another, also can test the knobs on address map?
+	scw, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address1", // s/ variable?
+		},
+	}, balancer.NewSubConnOptions{})
+
+	// no verification newsubconn on cc? will this block later?
+
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	// const picker always return that scw, that scw should be attached to object....
+	od.UpdateState(balancer.State{
+		ConnectivityState: connectivity.Ready,
+		Picker: &testutils.TestConstPicker{
+			SC: scw,
+		},
+	})
+
+	select {
+	case <-ctx.Done():
+		t.Fatalf("timeout while waiting for a UpdateState call on the ClientConn")
+	case picker := <-tcc.NewPickerCh:
+		pi, err := picker.Pick(balancer.PickInfo{})
+		if err != nil {
+			t.Fatalf("Picker.Pick should not have errored")
+		}
+		pi.Done(balancer.DoneInfo{})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		od.newMu.Lock()
+		val, ok := od.odAddrs.Get(resolver.Address{ // s/ "obj" to "mapEntry"
+			Addr: "address1", // s/ variable?
+		})
+		if !ok {
+			t.Fatal("map entry for address: address1 not present in map")
+		}
+		obj, ok := val.(*object)
+		if !ok {
+			t.Fatal("map value isn't obj type")
+		}
+		bucketWant := &bucket{
+			numSuccesses: 1,
+			numFailures: 1,
+			requestVolume: 2,
+		}
+		if diff := cmp.Diff((*bucket)(obj.callCounter.activeBucket), bucketWant); diff != "" { // no need for atomic read because not concurrent with Done() call
+			t.Fatalf("callCounter is different than expected, diff (-got +want): %v", diff)
+		}
+		od.newMu.Unlock()
+	}
+
+	// UpdateClientConnState with a noop config
+	od.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+			},
+		},
+		BalancerConfig: &LBConfig{
+			Interval: 1<<63 - 1,
+			// how are these knobs not set???, passed as such right "noop config will be generated"
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+			},
+		},
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+
+	select {
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for picker update on ClientConn, should have updated because no-op config changed on UpdateClientConnState")
+	case picker := <-tcc.NewPickerCh:
+		pi, err := picker.Pick(balancer.PickInfo{})
+		if err != nil {
+			t.Fatalf("Picker.Pick should not have errored")
+		}
+		pi.Done(balancer.DoneInfo{})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		od.newMu.Lock()
+		val, ok := od.odAddrs.Get(resolver.Address{ // s/ "obj" to "mapEntry"
+			Addr: "address1", // s/ variable?
+		})
+		if !ok {
+			t.Fatal("map entry for address: address1 not present in map")
+		}
+		obj, ok := val.(*object)
+		if !ok {
+			t.Fatal("map value isn't obj type")
+		}
+		// picker should not count, as the bucket should have 0 0 0, this also makes sure the
+		// bucket gets cleared because interval timer algo never ran so no timerStartTime
+		bucketWant := &bucket{}
+		if diff := cmp.Diff((*bucket)(obj.callCounter.activeBucket), bucketWant); diff != "" { // no need for atomic read because not concurrent with Done() call
+			t.Fatalf("callCounter is different than expected, diff (-got +want): %v", diff)
+		}
+		od.newMu.Unlock()
+
+		// picker should not count, activeBucket should be 0 0 0 after two Done() invokes
+
+
+		// 0 0 0 also tests clearing logic
+	}
+
+
+	// still need to test knobs of atomic reads/writes
+}
+
+// get these two tests working ^^^, plus finish how to test odAddrs update
+// mock the timer
+
+func (s) TestEjectSuccessRate(t *testing.T) {
+	// Setup the system to a point where it will eject addresses
+	od, tcc := setup(t)
+	defer od.Close()
+
+	// UpdateClientConnState with SuccessRateEjection set with knobs you want
+	od.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+				{
+					Addr: "address2",
+				},
+				{
+					Addr: "address3",
+				},
+			},
+		},
+		BalancerConfig: &LBConfig{
+			Interval:           10 * time.Second,
+			BaseEjectionTime:   30 * time.Second,
+			MaxEjectionTime:    300 * time.Second,
+			MaxEjectionPercent: 10, // will still allow one right? Should I test each of these knobs?
+			SuccessRateEjection: &SuccessRateEjection{
+				StdevFactor:           1900,
+				EnforcementPercentage: 100,
+				MinimumHosts:          3,
+				RequestVolume:         100,
+			},
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+				{
+					Addr: "address2",
+				},
+				{
+					Addr: "address3",
+				},
+			},
+		},
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+
+	// pick creates closure...
+	// invoke Done callback for different subconns per address (different subconns require multiple
+	// scw picked, can't use constPicker), maybe rr picker
+	scw1, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address1",
+		},
+	}, balancer.NewSubConnOptions{})
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+	// Verify new subconn on tcc here?
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	scw2, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address2",
+		},
+	}, balancer.NewSubConnOptions{})
+	// Verify new subconn on tcc here?
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	scw3, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address3",
+		},
+	}, balancer.NewSubConnOptions{})
+	// Verify new subconn on tcc here?
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	od.UpdateState(balancer.State{
+		ConnectivityState: connectivity.Ready,
+		Picker: /*rr across scw1, scw2, scw3 etc.*/,
+	})
+
+
+	// Trigger interval timer...mock Duration?
+
+	// First interval (how to trigger - mock?) no addresses ejected
+
+	// second interval (how to trigger - mock?) eject address they fall out of the std dev/mean
+
+}
+
+func (s) TestEjectFailureRate(t *testing.T) {
+
+}
+
+// test uneject, does this branch off and go past this ^^^ or seperate test?
+
+
+
+// Goals/Output of Outlier Detection algorithm:
+
+// at the end after a predefined set of conditions about the system (kept in data structure):
+
+// based on a random number generated (NEED TO MOCK!) between 1-100 wait just
+// set an enforcement percentage of 100 random guaranteed to be < 100, eject an
+// address (for each scsw scw.eject) at the end of success rate/failure
+// percentage algorithms
+
+// Is it default before it gets here...yeah sets default in xdsclient?
+
+
+
+// at the end of the interval, uneject certain addresses (for each scsw scw.eject).
+
+
+// verify scws have been ejected/unejected by verifying that UpdateSubConnState()
+// gets called on child with TF for eject and recent state for uneject
+
+
+
+
+
+
+// testUpdateAddresses to an ejected addresses
+
+
+// Test interval timer triggering and 5 + 3 = 8 thing...?
+
+
+
+
+// Also need to test the UpdateSubConnState run() synchronization somehow...ejected/unejected SubConns put on a channel
+// to eventually consistent state being forwarded down...
+
+// read all of the buffer, last update should be desired update...
