@@ -38,7 +38,10 @@ import (
 	"google.golang.org/grpc/xds/internal/balancer/clusterimpl"
 )
 
-var defaultTestTimeout = 5 * time.Second
+var (
+	defaultTestTimeout = 5 * time.Second
+	defaultTestShortTimeout = 10 * time.Millisecond
+)
 
 type s struct {
 	grpctest.Tester
@@ -298,6 +301,18 @@ func (tb *testClusterImplBalancer) waitForClientConnUpdate(ctx context.Context, 
 	gotCCS := ccs.(balancer.ClientConnState)
 	if diff := cmp.Diff(gotCCS, wantCCS, cmpopts.IgnoreFields(resolver.State{}, "Attributes")); diff != "" {
 		return fmt.Errorf("received unexpected ClientConnState, diff (-got +want): %v", diff)
+	}
+	return nil
+}
+
+func (tb *testClusterImplBalancer) waitForSubConnUpdate(ctx context.Context, wantSCS subConnWithState) error {
+	scs, err := tb.scStateCh.Receive(ctx)
+	if err != nil {
+		return err
+	}
+	gotSCS := scs.(subConnWithState)
+	if !cmp.Equal(gotSCS, wantSCS, cmp.AllowUnexported(subConnWithState{})) {
+		return fmt.Errorf("received SubConnState: %+v, want %+v", gotSCS, wantSCS)
 	}
 	return nil
 }
@@ -741,10 +756,26 @@ func (s) TestPicker(t *testing.T) {
 	// still need to test knobs of atomic reads/writes
 }
 
-// get these two tests working ^^^, plus finish how to test odAddrs update
+// get these two tests working ^^^ *Done, plus finish how to test odAddrs update (either check map length or check invariant of system)
 // mock the timer
 
 func (s) TestEjectSuccessRate(t *testing.T) {
+	/*defer func(af func(d time.Duration, f func()) *time.Timer) {
+		afterFunc = af
+	}(afterFunc)
+
+	// can verify duration in overriden function - separate test
+	afterFunc = func(_ time.Duration) *time.Timer {
+		// can verify duration in overriden function for the 5 +  3 = 8 case and also
+		// verify first duration passed is 3
+		// how to make five seconds pass...? Then send a new config and it should start it for |2 - 4|
+
+		// selectively trigger the interval timer
+
+		// pass this
+		return time.AfterFunc()
+	}*/ // prevent interval timer from going off with manual call and a max interval. Use this logic to verify duration passed in.
+
 	// Setup the system to a point where it will eject addresses
 	od, tcc := setup(t)
 	defer od.Close()
@@ -765,15 +796,15 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 			},
 		},
 		BalancerConfig: &LBConfig{
-			Interval:           10 * time.Second,
+			Interval:           1<<63 - 1, // so the interval will never run unless called manually in test.
 			BaseEjectionTime:   30 * time.Second,
 			MaxEjectionTime:    300 * time.Second,
 			MaxEjectionPercent: 10, // will still allow one right? Should I test each of these knobs?
 			SuccessRateEjection: &SuccessRateEjection{
-				StdevFactor:           1900,
+				StdevFactor:           1900, // I don't know what you need to set this too to get it off the mean.
 				EnforcementPercentage: 100,
 				MinimumHosts:          3,
-				RequestVolume:         100,
+				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
 				Name: tcibname,
@@ -784,6 +815,7 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
+	// maybe read
 	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
 		ResolverState: resolver.State{
 			Addresses: []resolver.Address{
@@ -814,7 +846,7 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error in od.NewSubConn call: %v", err)
 	}
-	// Verify new subconn on tcc here?
+	// Verify new subconn on tcc here? Not like UpdateClientConnState where it sends on channel so not required...but would be nice to have
 	if err != nil {
 		t.Fatalf("error in od.NewSubConn call: %v", err)
 	}
@@ -844,10 +876,129 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 		Picker: /*rr across scw1, scw2, scw3 etc.*/,
 	})
 
+	select {
+	case <-ctx.Done():
+		t.Fatalf("timeout while waiting for a UpdateState call on the ClientConn")
+	case picker := <-tcc.NewPickerCh:
 
-	// Trigger interval timer...mock Duration?
+		// for 0 - 15, set each upstream subchannel to have five successes each.
+		// This should cause none of the addresses to be ejected as none of them
+		// are outliers.
+		for i := 0; i < 3; i++ {
+			pi, err := picker.Pick(balancer.PickInfo{})
+			if err != nil {
+				t.Fatalf("Picker.Pick should not have errored")
+			}
+			pi.Done(balancer.DoneInfo{}) // call this five times, or rr over all
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+		}
+
+		od.intervalTimerAlgorithm() // should clear activeBuckets right, fresh start.
+
+		// verify activeBuckets was cleared?
+
+		// verify no UpdateSubConnState() call on the child, as no addresses got ejected.
+		sCtx, cancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
+		defer cancel()
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
+			t.Fatalf("no SubConn update should have been sent (no SubConn got ejected)")
+		}
+
+		// Since the address is not yet ejected, a SubConn update should forward down to the child. (doesn't matter which subconn you pick)
+		od.UpdateSubConnState(scw1, balancer.SubConnState{
+			ConnectivityState: connectivity.Connecting,
+		})
+
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{
+			sc: pi.SubConn,
+			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
+		}); err != nil {
+			t.Fatalf("Error waiting for Sub Conn update: %v", err)
+		}
+
+
+
+
+		// for 0 - 15, set two upstream subchannels to have five successes each,
+		// the other one none, should get ejected
+		for i := 0; i < 2; i++ {
+			pi, err := picker.Pick(balancer.PickInfo{})
+			if err != nil {
+				t.Fatalf("Picker.Pick should not have errored")
+			}
+			pi.Done(balancer.DoneInfo{}) // call this five times, or rr over all
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+		}
+		// have the other ones be 5 failures
+		pi, err := picker.Pick(balancer.PickInfo{})
+		if err != nil {
+			t.Fatalf("Picker.Pick should not have errored")
+		}
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")}) // call this five times, or rr over all
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+
+		// should eject address that always errored.
+		od.intervalTimerAlgorithm() // waits for it to return - runs uneject as well, needs to not uneject after the first pass
+
+		// verify UpdateSubConnState() got called with TRANSIENT_FAILURE for child in address that was ejected
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
+			sc: pi.SubConn,
+			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
+		}); err != nil {
+			t.Fatalf("Error waiting for Sub Conn update: %v", err)
+		}
+
+		// verify only one got ejected
+		sCtx, cancel = context.WithTimeout(context.Background(), defaultTestShortTimeout)
+		defer cancel()
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
+			t.Fatalf("Only one SubConn update should have been sent (only one SubConn got ejected)")
+		}
+
+		// Now that the address is ejected, need to test that SubConn updates
+		// stop being forwarded downward. (sc update hasn't been tested beforehand either)
+
+		// UpdateSubConnState that scw with CONNECTING
+		od.UpdateSubConnState(pi.SubConn, balancer.SubConnState{
+			ConnectivityState: connectivity.Connecting,
+		})
+
+		// make sure it doesn't send down
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
+			t.Fatalf("SubConn update should not have been forwarded (the SubConn is ejected)")
+		}
+
+
+		// Maybe add uneject test to this and have it send out recent state (figure out uneject...round robin, more tests, )
+		// trigger uneject how:
+
+		// "after ejection_timestamp" (<- persisted per address)
+
+		// timestamp gets written/recorded when the address gets ejected
+		// diff
+		// diff
+		// new time being read, after a certain configured uneject period...
+		od.intervalTimerAlgorithm() //
+
+
+		// Yeah just put uneject here, you'll have to set it up anyway if you test it
+
+	}
+
 
 	// First interval (how to trigger - mock?) no addresses ejected
+	// Trigger interval timer...mock Duration?
+	od.intervalTimerAlgorithm()
+
 
 	// second interval (how to trigger - mock?) eject address they fall out of the std dev/mean
 
@@ -859,6 +1010,19 @@ func (s) TestEjectFailureRate(t *testing.T) {
 
 // test uneject, does this branch off and go past this ^^^ or seperate test?
 
+// scenario within the algorithm that leads to addresses being unejected...:
+// "If the address is ejected, and the current time is after ejection_timestamp
+// + min(base_ejection_time * multiplier, max(base_ejection_time,
+// max_ejection_time)), un-eject the address."
+
+// verify by testing with recent state being forwarded down
+
+// Also need to test that SubConn updates continue to get forwarded down
+
+
+// Also need to test UpdateAddresses eject/uneject
+
+
 
 
 // Goals/Output of Outlier Detection algorithm:
@@ -868,7 +1032,7 @@ func (s) TestEjectFailureRate(t *testing.T) {
 // based on a random number generated (NEED TO MOCK!) between 1-100 wait just
 // set an enforcement percentage of 100 random guaranteed to be < 100, eject an
 // address (for each scsw scw.eject) at the end of success rate/failure
-// percentage algorithms
+// percentage algorithms, just had this 100 :)
 
 // Is it default before it gets here...yeah sets default in xdsclient?
 
@@ -897,3 +1061,13 @@ func (s) TestEjectFailureRate(t *testing.T) {
 // to eventually consistent state being forwarded down...
 
 // read all of the buffer, last update should be desired update...
+
+
+// Test picker synchronization (we have it for no-op, is that only thing we need to test for than run() goroutine
+
+// Test Picker.Pick racing with IntervalTimerAlgo
+
+// Call a bunch of operations concurrently. Close() needs to come synchronsouly after though right?
+
+// Test child != nil and closing and not sending subconn updates after close (do this async)
+// perhaps test closing as well - niling child etc. what other behaviors? Stuff can't happen downstream...

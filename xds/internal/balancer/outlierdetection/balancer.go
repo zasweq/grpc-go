@@ -38,6 +38,10 @@ import (
 	"google.golang.org/grpc/serviceconfig"
 )
 
+var (
+	afterFunc = time.AfterFunc // wait you don't need this...except to verify that it's called with initial time, then set and make sure it sets it with the interval diff, yeah that's important functionality to test
+)
+
 // Name is the name of the outlier detection balancer.
 const Name = "outlier_detection_experimental"
 
@@ -245,7 +249,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		if b.intervalTimer != nil {
 			b.intervalTimer.Stop()
 		}
-		b.intervalTimer = time.AfterFunc(interval, func() {
+		b.intervalTimer = afterFunc(interval, func() {
 			b.intervalTimerAlgorithm()
 		})
 	} else {
