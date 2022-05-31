@@ -40,6 +40,7 @@ import (
 
 var (
 	afterFunc = time.AfterFunc // wait you don't need this...except to verify that it's called with initial time, then set and make sure it sets it with the interval diff, yeah that's important functionality to test
+	now = time.Now
 )
 
 // Name is the name of the outlier detection balancer.
@@ -239,7 +240,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		// timer and start the timer for the configured interval minus the
 		// difference between the current time and the previous start timestamp,
 		// or 0 if that would be negative.
-		interval = b.odCfg.Interval - (time.Now().Sub(b.timerStartTime))
+		interval = b.odCfg.Interval - (now().Sub(b.timerStartTime)) // This will get overriden for time.Now() + 5, so you're good for that with delta timer start time
 		if interval < 0 {
 			interval = 0
 		}
@@ -689,7 +690,7 @@ func (b *outlierDetectionBalancer) intervalTimerAlgorithm() {
 		// ejection_timestamp + min(base_ejection_time (type: time.Time) *
 		// multiplier (type: int), max(base_ejection_time (type: time.Time),
 		// max_ejection_time (type: time.Time))), un-eject the address.
-		if time.Now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) {
+		if now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) { // need to way to inject a desired bool here at a certain point in tests, mock time.Now to return a late time, mock time.After to always return true...
 			b.unejectAddress(addr)
 		}
 	}

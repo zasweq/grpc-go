@@ -317,6 +317,13 @@ func (tb *testClusterImplBalancer) waitForSubConnUpdate(ctx context.Context, wan
 	return nil
 }
 
+func (tb *testClusterImplBalancer) waitForClose(ctx context.Context) error {
+	if _, err := tb.closeCh.Receive(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
 // to construct new heap memory: closeCh := testutils.NewChannel()
 // need to write this and the cc somewhere
 // do it in build?
@@ -330,7 +337,7 @@ func (tb *testClusterImplBalancer) waitForSubConnUpdate(ctx context.Context, wan
 func (s) TestUpdateClientConnState(t *testing.T) {
 	// setup
 	od, _ := setup(t) // can also have a cancel returned from this that does od.Close() itself
-	defer od.Close()
+	defer od.Close() // this will leak a goroutine otherwise
 
 	od.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: &LBConfig{
@@ -759,6 +766,19 @@ func (s) TestPicker(t *testing.T) {
 // get these two tests working ^^^ *Done, plus finish how to test odAddrs update (either check map length or check invariant of system)
 // mock the timer
 
+type rrPicker struct {
+	scs []balancer.SubConn
+
+	next int
+}
+
+func (rrp *rrPicker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
+	sc := rrp.scs[rrp.next]
+	rrp.next = (rrp.next + 1) % len(rrp.scs)
+	return balancer.PickResult{SubConn: sc}, nil
+}
+
+
 func (s) TestEjectSuccessRate(t *testing.T) {
 	/*defer func(af func(d time.Duration, f func()) *time.Timer) {
 		afterFunc = af
@@ -873,7 +893,9 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 
 	od.UpdateState(balancer.State{
 		ConnectivityState: connectivity.Ready,
-		Picker: /*rr across scw1, scw2, scw3 etc.*/,
+		Picker: &rrPicker{
+			scs: []balancer.SubConn{scw1, scw2, scw3},
+		},
 	})
 
 	select {
@@ -908,12 +930,12 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 		}
 
 		// Since the address is not yet ejected, a SubConn update should forward down to the child. (doesn't matter which subconn you pick)
-		od.UpdateSubConnState(scw1, balancer.SubConnState{
+		od.UpdateSubConnState(scw1.(*subConnWrapper).SubConn, balancer.SubConnState{
 			ConnectivityState: connectivity.Connecting,
 		})
 
 		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{
-			sc: pi.SubConn,
+			sc: scw1.(*subConnWrapper).SubConn,
 			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -981,26 +1003,36 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 		// Maybe add uneject test to this and have it send out recent state (figure out uneject...round robin, more tests, )
 		// trigger uneject how:
 
+		defer func (n func() time.Time) {
+			now = n
+		}(now)
+
+		now = func() time.Time {
+			return time.Now().Add(time.Second * 1000) // will cause to always uneject
+		}
+
+		// have it return a time that will definitely hit interval
+
 		// "after ejection_timestamp" (<- persisted per address)
 
 		// timestamp gets written/recorded when the address gets ejected
 		// diff
 		// diff
 		// new time being read, after a certain configured uneject period...
-		od.intervalTimerAlgorithm() //
+		od.intervalTimerAlgorithm() // need to eject and trigger it..
 
 
-		// Yeah just put uneject here, you'll have to set it up anyway if you test it
+		// Yeah just put uneject here, you'll have to set it up anyway if you test it, override (inject) time.Now() or After...
+
+		// unejected SubConn should report latest persisted state - which is connecting from earlier?
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
+			sc: pi.SubConn,
+			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
+		}); err != nil {
+			t.Fatalf("Error waiting for Sub Conn update: %v", err)
+		}
 
 	}
-
-
-	// First interval (how to trigger - mock?) no addresses ejected
-	// Trigger interval timer...mock Duration?
-	od.intervalTimerAlgorithm()
-
-
-	// second interval (how to trigger - mock?) eject address they fall out of the std dev/mean
 
 }
 
@@ -1052,8 +1084,171 @@ func (s) TestEjectFailureRate(t *testing.T) {
 // testUpdateAddresses to an ejected addresses
 
 
-// Test interval timer triggering and 5 + 3 = 8 thing...?
+// Test interval timer triggering and 5 + 3 = 8 thing...? OVERRIDE TIME.NOW
 
+// TestDurationOfInterval tests the configured interval timer.
+// The first interval timer should configure the timer with whatever
+// is directly on the config. The second interval should configure it with whatever diff
+/*func (s) TestDurationOfInterval(t *testing.T) {
+	// read time.Now here or somewhere else?
+
+	// you don't need to pass control of timer to this testing goroutine, as you
+	// can just call intervalTimerAlgorithm directly...
+
+	// pass back a timer to trigger it at certain times, don't trigger after first
+	// interval.
+	defer func(af func(d time.Duration, f func()) *time.Timer) {
+		afterFunc = af
+		// return a never firing timer
+	}(afterFunc)
+
+	durationChan := testutils.NewChannel()
+	// can verify duration in overriden function - separate test
+	afterFunc = func(dur time.Duration, _ func()) *time.Timer {
+		// can verify duration in overriden function for the 5 + 3 = 8 case and also
+		// verify first duration passed is 8
+		// how to make five seconds pass...? Then send a new config and it should start it for 3 - |2 - 4|?, mock time.Now to return something
+		durationChan.Send(dur)
+
+		// selectively trigger the interval timer
+
+		// pass this
+		return time.NewTimer(/*max duration so wil never fire)
+	} // prevent interval timer from going off with manual call and a max interval. Use this logic to verify duration passed in.
+
+
+	od, tcc := setup(t)
+	defer od.Close()
+
+	// configure od balancer with config that specifies 3 seconds eject rate
+	od.UpdateClientConnState(balancer.ClientConnState{
+		BalancerConfig: &LBConfig{
+			Interval: 8 * time.Second,
+			BaseEjectionTime:   30 * time.Second,
+			MaxEjectionTime:    300 * time.Second,
+			MaxEjectionPercent: 10,
+			SuccessRateEjection: &SuccessRateEjection{
+				StdevFactor:           1900,
+				EnforcementPercentage: 100,
+				MinimumHosts:          5,
+				RequestVolume:         100,
+			},
+			FailurePercentageEjection: &FailurePercentageEjection{
+				Threshold:             85,
+				EnforcementPercentage: 5,
+				MinimumHosts:          5,
+				RequestVolume:         50,
+			},
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+
+	d, err := durationChan.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Error receiving duration from afterFunc() call: %v", err)
+	}
+	dur := d.(time.Duration)
+	// this should be 8 seconds - what the balancer was configured with
+	if dur.Seconds() != 8 {
+		t.Fatalf("configured duration should have been 8 seconds to start timer")
+	}
+
+
+	// Override time.Now{} here to return time.Now{} + 5 (these tests should run in nanoseconds)
+
+	// UpdateClientConnState with an interval of 9 seconds. Due to having 5 seconds already passed, this should
+	// start an interval timer of ~4 seconds..
+	od.UpdateClientConnState(balancer.ClientConnState{
+		BalancerConfig: &LBConfig{
+			Interval: 9 * time.Second,
+			BaseEjectionTime:   30 * time.Second,
+			MaxEjectionTime:    300 * time.Second,
+			MaxEjectionPercent: 10,
+			SuccessRateEjection: &SuccessRateEjection{
+				StdevFactor:           1900,
+				EnforcementPercentage: 100,
+				MinimumHosts:          5,
+				RequestVolume:         100,
+			},
+			FailurePercentageEjection: &FailurePercentageEjection{
+				Threshold:             85,
+				EnforcementPercentage: 5,
+				MinimumHosts:          5,
+				RequestVolume:         50,
+			},
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+
+	ctx, cancel = context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+	// should be around ~ 4
+	d, err = durationChan.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Error receiving duration from afterFunc() call: %v", err)
+	}
+	dur = d.(time.Duration)
+	if dur.Seconds() /*!= somewhere close to 4 {
+		t.Fatalf("configured duration should have been around 4 seconds to start timer")
+	}
+
+
+	// if you override with time.Now{} it will be called in the algorithm itself in the balancer code
+
+	// 5 second context timeout sure may glitch in regards to instructions but good enough
+	// for bounding state
+
+
+	// override time.Now to time.Now + 5 seconds. on next config update
+
+	// either not start in future || start, this is super flaky...I guess there's
+	// sleeps in other tests though
+
+	// mocktime etc...how do we do 5 + 3 = 8.
+
+
+	// also need to test the scenario where it's configured with no-op config, it shouldn't be configured at all (pull configs to var?):
+	// UpdateClientConnState no-op
+	od.UpdateClientConnState(balancer.ClientConnState{
+		BalancerConfig: &LBConfig{
+			Interval: 10 * time.Second,
+		},
+	})
+
+	ctx, cancel = context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+	// try and receive from the durationCh, should error since
+	// no-op config so no timer should start
+	sCtx, cancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
+	defer cancel()
+	_, err = durationChan.Receive(sCtx)
+	if err == nil {
+		t.Fatal("No timer should have started.")
+	}
+}*/
 
 
 
@@ -1070,4 +1265,55 @@ func (s) TestEjectFailureRate(t *testing.T) {
 // Call a bunch of operations concurrently. Close() needs to come synchronsouly after though right?
 
 // Test child != nil and closing and not sending subconn updates after close (do this async)
-// perhaps test closing as well - niling child etc. what other behaviors? Stuff can't happen downstream...
+// perhaps test closing as well - niling child etc. what other behaviors? Verify Close() gets called on child. Stuff can't happen downstream...
+
+
+func (s) TestClose(t *testing.T) {
+	od, _ := setup(t)
+
+	od.UpdateClientConnState(balancer.ClientConnState{ // could pull this out to the setup() call as well, maybe a wrapper on what is currently there...
+		BalancerConfig: &LBConfig{
+			Interval:           10 * time.Second,
+			BaseEjectionTime:   30 * time.Second,
+			MaxEjectionTime:    300 * time.Second,
+			MaxEjectionPercent: 10,
+			SuccessRateEjection: &SuccessRateEjection{
+				StdevFactor:           1900,
+				EnforcementPercentage: 100,
+				MinimumHosts:          5,
+				RequestVolume:         100,
+			},
+			FailurePercentageEjection: &FailurePercentageEjection{
+				Threshold:             85,
+				EnforcementPercentage: 5,
+				MinimumHosts:          5,
+				RequestVolume:         50,
+			},
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	ciChild := od.child.(*testClusterImplBalancer)
+	if err := ciChild.waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+
+
+
+
+	od.Close()
+
+	// Verify child balancer closed.
+	if err := ciChild.waitForClose(ctx); err != nil {
+		t.Fatalf("Error waiting for Close() call on child balancer %v", err)
+	}
+
+	// SubConn updates shouldn't forward, does this matter that much...? you'd have to set up a system with it
+}
