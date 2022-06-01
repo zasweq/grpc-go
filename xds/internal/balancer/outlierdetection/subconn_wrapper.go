@@ -46,6 +46,7 @@ type subConnWrapper struct {
 // eject(): The wrapper will report a state update with the TRANSIENT_FAILURE
 // state, and will stop passing along updates from the underlying subchannel.
 func (scw *subConnWrapper) eject() {
+	print("eject called")
 	scw.scUpdateCh.Put(&ejectedUpdate{
 		scw: scw,
 		ejected: true,
@@ -58,6 +59,7 @@ func (scw *subConnWrapper) eject() {
 func (scw *subConnWrapper) uneject() {
 	// The wrapper will report a state update with the latest update from
 	// the underlying subchannel.
+	print("uneject called")
 	scw.scUpdateCh.Put(&ejectedUpdate{
 		scw: scw,
 		ejected: false,

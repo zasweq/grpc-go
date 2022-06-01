@@ -311,7 +311,7 @@ func (tb *testClusterImplBalancer) waitForSubConnUpdate(ctx context.Context, wan
 		return err
 	}
 	gotSCS := scs.(subConnWithState)
-	if !cmp.Equal(gotSCS, wantSCS, cmp.AllowUnexported(subConnWithState{})) {
+	if !cmp.Equal(gotSCS, wantSCS, cmp.AllowUnexported(subConnWithState{}, testutils.TestSubConn{}, subConnWrapper{}, object{}), cmpopts.IgnoreFields(subConnWrapper{}, "scUpdateCh")) {
 		return fmt.Errorf("received SubConnState: %+v, want %+v", gotSCS, wantSCS)
 	}
 	return nil
@@ -778,7 +778,7 @@ func (rrp *rrPicker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
 	return balancer.PickResult{SubConn: sc}, nil
 }
 
-
+// (this also tests uneject logic, and eject/uneject invariant of whether/what SubConnState to forward down)
 func (s) TestEjectSuccessRate(t *testing.T) {
 	/*defer func(af func(d time.Duration, f func()) *time.Timer) {
 		afterFunc = af
@@ -821,7 +821,7 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 			MaxEjectionTime:    300 * time.Second,
 			MaxEjectionPercent: 10, // will still allow one right? Should I test each of these knobs?
 			SuccessRateEjection: &SuccessRateEjection{
-				StdevFactor:           1900, // I don't know what you need to set this too to get it off the mean.
+				StdevFactor:           500, // I don't know what you need to set this too to get it off the mean.
 				EnforcementPercentage: 100,
 				MinimumHosts:          3,
 				RequestVolume:         3,
@@ -935,7 +935,7 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 		})
 
 		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{
-			sc: scw1.(*subConnWrapper).SubConn,
+			sc: scw1,
 			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -990,7 +990,7 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 		// stop being forwarded downward. (sc update hasn't been tested beforehand either)
 
 		// UpdateSubConnState that scw with CONNECTING
-		od.UpdateSubConnState(pi.SubConn, balancer.SubConnState{
+		od.UpdateSubConnState(pi.SubConn.(*subConnWrapper).SubConn, balancer.SubConnState{
 			ConnectivityState: connectivity.Connecting,
 		})
 
@@ -1037,8 +1037,178 @@ func (s) TestEjectSuccessRate(t *testing.T) {
 }
 
 func (s) TestEjectFailureRate(t *testing.T) {
+	od, tcc := setup(t)
+	defer od.Close()
 
+	// UpdateClientConnState with SuccessRateEjection set with knobs you want
+	od.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+				{
+					Addr: "address2",
+				},
+				{
+					Addr: "address3",
+				},
+			},
+		},
+		BalancerConfig: &LBConfig{
+			Interval:           1<<63 - 1, // so the interval will never run unless called manually in test.
+			BaseEjectionTime:   30 * time.Second,
+			MaxEjectionTime:    300 * time.Second,
+			MaxEjectionPercent: 10, // will still allow one right? Should I test each of these knobs?
+			FailurePercentageEjection: &FailurePercentageEjection{
+				Threshold: 50,
+				EnforcementPercentage: 100,
+				MinimumHosts:          3,
+				RequestVolume:         3,
+			},
+			ChildPolicy: &internalserviceconfig.BalancerConfig{
+				Name: tcibname,
+				Config: testClusterImplBalancerConfig{},
+			},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	// maybe read
+	if err := od.child.(*testClusterImplBalancer).waitForClientConnUpdate(ctx, balancer.ClientConnState{
+		ResolverState: resolver.State{
+			Addresses: []resolver.Address{
+				{
+					Addr: "address1",
+				},
+				{
+					Addr: "address2",
+				},
+				{
+					Addr: "address3",
+				},
+			},
+		},
+		BalancerConfig: testClusterImplBalancerConfig{},
+	}); err != nil {
+		t.Fatalf("Error waiting for Client Conn update: %v", err)
+	}
+
+	scw1, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address1",
+		},
+	}, balancer.NewSubConnOptions{})
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+	// Verify new subconn on tcc here? Not like UpdateClientConnState where it sends on channel so not required...but would be nice to have
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	scw2, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address2",
+		},
+	}, balancer.NewSubConnOptions{})
+	// Verify new subconn on tcc here?
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	scw3, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address3",
+		},
+	}, balancer.NewSubConnOptions{})
+	// Verify new subconn on tcc here?
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	od.UpdateState(balancer.State{
+		ConnectivityState: connectivity.Ready,
+		Picker: &rrPicker{
+			scs: []balancer.SubConn{scw1, scw2, scw3},
+		},
+	})
+
+	select {
+	case <-ctx.Done():
+		t.Fatalf("timeout while waiting for a UpdateState call on the ClientConn")
+	case picker := <-tcc.NewPickerCh:
+		// Same exact setup and validations outside of explicit UpdateSubConnState calls.
+
+		// for 0 - 15, set each upstream subchannel to have five successes each.
+		// This should cause none of the addresses to be ejected as none of them
+		// are below the failure percentage threshold.
+		for i := 0; i < 3; i++ {
+			pi, err := picker.Pick(balancer.PickInfo{})
+			if err != nil {
+				t.Fatalf("Picker.Pick should not have errored")
+			}
+			pi.Done(balancer.DoneInfo{}) // call this five times, or rr over all
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+		}
+
+		od.intervalTimerAlgorithm()
+
+		sCtx, cancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
+		defer cancel()
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
+			t.Fatalf("no SubConn update should have been sent (no SubConn got ejected)")
+		}
+
+		// for 0 - 15, set two upstream subchannels to have five successes each,
+		// the other one none, should get ejected
+		for i := 0; i < 2; i++ {
+			pi, err := picker.Pick(balancer.PickInfo{})
+			if err != nil {
+				t.Fatalf("Picker.Pick should not have errored")
+			}
+			pi.Done(balancer.DoneInfo{}) // call this five times, or rr over all
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+			pi.Done(balancer.DoneInfo{})
+		}
+		// have the other ones be 5 failures
+		pi, err := picker.Pick(balancer.PickInfo{})
+		if err != nil {
+			t.Fatalf("Picker.Pick should not have errored")
+		}
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")}) // call this five times, or rr over all
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+
+		// should eject address that always errored.
+		od.intervalTimerAlgorithm() // waits for it to return - runs uneject as well, needs to not uneject after the first pass
+
+		// verify UpdateSubConnState() got called with TRANSIENT_FAILURE for child in address that was ejected
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
+			sc: pi.SubConn,
+			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
+		}); err != nil {
+			t.Fatalf("Error waiting for Sub Conn update: %v", err)
+		}
+
+		// verify only one got ejected
+		sCtx, cancel = context.WithTimeout(context.Background(), defaultTestShortTimeout)
+		defer cancel()
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
+			t.Fatalf("Only one SubConn update should have been sent (only one SubConn got ejected)")
+		}
+	}
 }
+
+// need a cleanup at a certain point
 
 // test uneject, does this branch off and go past this ^^^ or seperate test?
 
@@ -1054,6 +1224,15 @@ func (s) TestEjectFailureRate(t *testing.T) {
 
 // Also need to test UpdateAddresses eject/uneject
 
+
+
+// fork goroutine and call operations spammy
+// it's hard to induce unless you do it multiple times
+// grpc package reconnects closing connections doing RPC's spamming RPC's
+// hoping it doesn't do RPC failures
+
+// first job is building container having test do multiple rounds
+// of different versions of bootstrap generator
 
 
 

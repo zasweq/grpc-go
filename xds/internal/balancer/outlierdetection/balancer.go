@@ -303,17 +303,21 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	// parts of codebase.
 	b.newMu.Lock()
 	defer b.newMu.Unlock()
+	print("UpdateSubConnState called")
 	scw, ok := b.scWrappers[sc]
 	if !ok {
 		// Return, shouldn't happen if passed up scw
 		// Because you wrap subconn always, clusterimpl i think only some
+		print("UpdateSubConnState returning")
 		return
 	}
 	if state.ConnectivityState == connectivity.Shutdown {
 		// Remove this SubConn from the map on Shutdown.
 		delete(b.scWrappers, scw.SubConn) // Just deletes from map doesn't touch underlying heap memory
 	}
-
+	print("UpdateSubConnState putting on UpdateChannel")
+	print("scw: ", scw)
+	print("state: ", state.ConnectivityState)
 	b.scUpdateCh.Put(&scUpdate{
 		scw: scw,
 		state: state,
@@ -404,7 +408,7 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	// race (be written to concurrently), why these specifically in the tree are the LoadPointer
 	ab := (*bucket)(atomic.LoadPointer(&obj.callCounter.activeBucket))
 
-	if info.Err != nil { // s/queue that aggregates stats for you, other locks aren't
+	if info.Err == nil { // s/queue that aggregates stats for you, other locks aren't
 		// Is there anything else that is required to make this a successful RPC?
 		// This access will require a read lock, so instead switch this whole thing to access it here
 		// (remember, scw.obj can be nil, need to add that check around this)
@@ -464,6 +468,7 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	// "If that address is currently ejected, that subchannel wrapper's eject
 	// method will be called." - A50
 	if !obj.latestEjectionTimestamp.IsZero() {
+		print("eject called in NewSubConn")
 		scw.eject()
 	}
 	return scw, nil
@@ -570,8 +575,10 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 
 			// 1c. Relay state with eject() recalculated
 			if obj.latestEjectionTimestamp.IsZero() {
+				print("eject called in updateAddresses")
 				scw.eject() // will send down correct SubConnState and set bool, eventually consistent event though race, write to beginning of queue and it will eventually happen...the right UpdateSubConnState update forwarded to child, last update will eventually send it
 			} else {
+				print("uneject called from updateAddresses")
 				scw.uneject() // will send down correct SubConnState and set bool - the one where it can race with the latest state from client conn vs. persisted state, but this race is ok
 			}
 			atomic.StorePointer(&scw.obj, unsafe.Pointer(obj))
@@ -690,7 +697,7 @@ func (b *outlierDetectionBalancer) intervalTimerAlgorithm() {
 		// ejection_timestamp + min(base_ejection_time (type: time.Time) *
 		// multiplier (type: int), max(base_ejection_time (type: time.Time),
 		// max_ejection_time (type: time.Time))), un-eject the address.
-		if now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) { // need to way to inject a desired bool here at a certain point in tests, mock time.Now to return a late time, mock time.After to always return true...
+		if !obj.latestEjectionTimestamp.IsZero() && now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) { // need to way to inject a desired bool here at a certain point in tests, mock time.Now to return a late time, mock time.After to always return true...
 			b.unejectAddress(addr)
 		}
 	}
@@ -701,17 +708,22 @@ func (b *outlierDetectionBalancer) run() {
 		select {
 		// try and break these two sync points
 		case update := <-b.scUpdateCh.Get():
+			print("reads from update channel")
 			b.scUpdateCh.Load()
 			switch u := update.(type) {
-			case scUpdate:
+			case *scUpdate:
+				print("hits case scUpdate")
 				// scw := u.scw (would this make it cleaner?)
 				u.scw.latestState = u.state
+				print("scw: ", u.scw)
+				print("state: ", u.state.ConnectivityState)
 				b.closeMu.Lock()
 				if !u.scw.ejected && b.child != nil {
 					b.child.UpdateSubConnState(u.scw, u.state) // can this call back and close, no close comes from higher level...unless UpdateSubConnState -> UpdateState -> Close()
 				}
 				b.closeMu.Unlock()
-			case ejectedUpdate:
+			case *ejectedUpdate:
+				print("hits case ejectedUpdate")
 				u.scw.ejected = u.ejected
 				var stateToUpdate balancer.SubConnState
 				if u.ejected {
@@ -876,6 +888,10 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 		//  iii. If the address's success rate is less than (mean - stdev *
 		//  (success_rate_ejection.stdev_factor / 1000))
 		successRate := float64(ccb.numSuccesses) / float64(ccb.requestVolume)
+		print("successRate: ", successRate)
+		print("mean: ", mean) // correct mean and stddev
+		print("standard deviation: ", stddev)
+		print("right side: ", mean - stddev * (float64(sre.StdevFactor) / 1000))
 		if successRate < (mean - stddev * (float64(sre.StdevFactor) / 1000) ) {
 			// then choose a random integer in [0, 100). If that number is less
 			// than success_rate_ejection.enforcement_percentage, eject that
@@ -950,6 +966,7 @@ func (b *outlierDetectionBalancer) ejectAddress(addr resolver.Address) {
 	obj.latestEjectionTimestamp = b.timerStartTime // this read is guaranteed to observe only the write when the timer fires because UpdateClientConnState() will be a synced event
 	obj.ejectionTimeMultiplier++
 	for _, sbw := range obj.sws {
+		print("eject called in ejectAddress")
 		sbw.eject()
 	}
 }
@@ -972,6 +989,7 @@ func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address) {
 	// list.
 	obj.latestEjectionTimestamp = time.Time{}
 	for _, sbw := range obj.sws {
+		print("uneject called in unejectAddress")
 		sbw.uneject()
 	}
 }
