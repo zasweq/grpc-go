@@ -506,6 +506,24 @@ func (b *outlierDetectionBalancer) addMapEntryIfNeeded(addr resolver.Address) *o
 	return obj
 }
 
+// appendIfPresent appends the scw to the address, if the address is present in
+// the Outlier Detection balancers address map. Returns nil if not present, and
+// the map entry if present.
+func (b *outlierDetectionBalancer) appendIfPresent(addr resolver.Address, scw *subConnWrapper) *object {
+	val, ok := b.odAddrs.Get(addr)
+	if !ok {
+		return nil
+	}
+	obj, ok := val.(*object)
+	if !ok {
+		// shouldn't happen, logical no-op
+		return nil
+	}
+	obj.sws = append(obj.sws, scw)
+	atomic.StorePointer(&scw.obj, unsafe.Pointer(obj))
+	return obj
+}
+
 // 2a. Remove Subchannel from Addresses map entry (if singular address changed).
 // 2b. Remove the map entry if only subchannel for that address.
 func (b *outlierDetectionBalancer) removeSubConnFromAddressesMapEntry(scw *subConnWrapper) {
@@ -516,10 +534,6 @@ func (b *outlierDetectionBalancer) removeSubConnFromAddressesMapEntry(scw *subCo
 	for i, sw := range obj.sws {
 		if scw == sw {
 			obj.sws = append(obj.sws[:i], obj.sws[i+1:]...)
-			if len(obj.sws) == 0 {
-				b.odAddrs.Delete(scw.addresses[0])
-				obj = nil
-			}
 			break
 		}
 	}
@@ -560,55 +574,36 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 			if sameAddrForMap(scw.addresses[0], addrs[0]) {
 				return
 			}
-
-
-
-			// 1a. Forward the update to the Client Conn. (handled earlier)
-
-			// 1b. Update (create/delete map entries) the map of addresses if applicable.
-			// There's a lot to this ^^^, draw out each step and what goes on in each step, check it for correctness and try to break
-
-			// Remove Subchannel from Addresses map entry
-			// Remove the map entry if only subchannel for that address
+			// 1. Remove Subchannel from Addresses map entry if present in Addresses map.
 			b.removeSubConnFromAddressesMapEntry(scw)
-			obj := b.addMapEntryIfNeeded(addrs[0])
-
-			// 1c. Relay state with eject() recalculated
-			if obj.latestEjectionTimestamp.IsZero() {
-				print("eject called in updateAddresses")
-				scw.eject() // will send down correct SubConnState and set bool, eventually consistent event though race, write to beginning of queue and it will eventually happen...the right UpdateSubConnState update forwarded to child, last update will eventually send it
+			// 2. Add Subchannel to Addresses map entry if new address present in map.
+			obj := b.appendIfPresent(addrs[0], scw)
+			// 3. Relay state with eject() recalculated (using the corresponding map entry to see if it's currently ejected).
+			if obj == nil { // uneject unconditionally because could have come from an ejected address
+				scw.eject()
 			} else {
-				print("uneject called from updateAddresses")
-				scw.uneject() // will send down correct SubConnState and set bool - the one where it can race with the latest state from client conn vs. persisted state, but this race is ok
+				if obj.latestEjectionTimestamp.IsZero() { // relay new updated subconn state
+					scw.uneject()
+				} else {
+					scw.eject()
+				}
 			}
-			atomic.StorePointer(&scw.obj, unsafe.Pointer(obj))
-			obj.sws = append(obj.sws, scw)
 		} else { // single address to multiple addresses
-			// 2a. Remove Subchannel from Addresses map entry.
-			// 2b. Remove the map entry if only subchannel for that address
+			// 1. Remove Subchannel from Addresses map entry if present in Addresses map.
 			b.removeSubConnFromAddressesMapEntry(scw)
-
-			// 2c. Clear the Subchannel wrapper's Call Counter entry - this might not be tied to an Address you want to count, as you potentially
-			// delete the whole map entry - wait, but only a single SubConn left this address list, are we sure we want to clear in this situation?
+			// 2. Clear the Subchannel wrapper's Call Counter entry.
 			obj := (*object)(atomic.LoadPointer(&scw.obj))
 			if obj != nil {
 				obj.callCounter.clear()
-				/*atomic.StorePointer(&obj.callCounter.activeBucket, unsafe.Pointer(&bucket{}))
-				obj.callCounter.inactiveBucket = &bucket{}*/
 			}
 		}
 	} else {
-		// Wait, but what if the multiple goes from 0 -> something
-		// This can be start with 0 addresses if it hits this else block...***document this, how 0 addresses are supported and len(0)
-		// I think this should be fine if it starts out with zero, correctly adds the singular address no harm done no difference
-		// from switching from multiple.
 		if len(addrs) == 1 { // multiple addresses to single address
-			// 3a. Add map entry for that Address if applicable (i.e. if not already there)
-			obj := b.addMapEntryIfNeeded(addrs[0])
-
-			// 3b. Add Subchannel to Addresses map entry.
-			atomic.StorePointer(&scw.obj /*protecting this memory and only this memory - 64? bit pointer to an arbitrary data type*/, unsafe.Pointer(obj))
-			obj.sws = append(obj.sws, scw) // ^^ because of this, this should be fine in regards to concurrency
+			// 1. Add Subchannel to Addresses map entry if new address present in map.
+			obj := b.appendIfPresent(addrs[0], scw)
+			if obj != nil /*exits early*/ && !obj.latestEjectionTimestamp.IsZero() {
+				scw.eject()
+			}
 		} // else is multiple to multiple - no op, continued to be ignored by outlier detection load balancer.
 	}
 
