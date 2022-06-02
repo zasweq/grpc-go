@@ -596,6 +596,8 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 			if obj != nil {
 				obj.callCounter.clear()
 			}
+			// 3. Uneject the Subchannel in case it was previously ejected.
+			scw.uneject()
 		}
 	} else {
 		if len(addrs) == 1 { // multiple addresses to single address

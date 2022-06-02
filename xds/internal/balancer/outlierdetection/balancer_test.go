@@ -434,6 +434,14 @@ func (s) TestUpdateState(t *testing.T) {
 	// Do UpdateAddresses first and then revisit ^^^
 }
 
+// Flow I want to test: single -> single (can add same here and check for no-op) changed
+// single -> multiple
+// multiple -> multiple no-op
+// multiple -> single
+
+// setup for the test: one address should be ejected, one shouldn't be can mess around with it that way
+
+
 func (s) TestUpdateAddresses(t *testing.T) {
 	// setup to what state?
 	od, tcc := setup(t)
@@ -445,6 +453,9 @@ func (s) TestUpdateAddresses(t *testing.T) {
 				{
 					Addr: "address1",
 				},
+				{
+					Addr: "address2",
+				},
 			},
 		},
 		BalancerConfig: &LBConfig{ // TODO: S/ variable
@@ -452,17 +463,11 @@ func (s) TestUpdateAddresses(t *testing.T) {
 			BaseEjectionTime:   30 * time.Second,
 			MaxEjectionTime:    300 * time.Second,
 			MaxEjectionPercent: 10,
-			SuccessRateEjection: &SuccessRateEjection{
-				StdevFactor:           1900,
+			FailurePercentageEjection: &FailurePercentageEjection{ // have this eject one but not the other
+				Threshold:             50,
 				EnforcementPercentage: 100,
-				MinimumHosts:          5,
-				RequestVolume:         100,
-			},
-			FailurePercentageEjection: &FailurePercentageEjection{
-				Threshold:             85,
-				EnforcementPercentage: 5,
-				MinimumHosts:          5,
-				RequestVolume:         50,
+				MinimumHosts:          2,
+				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
 				Name: tcibname,
@@ -479,6 +484,9 @@ func (s) TestUpdateAddresses(t *testing.T) {
 				{
 					Addr: "address1",
 				},
+				{
+					Addr: "address2",
+				},
 			},
 		},
 		BalancerConfig: testClusterImplBalancerConfig{},
@@ -489,7 +497,7 @@ func (s) TestUpdateAddresses(t *testing.T) {
 
 
 	// one created SubConn with a certain address, switch to another, also can test the knobs on address map?
-	scw, err := od.NewSubConn([]resolver.Address{
+	scw1, err := od.NewSubConn([]resolver.Address{
 		{
 			Addr: "address1",
 		},
@@ -506,14 +514,63 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	case <-tcc.NewSubConnCh:
 	}
 	// verify scw is actually a scw
-	_, ok := scw.(*subConnWrapper)
+	_, ok := scw1.(*subConnWrapper)
 	if !ok {
 		t.Fatalf("SubConn passed downward should have been a subConnWrapper")
 	}
 
-	// newSubConn call should wrap it - make sure it a. pings Client Conn
-	// and b. sends down a scw to child
-	od.UpdateAddresses(scw /*I think even though not typecast, still technically a type that implements, so just pass the ref to an interface*/, []resolver.Address{
+	scw2, err := od.NewSubConn([]resolver.Address{
+		{
+			Addr: "address2",
+		},
+	}, balancer.NewSubConnOptions{})
+	if err != nil {
+		t.Fatalf("error in od.NewSubConn call: %v", err)
+	}
+
+	od.UpdateState(balancer.State{
+		ConnectivityState: connectivity.Ready,
+		Picker: &rrPicker{
+			scs: []balancer.SubConn{scw1, scw2},
+		},
+	})
+
+	// make it so that one address is ejected and the other isn't (move eject/uneject upward)
+
+	select {
+	case <-ctx.Done():
+		t.Fatal("timeout while waiting for a UpdateState call on the ClientConn")
+	case picker := <-tcc.NewPickerCh:
+		pi, err := picker.Pick(balancer.PickInfo{})
+		if err != nil {
+			t.Fatalf("Picker.Pick should not have errored")
+		}
+		pi.Done(balancer.DoneInfo{})
+		pi.Done(balancer.DoneInfo{})
+		pi.Done(balancer.DoneInfo{})
+		pi.Done(balancer.DoneInfo{})
+		pi.Done(balancer.DoneInfo{})
+		// second address ejected
+		pi, err = picker.Pick(balancer.PickInfo{})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		od.intervalTimerAlgorithm()
+		// verify UpdateSubConnState() got called with TRANSIENT_FAILURE for child in address that was ejected
+		if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
+			sc: pi.SubConn,
+			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
+		}); err != nil {
+			t.Fatalf("Error waiting for Sub Conn update: %v", err)
+		}
+	}
+
+
+	// Flow I want to test:
+	// single -> single (can add same here and check for no-op) changed (make single -> single make it ejected)
+	od.UpdateAddresses(scw1, []resolver.Address{
 		{
 			Addr: "address2",
 		},
@@ -522,9 +579,72 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	// verify that update addresses gets forwarded to ClientConn
 	select {
 	case <-ctx.Done():
-		t.Fatal("timeout waiting for UpdateAddresses to be called on test Client Conn")
+		t.Fatal("timeout while waiting for a UpdateState call on the ClientConn")
 	case <-tcc.UpdateAddressesAddrsCh:
 	}
+	// verify scw1 got ejected (UpdateSubConnState called with TRANSIENT FAILURE)
+	if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
+		sc: scw1,
+		state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
+	}); err != nil {
+		t.Fatalf("Error waiting for Sub Conn update: %v", err)
+	}
+
+
+	// single -> multiple (should uneject though right...talk about why for each end condition)
+	od.UpdateAddresses(scw1, []resolver.Address{
+		{
+			Addr: "address1",
+		},
+		{
+			Addr: "address2",
+		},
+	})
+	// verify scw2 got unejected (UpdateSubConnState called with recent state)
+	if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{
+		sc: scw1,
+		state: balancer.SubConnState{ConnectivityState: connectivity.Idle}, // If you uneject a SubConn that hasn't received a UpdateSubConnState, this is recent state. This seems fine or is this wrong?
+	}); err != nil {
+		t.Fatalf("Error waiting for Sub Conn update: %v", err)
+	}
+
+	// multiple -> multiple no-op
+	od.UpdateAddresses(scw1, []resolver.Address{
+		{
+			Addr: "address2",
+		},
+		{
+			Addr: "address3",
+		},
+	})
+
+	// No downstream effects
+	sCtx, cancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
+	defer cancel()
+	if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
+		t.Fatalf("no SubConn update should have been sent (no SubConn got ejected/unejected)")
+	}
+
+
+	// multiple -> single (move to an ejected address, eject it)
+	od.UpdateAddresses(scw1, []resolver.Address{
+		{
+			Addr: "address2",
+		},
+	})
+	// verify scw1 got ejected (UpdateSubConnState called with TRANSIENT FAILURE)
+	if err := od.child.(*testClusterImplBalancer).waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
+		sc: scw1,
+		state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
+	}); err != nil {
+		t.Fatalf("Error waiting for Sub Conn update: %v", err)
+	}
+
+
+
+
+	// newSubConn call should wrap it - make sure it a. pings Client Conn
+	// and b. sends down a scw to child
 
 	// What is the expected thing to happen? Delete map entry and create new one: <- how to verify this...
 	// *** do this verification after it passes lol and no nil pointer exceptions
@@ -1208,7 +1328,7 @@ func (s) TestEjectFailureRate(t *testing.T) {
 
 	select {
 	case <-ctx.Done():
-		t.Fatalf("timeout while waiting for a UpdateState call on the ClientConn")
+		t.Fatal("timeout while waiting for a UpdateState call on the ClientConn")
 	case picker := <-tcc.NewPickerCh:
 		// Same exact setup and validations outside of explicit UpdateSubConnState calls.
 
@@ -1339,7 +1459,7 @@ func (s) TestEjectFailureRate(t *testing.T) {
 // TestDurationOfInterval tests the configured interval timer.
 // The first interval timer should configure the timer with whatever
 // is directly on the config. The second interval should configure it with whatever diff
-/*func (s) TestDurationOfInterval(t *testing.T) {
+/*func (s) TestDurationOfInterval(t *testing.T) { (do we even want this?)
 	// read time.Now here or somewhere else?
 
 	// you don't need to pass control of timer to this testing goroutine, as you
