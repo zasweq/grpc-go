@@ -356,6 +356,7 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 		return
 	}
 	// Fallback for children handled in clusterimpl balancer - do we ever validate that it's a clusterimpl child for the config?
+	// Removing SubConns is defined in API and also in graceful switch balancer.
 }
 
 
@@ -555,8 +556,7 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 		if len(addrs) == 1 { // single address to single address
 			// If everything we care for in regards to address specificity for a
 			// list of SubConn's (Addr, ServerName, Attributes) is the same,
-			// then there is nothing to do (or do we still need to forward
-			// update).
+			// then there is nothing to do past this point.
 			if sameAddrForMap(scw.addresses[0], addrs[0]) {
 				return
 			}
@@ -623,20 +623,6 @@ func (b *outlierDetectionBalancer) Target() string {
 	return b.cc.Target()
 }
 
-func max(x, y int64) int64 {
-	if x < y {
-		return y
-	}
-	return x
-}
-
-func min(x, y int64) int64 {
-	if x < y {
-		return x
-	}
-	return y
-}
-
 // objects returns a list of objects corresponding to every address in the address map.
 func (b *outlierDetectionBalancer) objects() []*object {
 	var objs []*object
@@ -653,6 +639,20 @@ func (b *outlierDetectionBalancer) objects() []*object {
 		objs = append(objs, obj)
 	}
 	return objs
+}
+
+func max(x, y int64) int64 {
+	if x < y {
+		return y
+	}
+	return x
+}
+
+func min(x, y int64) int64 {
+	if x < y {
+		return x
+	}
+	return y
 }
 
 func (b *outlierDetectionBalancer) intervalTimerAlgorithm() {
@@ -788,7 +788,7 @@ func (b *outlierDetectionBalancer) run() {
 			}
 		// reset or newtimer should not be done concurrent to this receive
 
-		// this starts nil, gets written to in update client conn state....
+		// this starts nil, gets written to in update client conn state
 		case <-b.closed.Done():
 			return
 		}
