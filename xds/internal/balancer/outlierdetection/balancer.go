@@ -41,7 +41,7 @@ import (
 // Globals to stub out in tests.
 var (
 	afterFunc = time.AfterFunc
-	now = time.Now
+	now       = time.Now
 )
 
 // Name is the name of the outlier detection balancer.
@@ -56,13 +56,13 @@ type bb struct{}
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
 	am := resolver.NewAddressMap()
 	b := &outlierDetectionBalancer{
-		cc: cc,
-		bOpts: bOpts,
+		cc:     cc,
+		bOpts:  bOpts,
 		closed: grpcsync.NewEvent(),
 
-		odAddrs: am,
-		scWrappers: make(map[balancer.SubConn]*subConnWrapper),
-		scUpdateCh: buffer.NewUnbounded(),
+		odAddrs:        am,
+		scWrappers:     make(map[balancer.SubConn]*subConnWrapper),
+		scUpdateCh:     buffer.NewUnbounded(),
 		pickerUpdateCh: buffer.NewUnbounded(),
 	}
 	go b.run()
@@ -125,28 +125,26 @@ func (bb) Name() string {
 	return Name
 }
 
-
 // scUpdate wraps a subConn update to be sent to the child balancer.
 type scUpdate struct {
-	scw *subConnWrapper
+	scw   *subConnWrapper
 	state balancer.SubConnState
 }
 
 type ejectedUpdate struct {
-	scw *subConnWrapper
+	scw     *subConnWrapper
 	ejected bool // true for ejected, false for unejected
 }
 
 type outlierDetectionBalancer struct {
 	numAddrsEjected int // For fast calculations of percentage of addrs ejected
 
-	childState balancer.State
+	childState       balancer.State
 	recentPickerNoop bool
 
 	closed *grpcsync.Event
-	cc balancer.ClientConn
-	bOpts balancer.BuildOptions
-
+	cc     balancer.ClientConn
+	bOpts  balancer.BuildOptions
 
 	// closeMu guards against run() reading a subconn update, reading that the child is not nil,
 	// and then a Close() call comes in, clears the balancer, and then run() continues to try
@@ -166,7 +164,6 @@ type outlierDetectionBalancer struct {
 	// closeMu...canUpdateSubConnState cause close? If so move move niling to run(), and protect other
 	// reads with mu
 
-
 	// mu guards access to a lot of the core LB Policy State. It also prevents intersplicing certain operations.
 	// ex 1: interval timer goes off, outlier detection algorithm starts running based on knobs in odCfg.
 	// in the middle of running the algorithm, a ClientConn update comes in and writes to odCfg.
@@ -183,7 +180,7 @@ type outlierDetectionBalancer struct {
 
 	intervalTimer *time.Timer
 
-	scUpdateCh *buffer.Unbounded
+	scUpdateCh     *buffer.Unbounded
 	pickerUpdateCh *buffer.Unbounded
 }
 
@@ -271,7 +268,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 
 	// then pass the address list along to the child policy.
 	return b.child.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState: s.ResolverState,
+		ResolverState:  s.ResolverState,
 		BalancerConfig: b.odCfg.ChildPolicy.Config,
 	})
 }
@@ -320,7 +317,7 @@ func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state
 	print("scw: ", scw)
 	print("state: ", state.ConnectivityState)
 	b.scUpdateCh.Put(&scUpdate{
-		scw: scw,
+		scw:   scw,
 		state: state,
 	})
 
@@ -354,14 +351,13 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 	// Removing SubConns is defined in API and also in graceful switch balancer.
 }
 
-
 // The outlier_detection LB policy will provide a picker that delegates to
 // the child policy's picker, and when the request finishes, increment the
 // corresponding counter in the map entry referenced by the subchannel
 // wrapper that was picked.
 type wrappedPicker struct {
 	childPicker balancer.Picker
-	noopPicker bool
+	noopPicker  bool
 }
 
 func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
@@ -378,9 +374,17 @@ func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 			pr.Done(di)
 		}
 	}
+	// Shouldn't happen, defensive programming.
+	scw, ok := pr.SubConn.(*subConnWrapper)
+	if !ok {
+		return balancer.PickResult{
+			SubConn: pr.SubConn,
+			Done:    done,
+		}, nil
+	}
 	return balancer.PickResult{
-		SubConn: pr.SubConn,
-		Done: done,
+		SubConn: scw.SubConn,
+		Done:    done,
 	}, nil
 }
 
@@ -419,7 +423,6 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	atomic.AddInt64(&ab.requestVolume, 1)
 }
 
-
 func (b *outlierDetectionBalancer) UpdateState(s balancer.State) {
 	b.pickerUpdateCh.Put(s)
 
@@ -433,8 +436,8 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 		return nil, err
 	}
 	scw := &subConnWrapper{
-		SubConn: sc,
-		addresses: addrs,
+		SubConn:    sc,
+		addresses:  addrs,
 		scUpdateCh: b.scUpdateCh,
 	}
 	b.mu.Lock()
@@ -661,7 +664,7 @@ func (b *outlierDetectionBalancer) intervalTimerAlgorithm() {
 		// ejection_timestamp + min(base_ejection_time (type: time.Time) *
 		// multiplier (type: int), max(base_ejection_time (type: time.Time),
 		// max_ejection_time (type: time.Time))), un-eject the address.
-		if !obj.latestEjectionTimestamp.IsZero() && now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds() * obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) { // need to way to inject a desired bool here at a certain point in tests, mock time.Now to return a late time, mock time.After to always return true...
+		if !obj.latestEjectionTimestamp.IsZero() && now().After(obj.latestEjectionTimestamp.Add(time.Duration(min(b.odCfg.BaseEjectionTime.Nanoseconds()*obj.ejectionTimeMultiplier, max(b.odCfg.BaseEjectionTime.Nanoseconds(), b.odCfg.MaxEjectionTime.Nanoseconds()))))) { // need to way to inject a desired bool here at a certain point in tests, mock time.Now to return a late time, mock time.After to always return true...
 			b.unejectAddress(addr)
 		}
 	}
@@ -779,7 +782,7 @@ func (b *outlierDetectionBalancer) meanAndStdDevOfSuccessesAtLeastRequestVolume(
 	for _, obj := range b.objects() {
 		// "of at least success_rate_ejection.request_volume"
 		if uint32(obj.callCounter.inactiveBucket.requestVolume) >= b.odCfg.SuccessRateEjection.RequestVolume {
-			totalFractionOfSuccessfulRequests += float64(obj.callCounter.inactiveBucket.numSuccesses)/float64(obj.callCounter.inactiveBucket.requestVolume)
+			totalFractionOfSuccessfulRequests += float64(obj.callCounter.inactiveBucket.numSuccesses) / float64(obj.callCounter.inactiveBucket.requestVolume)
 		}
 	}
 	mean = totalFractionOfSuccessfulRequests / float64(b.odAddrs.Len())
@@ -821,7 +824,7 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 		sre := b.odCfg.SuccessRateEjection
 		// i. If the percentage of ejected addresses is greater than
 		// max_ejection_percent, stop.
-		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
+		if float64(b.numAddrsEjected)/float64(b.odAddrs.Len())*100 > float64(b.odCfg.MaxEjectionPercent) {
 			return
 		}
 
@@ -837,8 +840,8 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 		print("successRate: ", successRate)
 		print("mean: ", mean) // correct mean and stddev
 		print("standard deviation: ", stddev)
-		print("right side: ", mean - stddev * (float64(sre.StdevFactor) / 1000))
-		if successRate < (mean - stddev * (float64(sre.StdevFactor) / 1000) ) {
+		print("right side: ", mean-stddev*(float64(sre.StdevFactor)/1000))
+		if successRate < (mean - stddev*(float64(sre.StdevFactor)/1000)) {
 			// then choose a random integer in [0, 100). If that number is less
 			// than success_rate_ejection.enforcement_percentage, eject that
 			// address.
@@ -870,7 +873,7 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 		fpe := b.odCfg.FailurePercentageEjection
 		// i. If the percentage of ejected addresses is greater than
 		// max_ejection_percent, stop.
-		if float64(b.numAddrsEjected) / float64(b.odAddrs.Len()) * 100 > float64(b.odCfg.MaxEjectionPercent) {
+		if float64(b.numAddrsEjected)/float64(b.odAddrs.Len())*100 > float64(b.odCfg.MaxEjectionPercent) {
 			return
 		}
 		// ii. If the address's total request volume is less than
@@ -958,6 +961,6 @@ type object struct {
 func newObject() *object {
 	return &object{
 		callCounter: newCallCounter(),
-		sws: make([]*subConnWrapper, 0),
+		sws:         make([]*subConnWrapper, 0),
 	}
 }

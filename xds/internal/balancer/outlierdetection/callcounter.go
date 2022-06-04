@@ -23,14 +23,14 @@ import (
 )
 
 type bucket struct {
-	numSuccesses int64 // "The active bucket is updated each time a call finishes" - atomically read/written
-	numFailures int64
+	numSuccesses  int64 // "The active bucket is updated each time a call finishes" - atomically read/written
+	numFailures   int64
 	requestVolume int64 // numSuccesses + numFailures, needed because this number will be used in interval timer algorithm
 }
 
 func newCallCounter() *callCounter {
 	return &callCounter{
-		activeBucket: unsafe.Pointer(&bucket{}),
+		activeBucket:   unsafe.Pointer(&bucket{}),
 		inactiveBucket: &bucket{},
 	}
 }
@@ -41,7 +41,7 @@ type callCounter struct {
 
 	// activeBucket updates every time a call finishes (from picker passed to Client Conn), so protect .
 	// unsafe.Pointer so picker does not have to grab a mutex per RPC.
-	activeBucket unsafe.Pointer // *bucket updates every time a rpc finishes (from picker passed to Client Conn), protect with atomics which is faster than mutexes for RPC's critical path.
+	activeBucket   unsafe.Pointer // *bucket updates every time a rpc finishes (from picker passed to Client Conn), protect with atomics which is faster than mutexes for RPC's critical path.
 	inactiveBucket *bucket
 	// active/inactiveBucket get swapped every interval (timer going off). this is two things writing to it, and a race condition, need to sync. "Used by picker" in design docs and cluster impl balancer scWrapper field.
 	// solution: fix race by constructing new heap memory for inactive bucket.
@@ -68,8 +68,8 @@ func (cc *callCounter) swap() {
 	// but I think this is cleaner in regards to dealing with picker race
 	// condition.
 	cc.inactiveBucket = &bucket{
-		numSuccesses: atomic.LoadInt64(&ab.numSuccesses),
-		numFailures: atomic.LoadInt64(&ab.numFailures),
+		numSuccesses:  atomic.LoadInt64(&ab.numSuccesses),
+		numFailures:   atomic.LoadInt64(&ab.numFailures),
 		requestVolume: atomic.LoadInt64(&ab.requestVolume),
 	}
 	atomic.StorePointer(&cc.activeBucket, unsafe.Pointer(&bucket{}))

@@ -35,7 +35,7 @@ type subConnWrapper struct {
 	// These two pieces of data will reach eventual consistency due to sync in
 	// run(), and child will always have the correctly updated SubConnState.
 	latestState balancer.SubConnState
-	ejected bool
+	ejected     bool
 
 	scUpdateCh *buffer.Unbounded
 
@@ -48,7 +48,7 @@ type subConnWrapper struct {
 func (scw *subConnWrapper) eject() {
 	print("eject called")
 	scw.scUpdateCh.Put(&ejectedUpdate{
-		scw: scw,
+		scw:     scw,
 		ejected: true,
 	})
 }
@@ -61,7 +61,7 @@ func (scw *subConnWrapper) uneject() {
 	// the underlying subchannel.
 	print("uneject called")
 	scw.scUpdateCh.Put(&ejectedUpdate{
-		scw: scw,
+		scw:     scw,
 		ejected: false,
 	})
 }

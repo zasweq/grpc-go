@@ -41,7 +41,7 @@ import (
 )
 
 var (
-	defaultTestTimeout = 5 * time.Second
+	defaultTestTimeout      = 5 * time.Second
 	defaultTestShortTimeout = 10 * time.Millisecond
 )
 
@@ -201,7 +201,6 @@ func (lbc *LBConfig) Equal(lbc2 *LBConfig) bool {
 	return cmp.Equal(lbc.ChildPolicy, lbc2.ChildPolicy)
 }
 
-
 func setup(t *testing.T) (*outlierDetectionBalancer, *testutils.TestClientConn) {
 	t.Helper()
 	builder := balancer.Get(Name)
@@ -212,7 +211,6 @@ func setup(t *testing.T) (*outlierDetectionBalancer, *testutils.TestClientConn) 
 	odB := builder.Build(tcc, balancer.BuildOptions{})
 	return odB.(*outlierDetectionBalancer), tcc
 }
-
 
 func init() {
 	balancer.Register(tcibBuilder{})
@@ -226,12 +224,12 @@ type tcibBuilder struct{}
 
 func (tcibBuilder) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
 	return &testClusterImplBalancer{
-		ccsCh: testutils.NewChannel(),
-		scStateCh: testutils.NewChannel(),
+		ccsCh:         testutils.NewChannel(),
+		scStateCh:     testutils.NewChannel(),
 		resolverErrCh: testutils.NewChannel(),
-		closeCh: testutils.NewChannel(),
-		exitIdleCh: testutils.NewChannel(),
-		cc: cc,
+		closeCh:       testutils.NewChannel(),
+		exitIdleCh:    testutils.NewChannel(),
+		cc:            cc,
 	}
 }
 
@@ -317,7 +315,6 @@ func (tb *testClusterImplBalancer) waitForClose(ctx context.Context) error {
 	return nil
 }
 
-
 // TestUpdateClientConnState invokes the UpdateClientConnState method on the
 // odBalancer with different inputs and verifies that the child balancer is built
 // and updated properly.
@@ -344,7 +341,7 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -386,14 +383,14 @@ func (s) TestUpdateState(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
 	})
 	od.UpdateState(balancer.State{
 		ConnectivityState: connectivity.Ready,
-		Picker: &testutils.TestConstPicker{},
+		Picker:            &testutils.TestConstPicker{},
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -445,7 +442,7 @@ func (s) TestClose(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -497,7 +494,7 @@ func (s) TestUpdateAddresses(t *testing.T) {
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -583,13 +580,12 @@ func (s) TestUpdateAddresses(t *testing.T) {
 		od.intervalTimerAlgorithm()
 		// verify UpdateSubConnState() got called with TRANSIENT_FAILURE for child in address that was ejected
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
-			sc: pi.SubConn,
+			sc:    pi.SubConn,
 			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
 		}
 	}
-
 
 	// Flow I want to test:
 	// single -> single (can add same here and check for no-op) changed (make single -> single make it ejected)
@@ -607,12 +603,11 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	}
 	// verify scw1 got ejected (UpdateSubConnState called with TRANSIENT FAILURE)
 	if err := child.waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
-		sc: scw1,
+		sc:    scw1,
 		state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
 	}); err != nil {
 		t.Fatalf("Error waiting for Sub Conn update: %v", err)
 	}
-
 
 	// single -> multiple (should uneject though right...talk about why for each end condition)
 	od.UpdateAddresses(scw1, []resolver.Address{
@@ -625,7 +620,7 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	})
 	// verify scw2 got unejected (UpdateSubConnState called with recent state)
 	if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-		sc: scw1,
+		sc:    scw1,
 		state: balancer.SubConnState{ConnectivityState: connectivity.Idle}, // If you uneject a SubConn that hasn't received a UpdateSubConnState, this is recent state. This seems fine or is this wrong?
 	}); err != nil {
 		t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -657,15 +652,12 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	})
 	// verify scw1 got ejected (UpdateSubConnState called with TRANSIENT FAILURE)
 	if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-		sc: scw1,
+		sc:    scw1,
 		state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
 	}); err != nil {
 		t.Fatalf("Error waiting for Sub Conn update: %v", err)
 	}
 }
-
-
-
 
 // Three important pieces of functionality run() synchronizes in regards to UpdateState calls towards grpc:
 
@@ -674,7 +666,6 @@ func (s) TestUpdateAddresses(t *testing.T) {
 //       * This will always forward up with most recent noopCfg bit
 // 3. Keeping track of the most recent no-op config bit (determined by UpdateClientConnState())
 //       * Will only forward up if no-op config bit changed and picker was already created
-
 
 // TestPicker tests the Picker updates sent upward to grpc from the Outlier
 // Detection Balancer. Two things can trigger a picker update, an
@@ -711,7 +702,7 @@ func (s) TestPicker(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -786,8 +777,8 @@ func (s) TestPicker(t *testing.T) {
 			t.Fatal("map value isn't obj type")
 		}
 		bucketWant := &bucket{
-			numSuccesses: 1,
-			numFailures: 1,
+			numSuccesses:  1,
+			numFailures:   1,
 			requestVolume: 2,
 		}
 		if diff := cmp.Diff((*bucket)(obj.callCounter.activeBucket), bucketWant); diff != "" { // no need for atomic read because not concurrent with Done() call from picker
@@ -808,7 +799,7 @@ func (s) TestPicker(t *testing.T) {
 		BalancerConfig: &LBConfig{
 			Interval: 1<<63 - 1,
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -838,7 +829,6 @@ func (s) TestPicker(t *testing.T) {
 			t.Fatalf("ClientConn received connectivity state %v, want %v", state, connectivity.Ready)
 		}
 	}
-
 
 	select {
 	case <-ctx.Done():
@@ -979,7 +969,7 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -1081,7 +1071,7 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		})
 
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc: scw1,
+			sc:    scw1,
 			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -1117,7 +1107,7 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		// should be ejected, meaning a TRANSIENT_FAILURE connectivity state
 		// gets reported to the child.
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc: pi.SubConn, // Same SubConn present in address that had failures, since same ref to pi.Done(error)
+			sc:    pi.SubConn,                                                              // Same SubConn present in address that had failures, since same ref to pi.Done(error)
 			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -1141,7 +1131,7 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		}
 
 		// Override now to cause the interval timer algorithm to always uneject a SubConn.
-		defer func (n func() time.Time) {
+		defer func(n func() time.Time) {
 			now = n
 		}(now)
 
@@ -1153,7 +1143,7 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		// unejected SubConn should report latest persisted state - which is
 		// connecting from earlier.
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc: pi.SubConn,
+			sc:    pi.SubConn,
 			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -1190,13 +1180,13 @@ func (s) TestEjectFailureRate(t *testing.T) {
 			MaxEjectionTime:    300 * time.Second,
 			MaxEjectionPercent: 10,
 			FailurePercentageEjection: &FailurePercentageEjection{
-				Threshold: 50,
+				Threshold:             50,
 				EnforcementPercentage: 100,
 				MinimumHosts:          3,
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -1321,7 +1311,7 @@ func (s) TestEjectFailureRate(t *testing.T) {
 		// verify UpdateSubConnState() got called with TRANSIENT_FAILURE for
 		// child in address that was ejected.
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc: pi.SubConn,
+			sc:    pi.SubConn,
 			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -1354,13 +1344,12 @@ func (s) TestDurationOfInterval(t *testing.T) {
 		return time.NewTimer(1<<63 - 1)
 	}
 
-
 	od, _ := setup(t)
 	defer od.Close()
 
 	od.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: &LBConfig{
-			Interval: 8 * time.Second,
+			Interval:           8 * time.Second,
 			BaseEjectionTime:   30 * time.Second,
 			MaxEjectionTime:    300 * time.Second,
 			MaxEjectionPercent: 10,
@@ -1377,7 +1366,7 @@ func (s) TestDurationOfInterval(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -1401,7 +1390,7 @@ func (s) TestDurationOfInterval(t *testing.T) {
 		t.Fatalf("configured duration should have been 8 seconds to start timer")
 	}
 
-	defer func (n func() time.Time) {
+	defer func(n func() time.Time) {
 		now = n
 	}(now)
 	now = func() time.Time {
@@ -1413,7 +1402,7 @@ func (s) TestDurationOfInterval(t *testing.T) {
 	// interval timer of ~4 seconds.
 	od.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: &LBConfig{
-			Interval: 9 * time.Second,
+			Interval:           9 * time.Second,
 			BaseEjectionTime:   30 * time.Second,
 			MaxEjectionTime:    300 * time.Second,
 			MaxEjectionPercent: 10,
@@ -1430,7 +1419,7 @@ func (s) TestDurationOfInterval(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -1458,7 +1447,7 @@ func (s) TestDurationOfInterval(t *testing.T) {
 		BalancerConfig: &LBConfig{
 			Interval: 10 * time.Second,
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -1515,13 +1504,13 @@ func (s) TestConcurrentPickerCountsWithIntervalTimer(t *testing.T) {
 				RequestVolume:         3,
 			},
 			FailurePercentageEjection: &FailurePercentageEjection{
-				Threshold: 50,
+				Threshold:             50,
 				EnforcementPercentage: 100,
 				MinimumHosts:          3,
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},
@@ -1593,7 +1582,6 @@ func (s) TestConcurrentPickerCountsWithIntervalTimer(t *testing.T) {
 	case picker = <-tcc.NewPickerCh:
 	}
 
-
 	// Spawn a goroutine that constantly picks and invokes the Done callback counting for successful
 	// and failing RPC's.
 	finished := make(chan struct{})
@@ -1617,14 +1605,11 @@ func (s) TestConcurrentPickerCountsWithIntervalTimer(t *testing.T) {
 		}
 	}()
 
-	// You'll also need cleanup for any invariants of the algorithm...like ejecting and putting shit on channels
+	// You'll also need cleanup for any invariants of the algorithm...like ejecting and putting stuff on channels
 	// you'll see this come up if it actually breaks.
-
 
 	od.intervalTimerAlgorithm() // two swaps
 	od.intervalTimerAlgorithm()
-
-
 
 	close(finished) // Don't spawn a goroutine you can't exit.
 }
@@ -1664,13 +1649,13 @@ func (s) TestConcurrentOperations(t *testing.T) {
 				RequestVolume:         3,
 			},
 			FailurePercentageEjection: &FailurePercentageEjection{
-				Threshold: 50,
+				Threshold:             50,
 				EnforcementPercentage: 100,
 				MinimumHosts:          3,
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: verifyBalancerName,
+				Name:   verifyBalancerName,
 				Config: verifyBalancerConfig{},
 			},
 		},
@@ -1754,7 +1739,6 @@ func (s) TestConcurrentOperations(t *testing.T) {
 		}
 	}()
 
-
 	// call Outlier Detection's balancer.ClientConn operations asynchrously.
 	// balancer.ClientConn operations have no guarantee from the API to be
 	// called synchronously.
@@ -1791,7 +1775,6 @@ func (s) TestConcurrentOperations(t *testing.T) {
 		})
 	}()
 
-
 	// Call balancer.Balancers synchronously in this goroutine, upholding the
 	// balancer.Balancer API guarantee.
 	od.UpdateClientConnState(balancer.ClientConnState{ // This will delete addresses and flip to no op
@@ -1805,7 +1788,7 @@ func (s) TestConcurrentOperations(t *testing.T) {
 		BalancerConfig: &LBConfig{
 			Interval: 1<<63 - 1,
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name: tcibname,
+				Name:   tcibname,
 				Config: testClusterImplBalancerConfig{},
 			},
 		},

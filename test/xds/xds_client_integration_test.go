@@ -21,6 +21,7 @@ package xds_test
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/internal/envconfig"
 	"net"
 	"strconv"
 	"testing"
@@ -74,6 +75,53 @@ func startTestService(t *testing.T, server *stubserver.StubServer) (uint32, func
 }
 
 func (s) TestClientSideXDS(t *testing.T) {
+	managementServer, nodeID, _, resolver, cleanup1 := e2e.SetupManagementServer(t)
+	defer cleanup1()
+
+	port, cleanup2 := startTestService(t, nil)
+	defer cleanup2()
+
+	const serviceName = "my-service-client-side-xds"
+	resources := e2e.DefaultClientResources(e2e.ResourceParams{
+		DialTarget: serviceName,
+		NodeID:     nodeID,
+		Host:       "localhost",
+		Port:       port,
+		SecLevel:   e2e.SecurityLevelNone,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if err := managementServer.Update(ctx, resources); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a ClientConn and make a successful RPC.
+	cc, err := grpc.Dial(fmt.Sprintf("xds:///%s", serviceName), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(resolver))
+	if err != nil {
+		t.Fatalf("failed to dial local test server: %v", err)
+	}
+	defer cc.Close()
+
+	client := testgrpc.NewTestServiceClient(cc)
+	if _, err := client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil {
+		t.Fatalf("rpc EmptyCall() failed: %v", err)
+	}
+}
+
+// Hard to test system level, just test with the no-op config the client will spit out by default
+// Make sure you can see logs.
+func (s) TestOutlierDetection(t *testing.T) {
+	oldOD := envconfig.XDSOutlierDetection
+	envconfig.XDSOutlierDetection = true
+	// register for testing...
+	defer func() {
+		envconfig.XDSOutlierDetection = oldOD
+		// unregister for testing...
+	}()
+
+	// tlogger.go:111: ERROR picker_wrapper.go:147 [core] subconn returned from pick is type *outlierdetection.subConnWrapper, not *acBalancerWrapper  (t=+8.64611ms)
+	// xds_client_integration_test.go:151: rpc EmptyCall() failed: rpc error: code = DeadlineExceeded desc = context deadline exceeded
+
 	managementServer, nodeID, _, resolver, cleanup1 := e2e.SetupManagementServer(t)
 	defer cleanup1()
 
