@@ -580,7 +580,7 @@ func (s) TestUpdateAddresses(t *testing.T) {
 		od.intervalTimerAlgorithm()
 		// verify UpdateSubConnState() got called with TRANSIENT_FAILURE for child in address that was ejected
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{ // read child into local var?
-			sc:    pi.SubConn,
+			sc:    scw2,
 			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -1107,7 +1107,7 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		// should be ejected, meaning a TRANSIENT_FAILURE connectivity state
 		// gets reported to the child.
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc:    pi.SubConn,                                                              // Same SubConn present in address that had failures, since same ref to pi.Done(error)
+			sc:    scw3,                                                              // Same SubConn present in address that had failures, since same ref to pi.Done(error)
 			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -1123,7 +1123,7 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		// that address should not be forwarded downward. These SubConn updates
 		// will be cached to update the child sometime in the future when the
 		// address gets unejected.
-		od.UpdateSubConnState(pi.SubConn.(*subConnWrapper).SubConn, balancer.SubConnState{
+		od.UpdateSubConnState(pi.SubConn, balancer.SubConnState{
 			ConnectivityState: connectivity.Connecting,
 		})
 		if err := child.waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
@@ -1143,7 +1143,7 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		// unejected SubConn should report latest persisted state - which is
 		// connecting from earlier.
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc:    pi.SubConn,
+			sc:    scw3,
 			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
@@ -1311,7 +1311,7 @@ func (s) TestEjectFailureRate(t *testing.T) {
 		// verify UpdateSubConnState() got called with TRANSIENT_FAILURE for
 		// child in address that was ejected.
 		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc:    pi.SubConn,
+			sc:    scw3,
 			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
 		}); err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
