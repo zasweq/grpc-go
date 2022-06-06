@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +32,7 @@ import (
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal/buffer"
+	"google.golang.org/grpc/internal/grpcrand"
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
@@ -526,7 +526,8 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 			b.removeSubConnFromAddressesMapEntry(scw)
 			// 2. Add Subchannel to Addresses map entry if new address present in map.
 			obj := b.appendIfPresent(addrs[0], scw)
-			// 3. Relay state with eject() recalculated (using the corresponding map entry to see if it's currently ejected).
+			// 3. Relay state with eject() recalculated (using the corresponding
+			// map entry to see if it's currently ejected).
 			if obj == nil { // uneject unconditionally because could have come from an ejected address
 				scw.eject()
 			} else {
@@ -823,7 +824,7 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 			// then choose a random integer in [0, 100). If that number is less
 			// than success_rate_ejection.enforcement_percentage, eject that
 			// address.
-			if uint32(rand.Int31n(100)) < sre.EnforcementPercentage {
+			if uint32(grpcrand.Int31n(100)) < sre.EnforcementPercentage {
 				b.ejectAddress(addr)
 			}
 		}
@@ -867,7 +868,7 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 			// then choose a random integer in [0, 100). If that number is less
 			// than failiure_percentage_ejection.enforcement_percentage, eject
 			// that address.
-			if uint32(rand.Int31n(100)) < b.odCfg.FailurePercentageEjection.EnforcementPercentage {
+			if uint32(grpcrand.Int31n(100)) < b.odCfg.FailurePercentageEjection.EnforcementPercentage {
 				b.ejectAddress(addr)
 			}
 		}
