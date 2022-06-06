@@ -32,7 +32,7 @@ type subConnWrapper struct {
 	// hold a reference to its map entry in the LB policy, if that map entry
 	// exists." - A50
 	obj unsafe.Pointer // *object
-	// These two pieces of data will reach eventual consistency due to sync in
+	// These two pieces of state will reach eventual consistency due to sync in
 	// run(), and child will always have the correctly updated SubConnState.
 	latestState balancer.SubConnState
 	ejected     bool
@@ -42,24 +42,19 @@ type subConnWrapper struct {
 	addresses []resolver.Address
 }
 
-// The wrapper will have the following methods:
-// eject(): The wrapper will report a state update with the TRANSIENT_FAILURE
-// state, and will stop passing along updates from the underlying subchannel.
+// eject(): "The wrapper will report a state update with the TRANSIENT_FAILURE
+// state, and will stop passing along updates from the underlying subchannel."
 func (scw *subConnWrapper) eject() {
-	print("eject called")
 	scw.scUpdateCh.Put(&ejectedUpdate{
 		scw:     scw,
 		ejected: true,
 	})
 }
 
-// uneject(): The wrapper will report a state update with the latest update from
-// the underlying subchannel, and resume passing along updates from the
-// underlying subchannel.
+// uneject(): "The wrapper will report a state update with the latest update
+// from the underlying subchannel, and resume passing along updates from the
+// underlying subchannel."
 func (scw *subConnWrapper) uneject() {
-	// The wrapper will report a state update with the latest update from
-	// the underlying subchannel.
-	print("uneject called")
 	scw.scUpdateCh.Put(&ejectedUpdate{
 		scw:     scw,
 		ejected: false,

@@ -40,7 +40,7 @@ func (b1 *bucket) Equal(b2 *bucket) bool {
 	return b1.requestVolume == b2.requestVolume
 }
 
-func (cc1 *callCounter) Equal(cc2 *callCounter) bool { // Equal in values
+func (cc1 *callCounter) Equal(cc2 *callCounter) bool {
 	if cc1 == nil && cc2 == nil {
 		return true
 	}

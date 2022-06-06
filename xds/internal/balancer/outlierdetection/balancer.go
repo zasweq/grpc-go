@@ -59,7 +59,6 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 		cc:     cc,
 		bOpts:  bOpts,
 		closed: grpcsync.NewEvent(),
-
 		odAddrs:        am,
 		scWrappers:     make(map[balancer.SubConn]*subConnWrapper),
 		scUpdateCh:     buffer.NewUnbounded(),
@@ -146,9 +145,10 @@ type outlierDetectionBalancer struct {
 	cc     balancer.ClientConn
 	bOpts  balancer.BuildOptions
 
-	// closeMu guards against run() reading a subconn update, reading that the child is not nil,
-	// and then a Close() call comes in, clears the balancer, and then run() continues to try
-	// and write the SubConn update to the child.
+	// closeMu guards against run() reading a subconn update, reading that the
+	// child is not nil, and then a Close() call comes in, clears the balancer,
+	// and then run() continues to try and write the SubConn update to the
+	// child.
 	closeMu sync.Mutex
 	// child gets first written to on UpdateClientConnState and niled on Close.
 	// The only concurrent read that can happen is SubConnUpdates that are
@@ -156,28 +156,30 @@ type outlierDetectionBalancer struct {
 	// to be called concurrently with Close(), as they are present in operations
 	// defined as part of the balancer.Balancer API.). This can only race with
 	// Close(), (child has to be built to receive SubConn updates) so protect
-	// SubConn updates and Close() with mu. nil checks on the child for
-	// forwarding updates updates are used as an invariant of the outlier
-	// detection balancer if it is closed.
+	// SubConn updates and Close() with closeMu. nil checks on the child for
+	// forwarding updates are used as an invariant of the outlier detection
+	// balancer if it is closed.
 	child balancer.Balancer
 
-	// closeMu...canUpdateSubConnState cause close? If so move move niling to run(), and protect other
-	// reads with mu
+	// closeMu...canUpdateSubConnState cause close? If so move move niling to
+	// run(), and protect other reads with mu
 
-	// mu guards access to a lot of the core LB Policy State. It also prevents intersplicing certain operations.
-	// ex 1: interval timer goes off, outlier detection algorithm starts running based on knobs in odCfg.
-	// in the middle of running the algorithm, a ClientConn update comes in and writes to odCfg.
-	// This causes undefined behavior for the interval timer algorithm.
-	// ex 2: Updating the odAddrs map from UpdateAddresses in the middle of running the interval timer algorithm
-	// which uses odAddrs heavily. This will cause undefined behavior for the interval timer algorithm.
+	// mu guards access to a lot of the core LB Policy State. It also prevents
+	// intersplicing certain operations.
+	//
+	// ex 1: interval timer goes off, outlier detection algorithm starts running
+	// based on knobs in odCfg. in the middle of running the algorithm, a
+	// ClientConn update comes in and writes to odCfg. This causes undefined
+	// behavior for the interval timer algorithm.
+	//
+	// ex 2: Updating the odAddrs map from UpdateAddresses in the middle of
+	// running the interval timer algorithm which uses odAddrs heavily. This
+	// will cause undefined behavior for the interval timer algorithm.
 	mu         sync.Mutex
 	odAddrs    *resolver.AddressMap
 	odCfg      *LBConfig
 	scWrappers map[balancer.SubConn]*subConnWrapper
-	// "The outlier_detection LB policy will store the timestamp of the most
-	// recent timer start time." - A50
 	timerStartTime time.Time
-
 	intervalTimer *time.Timer
 
 	scUpdateCh     *buffer.Unbounded
@@ -193,7 +195,6 @@ func (b *outlierDetectionBalancer) noopConfig() bool {
 func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	lbCfg, ok := s.BalancerConfig.(*LBConfig)
 	if !ok {
-		// b.logger.Warningf("xds: unexpected LoadBalancingConfig type: %T", s.BalancerConfig)
 		return balancer.ErrBadResolverState
 	}
 
@@ -204,7 +205,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	}
 
 	if b.child == nil {
-		// What if this is nil? clusterimpl has an explicit check for this
+		// What if this is nil? Seems fine
 		b.child = bb.Build(b, b.bOpts)
 	}
 
@@ -240,7 +241,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		// timer and start the timer for the configured interval minus the
 		// difference between the current time and the previous start timestamp,
 		// or 0 if that would be negative.
-		interval = b.odCfg.Interval - (now().Sub(b.timerStartTime)) // This will get overriden for time.Now() + 5, so you're good for that with delta timer start time
+		interval = b.odCfg.Interval - (now().Sub(b.timerStartTime))
 		if interval < 0 {
 			interval = 0
 		}
@@ -258,10 +259,10 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		// `failure_percentage_ejection` fields unset, skip starting the timer and
 		// unset the timer start timestamp."
 		b.timerStartTime = time.Time{}
-		// Do we need to clear the timer as well? Or when it fires it will be
-		// logical no-op (from no-op config) and not count... How else is the
-		// no-op config plumbed through system? Does this gate at beginning of
-		// interval timer?
+		// Should we stop the timer here as well? Not defined in gRFC but I feel
+		// like it might make sense as you don't want to eject addresses. Also
+		// how will addresses eventually get unejected in this case if only one
+		// more pass of the interval timer after no-op configuration comes in?
 	}
 	b.mu.Unlock()
 	b.pickerUpdateCh.Put(lbCfg)
@@ -274,48 +275,22 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 }
 
 func (b *outlierDetectionBalancer) ResolverError(err error) {
-	// This operation isn't defined in the gRFC. Pass through? If so, I don't think you need to sync.
-	// If not pass through, and it actually does something you'd need to sync. (See other balancers)
-
-	// Does this have any effect, should this stop counting? I think transient
-	// failure with err picker will come from a lower level balancer, this
-	// replaces cluster impl which just forwarded, cds balancer actually sends
-	// up an err picker, maybe this should send a no-op picker. If so, need to
-	// sync data accesses. But the picker won't do unnecessary work/counting,
-	// will simply return the error out. Unless you can create theis one, but
-	// then will always have a child. This comes coupled with having a child.
-	// Thus, this can't be a leaf node, as it will always have a child, so no
-	// need to send ErrPicker upward.
-
-	// If you don't nil it in run(), I still think you need the close mu if you nil it in Close(), no close event in graceful switch...
-	if b.child != nil { // If you sync Close() in run() can't have the nil write be in run(), you need to nil it in Close() which is guaranteed to be sync and then do w/e in run()
+	if b.child != nil {
 		b.child.ResolverError(err)
 	}
 }
 
 func (b *outlierDetectionBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
-	// This gets called from the parent, which has no knowledge of scw (gets
-	// called NewSubConn(), that returned sc gets put into a scw in this
-	// balancer), thus need to convert sc to scw. This can either be done
-	// through typecasting (I don't think would work) or the map thing. Cluster
-	// Impl persists a map that maps sc -> scw...see how it's done in other
-	// parts of codebase.
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	print("UpdateSubConnState called")
 	scw, ok := b.scWrappers[sc]
 	if !ok {
 		// Return, shouldn't happen if passed up scw
-		print("UpdateSubConnState returning")
 		return
 	}
 	if state.ConnectivityState == connectivity.Shutdown {
-		// Remove this SubConn from the map on Shutdown.
 		delete(b.scWrappers, scw.SubConn)
 	}
-	print("UpdateSubConnState putting on UpdateChannel")
-	print("scw: ", scw)
-	print("state: ", state.ConnectivityState)
 	b.scUpdateCh.Put(&scUpdate{
 		scw:   scw,
 		state: state,
@@ -333,7 +308,9 @@ func (b *outlierDetectionBalancer) Close() {
 		child.Close()
 	}
 
-	// Any other cleanup needs to happen (subconns, other resources?)?
+	// Any other cleanup needs to happen (subconns, other resources?)
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.intervalTimer != nil {
 		b.intervalTimer.Stop()
 	}
@@ -347,14 +324,16 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 		ei.ExitIdle()
 		return
 	}
-	// Fallback for children handled in clusterimpl balancer - do we ever validate that it's a clusterimpl child for the config?
-	// Removing SubConns is defined in API and also in graceful switch balancer.
+	// Fallback for children handled in clusterimpl balancer - do we ever
+	// validate that it's a clusterimpl child for the config? We should?
+	// Removing SubConns is defined in API and also in graceful switch balancer,
+	// but already done in ClusterImpl.
 }
 
-// The outlier_detection LB policy will provide a picker that delegates to
-// the child policy's picker, and when the request finishes, increment the
-// corresponding counter in the map entry referenced by the subchannel
-// wrapper that was picked.
+// "The outlier_detection LB policy will provide a picker that delegates to the
+// child policy's picker, and when the request finishes, increment the
+// corresponding counter in the map entry referenced by the subchannel wrapper
+// that was picked." - A50
 type wrappedPicker struct {
 	childPicker balancer.Picker
 	noopPicker  bool
@@ -363,7 +342,7 @@ type wrappedPicker struct {
 func (wp *wrappedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	pr, err := wp.childPicker.Pick(info)
 	if err != nil {
-		return balancer.PickResult{}, err // Err picker will return out of here, done will never be called anyway
+		return balancer.PickResult{}, err
 	}
 
 	done := func(di balancer.DoneInfo) {
@@ -407,7 +386,7 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	// to. A50 says to swap the pointer, but I decided to make create new memory
 	// for both active and inactive bucket, and have this race instead write to
 	// deprecated memory. If you swap the pointers, this write would write to
-	// the new inactive buckets memory, which is read throughout in the interval
+	// the inactive buckets memory, which is read throughout in the interval
 	// timers algorithm.
 	obj := (*object)(atomic.LoadPointer(&scw.obj))
 	if obj == nil {
@@ -459,7 +438,6 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	// "If that address is currently ejected, that subchannel wrapper's eject
 	// method will be called." - A50
 	if !obj.latestEjectionTimestamp.IsZero() {
-		print("eject called in NewSubConn")
 		scw.eject()
 	}
 	return scw, nil
@@ -573,7 +551,7 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 		if len(addrs) == 1 { // multiple addresses to single address
 			// 1. Add Subchannel to Addresses map entry if new address present in map.
 			obj := b.appendIfPresent(addrs[0], scw)
-			if obj != nil /*exits early*/ && !obj.latestEjectionTimestamp.IsZero() {
+			if obj != nil && !obj.latestEjectionTimestamp.IsZero() {
 				scw.eject()
 			}
 		} // else is multiple to multiple - no op, continued to be ignored by outlier detection.
@@ -668,36 +646,40 @@ func (b *outlierDetectionBalancer) intervalTimerAlgorithm() {
 			b.unejectAddress(addr)
 		}
 	}
+	b.intervalTimer = afterFunc(b.odCfg.Interval, func() {
+		b.intervalTimerAlgorithm()
+	})
 }
 
 func (b *outlierDetectionBalancer) run() {
 	for {
 		select {
 		case update := <-b.scUpdateCh.Get():
-			print("reads from update channel")
 			b.scUpdateCh.Load()
 			switch u := update.(type) {
 			case *scUpdate:
-				print("hits case scUpdate")
 				scw := u.scw
 				scw.latestState = u.state
-				print("scw: ", u.scw)
-				print("state: ", u.state.ConnectivityState)
 				b.closeMu.Lock()
 				if !scw.ejected && b.child != nil {
-					b.child.UpdateSubConnState(scw, u.state) // can this call back and close, no close comes from higher level...unless UpdateSubConnState -> UpdateState -> Close()
+					b.child.UpdateSubConnState(scw, u.state) // can this call back and close, no close comes from higher level...unless UpdateSubConnState -> UpdateState -> Close(), that would cause deadlock
 				}
 				b.closeMu.Unlock()
 			case *ejectedUpdate:
-				print("hits case ejectedUpdate")
 				scw := u.scw
 				scw.ejected = u.ejected
 				var stateToUpdate balancer.SubConnState
 				if u.ejected {
+					// "The wrapper will report a state update with the
+					// TRANSIENT_FAILURE state, and will stop passing along
+					// updates from the underlying subchannel."
 					stateToUpdate = balancer.SubConnState{
 						ConnectivityState: connectivity.TransientFailure,
 					}
 				} else {
+					// "The wrapper will report a state update with the latest
+					// update from the underlying subchannel, and resume passing
+					// along updates from the underlying subchannel."
 					stateToUpdate = scw.latestState // If this has never been written to will send connectivity IDLE which seems fine to me
 				}
 				b.closeMu.Lock()
@@ -837,10 +819,6 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 		//  iii. If the address's success rate is less than (mean - stdev *
 		//  (success_rate_ejection.stdev_factor / 1000))
 		successRate := float64(ccb.numSuccesses) / float64(ccb.requestVolume)
-		print("successRate: ", successRate)
-		print("mean: ", mean) // correct mean and stddev
-		print("standard deviation: ", stddev)
-		print("right side: ", mean-stddev*(float64(sre.StdevFactor)/1000))
 		if successRate < (mean - stddev*(float64(sre.StdevFactor)/1000)) {
 			// then choose a random integer in [0, 100). If that number is less
 			// than success_rate_ejection.enforcement_percentage, eject that
@@ -912,10 +890,9 @@ func (b *outlierDetectionBalancer) ejectAddress(addr resolver.Address) {
 	// that was recorded when the timer fired, increase the ejection time
 	// multiplier by 1, and call eject() on each subchannel wrapper in that
 	// address's subchannel wrapper list.
-	obj.latestEjectionTimestamp = b.timerStartTime // this read is guaranteed to observe only the write when the timer fires because UpdateClientConnState() will be a synced event
+	obj.latestEjectionTimestamp = b.timerStartTime
 	obj.ejectionTimeMultiplier++
 	for _, sbw := range obj.sws {
-		print("eject called in ejectAddress")
 		sbw.eject()
 	}
 }
@@ -938,7 +915,6 @@ func (b *outlierDetectionBalancer) unejectAddress(addr resolver.Address) {
 	// list.
 	obj.latestEjectionTimestamp = time.Time{}
 	for _, sbw := range obj.sws {
-		print("uneject called in unejectAddress")
 		sbw.uneject()
 	}
 }
