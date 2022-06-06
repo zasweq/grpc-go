@@ -21,7 +21,6 @@ package xds_test
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc/internal/envconfig"
 	"net"
 	"strconv"
 	"testing"
@@ -29,6 +28,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/internal/testutils/xds/e2e"
@@ -108,19 +108,12 @@ func (s) TestClientSideXDS(t *testing.T) {
 	}
 }
 
-// Hard to test system level, just test with the no-op config the client will spit out by default
-// Make sure you can see logs.
 func (s) TestOutlierDetection(t *testing.T) {
 	oldOD := envconfig.XDSOutlierDetection
 	envconfig.XDSOutlierDetection = true
-	// register for testing...
 	defer func() {
 		envconfig.XDSOutlierDetection = oldOD
-		// unregister for testing...
 	}()
-
-	// tlogger.go:111: ERROR picker_wrapper.go:147 [core] subconn returned from pick is type *outlierdetection.subConnWrapper, not *acBalancerWrapper  (t=+8.64611ms)
-	// xds_client_integration_test.go:151: rpc EmptyCall() failed: rpc error: code = DeadlineExceeded desc = context deadline exceeded
 
 	managementServer, nodeID, _, resolver, cleanup1 := e2e.SetupManagementServer(t)
 	defer cleanup1()
