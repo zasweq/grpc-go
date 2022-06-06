@@ -56,9 +56,9 @@ type bb struct{}
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
 	am := resolver.NewAddressMap()
 	b := &outlierDetectionBalancer{
-		cc:     cc,
-		bOpts:  bOpts,
-		closed: grpcsync.NewEvent(),
+		cc:             cc,
+		bOpts:          bOpts,
+		closed:         grpcsync.NewEvent(),
 		odAddrs:        am,
 		scWrappers:     make(map[balancer.SubConn]*subConnWrapper),
 		scUpdateCh:     buffer.NewUnbounded(),
@@ -175,12 +175,12 @@ type outlierDetectionBalancer struct {
 	// ex 2: Updating the odAddrs map from UpdateAddresses in the middle of
 	// running the interval timer algorithm which uses odAddrs heavily. This
 	// will cause undefined behavior for the interval timer algorithm.
-	mu         sync.Mutex
-	odAddrs    *resolver.AddressMap
-	odCfg      *LBConfig
-	scWrappers map[balancer.SubConn]*subConnWrapper
+	mu             sync.Mutex
+	odAddrs        *resolver.AddressMap
+	odCfg          *LBConfig
+	scWrappers     map[balancer.SubConn]*subConnWrapper
 	timerStartTime time.Time
-	intervalTimer *time.Timer
+	intervalTimer  *time.Timer
 
 	scUpdateCh     *buffer.Unbounded
 	pickerUpdateCh *buffer.Unbounded

@@ -923,7 +923,7 @@ func (s) TestPicker(t *testing.T) {
 }
 
 type rrPicker struct {
-	scs []balancer.SubConn
+	scs  []balancer.SubConn
 	next int
 }
 
