@@ -1398,7 +1398,7 @@ func (s) TestDurationOfInterval(t *testing.T) {
 	}
 
 	// UpdateClientConnState with an interval of 9 seconds. Due to 5 seconds
-	// already passing (from overriden time.Now function), this should start an
+	// already passing (from overridden time.Now function), this should start an
 	// interval timer of ~4 seconds.
 	od.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: &LBConfig{
