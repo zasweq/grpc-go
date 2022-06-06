@@ -1593,7 +1593,7 @@ func (s) TestConcurrentPickerCountsWithIntervalTimer(t *testing.T) {
 			}
 			pi, err := picker.Pick(balancer.PickInfo{})
 			if err != nil {
-				t.Fatalf("Picker.Pick should not have errored")
+				continue
 			}
 			pi.Done(balancer.DoneInfo{})
 			pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
@@ -1711,7 +1711,7 @@ func (s) TestConcurrentOperations(t *testing.T) {
 			}
 			pi, err := picker.Pick(balancer.PickInfo{})
 			if err != nil {
-				t.Fatalf("Picker.Pick should not have errored")
+				continue
 			}
 			pi.Done(balancer.DoneInfo{})
 			pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
