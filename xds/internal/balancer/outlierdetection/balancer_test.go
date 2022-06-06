@@ -572,6 +572,9 @@ func (s) TestUpdateAddresses(t *testing.T) {
 		pi.Done(balancer.DoneInfo{})
 		// Eject the second address.
 		pi, err = picker.Pick(balancer.PickInfo{})
+		if err != nil {
+			t.Fatalf("Picker.Pick should not have errored")
+		}
 		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
 		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
 		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})

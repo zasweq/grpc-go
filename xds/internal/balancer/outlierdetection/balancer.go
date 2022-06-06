@@ -432,6 +432,9 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	}
 
 	obj, ok := val.(*object)
+	if !ok {
+		return scw, nil
+	}
 	obj.sws = append(obj.sws, scw)
 	atomic.StorePointer(&scw.obj, unsafe.Pointer(obj))
 
