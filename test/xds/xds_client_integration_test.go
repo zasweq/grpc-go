@@ -71,7 +71,25 @@ func startTestService(t *testing.T, server *stubserver.StubServer) (uint32, func
 		t.Fatalf("invalid serving port for stub server: %v", err)
 	}
 	return uint32(port), server.Stop
-}
+} // How to spin up a test service with three endpoints, this def has a single Address
+
+// three unique SubConns to this exposed service ^^^
+
+// Test that runs as a CI, against PR, CI against test
+// CI that ensures TD isn't breaking anything
+// grpc release time validation test that runs interop test for that newly about to released grpc version across all existing bootstrap generator versions
+
+// c++ has interop tests they run before release, they don't have it, some sort of a thing that some sort of grpc release that goes out isn't compatible
+// with bootstrap generator.
+
+// run test with CI against TD staging, then enable for grpc release time
+
+// "other tests run against production", different versions of grpc, bootstrap generator, and td
+
+// small piece of observability - reach out to fung
+
+// test I sent out enough for most of the testing we want to do
+// where to add configuration for grpc release testing
 
 func (s) TestClientSideXDS(t *testing.T) {
 	managementServer, nodeID, _, resolver, cleanup1 := e2e.SetupManagementServer(t)
