@@ -116,7 +116,12 @@ func (s) TestConfigUpdate_ControlChannel(t *testing.T) {
 	}
 
 	// Make an RPC and expect it to get routed to the second test backend through
-	// the second RLS server.
+	// the second RLS server. (Mine is expect rr across 1, 2, but not 3).
+
+	// What makes it fail again...stub server backend returning an error? That
+	// gets plumbed into DoneInfo and then counted?
+
+
 	makeTestRPCAndExpectItToReachBackend(ctx, t, cc, backendCh2)
 	verifyRLSRequest(t, rlsReqCh2, true)
 }

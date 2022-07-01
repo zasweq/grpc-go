@@ -1,0 +1,707 @@
+=== RUN   Test
+=== RUN   Test/OutlierDetectionWithOutlier
+    tlogger.go:116: INFO server.go:89 [xds-e2e] Created new snapshot cache...  (t=+84.16µs)
+    tlogger.go:116: INFO server.go:598 [core] [Server #1] Server created  (t=+1.823291ms)
+    tlogger.go:116: INFO server.go:103 [xds-e2e] Registered Aggregated Discovery Service (ADS)...  (t=+1.944875ms)
+    tlogger.go:116: INFO server.go:107 [xds-e2e] xDS management server serving at: 127.0.0.1:55048...  (t=+2.078746ms)
+    tlogger.go:116: INFO server.go:786 [core] [Server #1 ListenSocket #2] ListenSocket created  (t=+2.208471ms)
+    tlogger.go:116: INFO server.go:598 [core] [Server #3] Server created  (t=+13.246415ms)
+    tlogger.go:116: INFO server.go:786 [core] [Server #3 ListenSocket #4] ListenSocket created  (t=+13.516807ms)
+    tlogger.go:116: INFO server.go:598 [core] [Server #5] Server created  (t=+14.013155ms)
+    tlogger.go:116: INFO server.go:786 [core] [Server #5 ListenSocket #6] ListenSocket created  (t=+14.190424ms)
+    tlogger.go:116: INFO server.go:598 [core] [Server #7] Server created  (t=+14.681355ms)
+    tlogger.go:116: INFO server.go:786 [core] [Server #7 ListenSocket #8] ListenSocket created  (t=+14.849216ms)
+    tlogger.go:116: INFO server.go:157 [xds-e2e] Created new resource snapshot...  (t=+22.568772ms)
+    tlogger.go:116: INFO server.go:163 [xds-e2e] Updated snapshot cache with resource snapshot...  (t=+22.630391ms)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #9] Channel created  (t=+22.721303ms)
+    tlogger.go:116: INFO clientconn.go:1579 [core] [Channel #9] original dial target is: "xds:///my-service-client-side-xds"  (t=+22.78568ms)
+    tlogger.go:116: INFO clientconn.go:1586 [core] [Channel #9] parsed dial target is: {Scheme:xds Authority: Endpoint:my-service-client-side-xds URL:{Scheme:xds Opaque: User: Host: Path:/my-service-client-side-xds RawPath: ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+22.984905ms)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #9] Channel authority set to "my-service-client-side-xds"  (t=+23.04348ms)
+    tlogger.go:116: INFO xds_resolver.go:81 [xds] [xds-resolver 0xc0002b0c60] Creating resolver for target: {Scheme:xds Authority: Endpoint:my-service-client-side-xds URL:{Scheme:xds Opaque: User: Host: Path:/my-service-client-side-xds RawPath: ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+23.243339ms)
+    tlogger.go:116: INFO bootstrap.go:480 [xds] [xds-bootstrap] Bootstrap config for creating xds-client: {
+          "XDSServer": {
+            "server_uri": "127.0.0.1:55048",
+            "channel_creds": [
+              {
+                "type": "insecure"
+              }
+            ],
+            "server_features": [
+              "xds_v3"
+            ]
+          },
+          "CertProviderConfigs": {
+            "client-side-certificate-provider-instance": {},
+            "server-side-certificate-provider-instance": {}
+          },
+          "ServerListenerResourceNameTemplate": "grpc/server?xds.resource.listening_address=%s",
+          "ClientDefaultListenerResourceNameTemplate": "%s",
+          "Authorities": null
+        }  (t=+27.036924ms)
+    tlogger.go:116: INFO client.go:81 [xds] [xds-client 0xc0000c7500] Created ClientConn to xDS management server: 127.0.0.1:55048-insecure-xDSv3  (t=+27.145727ms)
+    tlogger.go:116: INFO client.go:82 [xds] [xds-client 0xc0000c7500] Created  (t=+27.189379ms)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #10] Channel created  (t=+27.390511ms)
+    tlogger.go:116: INFO clientconn.go:1579 [core] [Channel #10] original dial target is: "127.0.0.1:55048"  (t=+27.447243ms)
+    tlogger.go:116: INFO clientconn.go:1584 [core] [Channel #10] dial target "127.0.0.1:55048" parse failed: parse "127.0.0.1:55048": first path segment in URL cannot contain colon  (t=+27.529246ms)
+    tlogger.go:116: INFO clientconn.go:1599 [core] [Channel #10] fallback to scheme "passthrough"  (t=+27.578452ms)
+    tlogger.go:116: INFO clientconn.go:1607 [core] [Channel #10] parsed dial target is: {Scheme:passthrough Authority: Endpoint:127.0.0.1:55048 URL:{Scheme:passthrough Opaque: User: Host: Path:/127.0.0.1:55048 RawPath: ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+27.659179ms)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #10] Channel authority set to "127.0.0.1:55048"  (t=+27.723114ms)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #10] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:55048",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+28.278135ms)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:271 [core] [Channel #10] Channel switches to new LB policy "pick_first"  (t=+28.429608ms)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #10 SubChannel #11] Subchannel created  (t=+28.562364ms)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #10 SubChannel #11] Subchannel Connectivity change to CONNECTING  (t=+28.858848ms)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #10] Channel Connectivity change to CONNECTING  (t=+29.019207ms)
+    tlogger.go:116: INFO clientconn.go:1212 [core] [Channel #10 SubChannel #11] Subchannel picks a new address "127.0.0.1:55048" to connect  (t=+29.087248ms)
+    tlogger.go:116: INFO xds_resolver.go:140 [xds] [xds-resolver 0xc0002b0c60] Watch started on resource name my-service-client-side-xds with xds-client 0xc0001284f8  (t=+29.155994ms)
+    tlogger.go:116: INFO syscall_nonlinux.go:39 [core] CPU time info is unavailable on non-linux environments.  (t=+29.562243ms)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #10 SubChannel #11] Subchannel Connectivity change to READY  (t=+30.158344ms)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #10] Channel Connectivity change to READY  (t=+30.259151ms)
+    tlogger.go:116: INFO transport.go:83 ADS stream created  (t=+30.509856ms)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.listener.v3.Listener[my-service-client-side-xds] and known map[]. Diff [my-service-client-side-xds]  (t=+32.162489ms)
+    tlogger.go:116: INFO simple.go:421 [xds-e2e] respond type.googleapis.com/envoy.config.listener.v3.Listener[my-service-client-side-xds] version "" with version "1"  (t=+32.251324ms)
+    tlogger.go:116: INFO client.go:124 [xds] [xds-client 0xc0000c7500] ADS response received, type: type.googleapis.com/envoy.config.listener.v3.Listener  (t=+36.31825ms)
+    tlogger.go:116: INFO unmarshal_lds.go:63 Resource with name: my-service-client-side-xds, type: *listenerv3.Listener, contains: {
+          "name": "my-service-client-side-xds",
+          "filterChains": [
+            {
+              "filters": [
+                {
+                  "name": "envoy.filters.network.http_connection_manager",
+                  "typedConfig": {
+                    "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                    "rds": {
+                      "configSource": {
+                        "ads": {
+        
+                        }
+                      },
+                      "routeConfigName": "route-my-service-client-side-xds"
+                    },
+                    "httpFilters": [
+                      {
+                        "name": "router",
+                        "typedConfig": {
+                          "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "name": "filter-chain-name"
+            }
+          ],
+          "apiListener": {
+            "apiListener": {
+              "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+              "rds": {
+                "configSource": {
+                  "ads": {
+        
+                  }
+                },
+                "routeConfigName": "route-my-service-client-side-xds"
+              },
+              "httpFilters": [
+                {
+                  "name": "router",
+                  "typedConfig": {
+                    "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                  }
+                }
+              ]
+            }
+          }
+        }  (t=+38.65427ms)
+    tlogger.go:116: INFO transport.go:218 Sending ACK for response type: ListenerResource, version: 1, nonce: 1  (t=+40.327531ms)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.listener.v3.Listener[my-service-client-side-xds] and known map[my-service-client-side-xds:{}]. Diff []  (t=+40.677817ms)
+    tlogger.go:116: INFO watch_service.go:94 [xds] [xds-resolver 0xc0002b0c60] received LDS update: {
+          "RouteConfigName": "route-my-service-client-side-xds",
+          "InlineRouteConfig": null,
+          "MaxStreamDuration": 0,
+          "HTTPFilters": [
+            {
+              "Name": "router",
+              "Filter": {},
+              "Config": {
+                "FilterConfig": null
+              }
+            }
+          ],
+          "InboundListenerCfg": null,
+          "Raw": {
+            "type_url": "type.googleapis.com/envoy.config.listener.v3.Listener",
+            "value": "ChpteS1zZXJ2aWNlLWNsaWVudC1zaWRlLXhkcxqpAhqTAgotZW52b3kuZmlsdGVycy5uZXR3b3JrLmh0dHBfY29ubmVjdGlvbl9tYW5hZ2VyIuEBCmV0eXBlLmdvb2dsZWFwaXMuY29tL2Vudm95LmV4dGVuc2lvbnMuZmlsdGVycy5uZXR3b3JrLmh0dHBfY29ubmVjdGlvbl9tYW5hZ2VyLnYzLkh0dHBDb25uZWN0aW9uTWFuYWdlchJ4Kk4KBnJvdXRlciJECkJ0eXBlLmdvb2dsZWFwaXMuY29tL2Vudm95LmV4dGVuc2lvbnMuZmlsdGVycy5odHRwLnJvdXRlci52My5Sb3V0ZXIaJgoCGgASIHJvdXRlLW15LXNlcnZpY2UtY2xpZW50LXNpZGUteGRzOhFmaWx0ZXItY2hhaW4tbmFtZZoB5AEK4QEKZXR5cGUuZ29vZ2xlYXBpcy5jb20vZW52b3kuZXh0ZW5zaW9ucy5maWx0ZXJzLm5ldHdvcmsuaHR0cF9jb25uZWN0aW9uX21hbmFnZXIudjMuSHR0cENvbm5lY3Rpb25NYW5hZ2VyEngqTgoGcm91dGVyIkQKQnR5cGUuZ29vZ2xlYXBpcy5jb20vZW52b3kuZXh0ZW5zaW9ucy5maWx0ZXJzLmh0dHAucm91dGVyLnYzLlJvdXRlchomCgIaABIgcm91dGUtbXktc2VydmljZS1jbGllbnQtc2lkZS14ZHM="
+          }
+        }, err: <nil>  (t=+40.824792ms)
+    tlogger.go:116: INFO simple.go:374 [xds-e2e] open watch 1 for type.googleapis.com/envoy.config.listener.v3.Listener[my-service-client-side-xds] from nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8", version "1"  (t=+40.933796ms)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.route.v3.RouteConfiguration[route-my-service-client-side-xds] and known map[]. Diff [route-my-service-client-side-xds]  (t=+41.22399ms)
+    tlogger.go:116: INFO simple.go:421 [xds-e2e] respond type.googleapis.com/envoy.config.route.v3.RouteConfiguration[route-my-service-client-side-xds] version "" with version "1"  (t=+41.302469ms)
+    tlogger.go:116: INFO client.go:124 [xds] [xds-client 0xc0000c7500] ADS response received, type: type.googleapis.com/envoy.config.route.v3.RouteConfiguration  (t=+43.805502ms)
+    tlogger.go:116: INFO unmarshal_rds.go:61 Resource with name: route-my-service-client-side-xds, type: *routev3.RouteConfiguration, contains: {
+          "name": "route-my-service-client-side-xds",
+          "virtualHosts": [
+            {
+              "domains": [
+                "my-service-client-side-xds"
+              ],
+              "routes": [
+                {
+                  "match": {
+                    "prefix": "/"
+                  },
+                  "route": {
+                    "cluster": "cluster-my-service-client-side-xds"
+                  }
+                }
+              ]
+            }
+          ]
+        }.  (t=+44.890736ms)
+    tlogger.go:116: INFO transport.go:218 Sending ACK for response type: RouteConfigResource, version: 1, nonce: 2  (t=+45.35989ms)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.route.v3.RouteConfiguration[route-my-service-client-side-xds] and known map[route-my-service-client-side-xds:{}]. Diff []  (t=+45.620569ms)
+    tlogger.go:116: INFO simple.go:374 [xds-e2e] open watch 2 for type.googleapis.com/envoy.config.route.v3.RouteConfiguration[route-my-service-client-side-xds] from nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8", version "1"  (t=+45.695712ms)
+    tlogger.go:116: INFO watch_service.go:176 [xds] [xds-resolver 0xc0002b0c60] received RDS update: {
+          "VirtualHosts": [
+            {
+              "Domains": [
+                "my-service-client-side-xds"
+              ],
+              "Routes": [
+                {
+                  "Path": null,
+                  "Prefix": "/",
+                  "Regex": null,
+                  "CaseInsensitive": false,
+                  "Headers": null,
+                  "Fraction": null,
+                  "HashPolicies": null,
+                  "MaxStreamDuration": null,
+                  "HTTPFilterConfigOverride": null,
+                  "RetryConfig": null,
+                  "ActionType": 1,
+                  "WeightedClusters": {
+                    "cluster-my-service-client-side-xds": {
+                      "Weight": 1,
+                      "HTTPFilterConfigOverride": null
+                    }
+                  },
+                  "ClusterSpecifierPlugin": ""
+                }
+              ],
+              "HTTPFilterConfigOverride": null,
+              "RetryConfig": null
+            }
+          ],
+          "ClusterSpecifierPlugins": {},
+          "Raw": {
+            "type_url": "type.googleapis.com/envoy.config.route.v3.RouteConfiguration",
+            "value": "CiByb3V0ZS1teS1zZXJ2aWNlLWNsaWVudC1zaWRlLXhkcxJJEhpteS1zZXJ2aWNlLWNsaWVudC1zaWRlLXhkcxorCgMKAS8SJAoiY2x1c3Rlci1teS1zZXJ2aWNlLWNsaWVudC1zaWRlLXhkcw=="
+          }
+        }, err: <nil>  (t=+45.779817ms)
+    tlogger.go:116: INFO xds_resolver.go:215 [xds] [xds-resolver 0xc0002b0c60] Received update on resource my-service-client-side-xds from xds-client 0xc0001284f8, generated service config: {
+          "loadBalancingConfig": [
+            {
+              "xds_cluster_manager_experimental": {
+                "children": {
+                  "cluster:cluster-my-service-client-side-xds": {
+                    "childPolicy": [
+                      {
+                        "cds_experimental": {
+                          "cluster": "cluster-my-service-client-side-xds"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }  (t=+46.265581ms)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #9] Resolver state updated: {
+          "Addresses": null,
+          "ServiceConfig": {
+            "Config": {
+              "Config": null,
+              "LB": null,
+              "Methods": {}
+            },
+            "Err": null
+          },
+          "Attributes": {}
+        } (service config updated)  (t=+46.960873ms)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:271 [core] [Channel #9] Channel switches to new LB policy "xds_cluster_manager_experimental"  (t=+47.058067ms)
+    tlogger.go:116: INFO clustermanager.go:51 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Created  (t=+47.149312ms)
+    tlogger.go:116: INFO clustermanager.go:124 [xds] [xds-cluster-manager-lb 0xc00053ecc0] update with config {
+          "LoadBalancingConfig": null,
+          "Children": {
+            "cluster:cluster-my-service-client-side-xds": {
+              "ChildPolicy": [
+                {
+                  "cds_experimental": {
+                    "LoadBalancingConfig": null,
+                    "Cluster": "cluster-my-service-client-side-xds"
+                  }
+                }
+              ]
+            }
+          }
+        }, resolver state {Addresses:[] ServiceConfig:0xc00053eba0 Attributes:0xc000124340}  (t=+47.406747ms)
+    tlogger.go:116: INFO balancergroup.go:100 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Creating child policy of type cds_experimental  (t=+47.498438ms)
+    tlogger.go:116: INFO cdsbalancer.go:87 [xds] [cds-lb 0xc000740340] Created  (t=+47.569235ms)
+    tlogger.go:116: INFO cdsbalancer.go:98 [xds] [cds-lb 0xc000740340] xDS credentials in use: false  (t=+47.615063ms)
+    tlogger.go:116: INFO cdsbalancer.go:530 [xds] [cds-lb 0xc000740340] Received update from resolver, balancer config: {
+          "LoadBalancingConfig": null,
+          "Cluster": "cluster-my-service-client-side-xds"
+        }  (t=+47.822793ms)
+    tlogger.go:116: INFO cluster_handler.go:192 [xds] [cds-lb 0xc000740340] CDS watch started on cluster-my-service-client-side-xds  (t=+47.89674ms)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.cluster.v3.Cluster[cluster-my-service-client-side-xds] and known map[]. Diff [cluster-my-service-client-side-xds]  (t=+48.300056ms)
+    tlogger.go:116: INFO simple.go:421 [xds-e2e] respond type.googleapis.com/envoy.config.cluster.v3.Cluster[cluster-my-service-client-side-xds] version "" with version "1"  (t=+48.361802ms)
+    tlogger.go:116: INFO client.go:124 [xds] [xds-client 0xc0000c7500] ADS response received, type: type.googleapis.com/envoy.config.cluster.v3.Cluster  (t=+53.485913ms)
+    tlogger.go:116: INFO unmarshal_cds.go:67 Resource with name: cluster-my-service-client-side-xds, type: *clusterv3.Cluster, contains: {
+          "name": "cluster-my-service-client-side-xds",
+          "type": "EDS",
+          "edsClusterConfig": {
+            "edsConfig": {
+              "ads": {
+        
+              }
+            },
+            "serviceName": "endpoints-my-service-client-side-xds"
+          },
+          "outlierDetection": {
+            "interval": "1s",
+            "baseEjectionTime": "30s",
+            "maxEjectionPercent": 1,
+            "failurePercentageThreshold": 50,
+            "enforcingFailurePercentage": 100,
+            "failurePercentageMinimumHosts": 1,
+            "failurePercentageRequestVolume": 1,
+            "maxEjectionTime": "300s"
+          }
+        }  (t=+55.015213ms)
+    tlogger.go:116: INFO transport.go:218 Sending ACK for response type: ClusterResource, version: 1, nonce: 3  (t=+55.913831ms)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.cluster.v3.Cluster[cluster-my-service-client-side-xds] and known map[cluster-my-service-client-side-xds:{}]. Diff []  (t=+56.211818ms)
+    tlogger.go:116: INFO simple.go:374 [xds-e2e] open watch 3 for type.googleapis.com/envoy.config.cluster.v3.Cluster[cluster-my-service-client-side-xds] from nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8", version "1"  (t=+56.300509ms)
+    tlogger.go:116: INFO cdsbalancer.go:330 [xds] [cds-lb 0xc000740340] Watch update from xds-client 0xc0001284f8, content: [
+          {
+            "ClusterType": 0,
+            "ClusterName": "cluster-my-service-client-side-xds",
+            "EDSServiceName": "endpoints-my-service-client-side-xds",
+            "LRSServerConfig": 0,
+            "SecurityCfg": null,
+            "MaxRequests": null,
+            "DNSHostName": "",
+            "PrioritizedClusterNames": null,
+            "LBPolicy": null,
+            "OutlierDetection": {
+              "Interval": 1000000000,
+              "BaseEjectionTime": 30000000000,
+              "MaxEjectionTime": 300000000000,
+              "MaxEjectionPercent": 1,
+              "SuccessRateStdevFactor": 1900,
+              "EnforcingSuccessRate": 100,
+              "SuccessRateMinimumHosts": 5,
+              "SuccessRateRequestVolume": 100,
+              "FailurePercentageThreshold": 50,
+              "EnforcingFailurePercentage": 100,
+              "FailurePercentageMinimumHosts": 1,
+              "FailurePercentageRequestVolume": 1
+            },
+            "Raw": {
+              "type_url": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+              "value": "CiJjbHVzdGVyLW15LXNlcnZpY2UtY2xpZW50LXNpZGUteGRzGioKAhoAEiRlbmRwb2ludHMtbXktc2VydmljZS1jbGllbnQtc2lkZS14ZHOaASYSAggBGgIIHiICCAGCAQIIMooBAghkmgECCAGiAQIIAaoBAwisAhAD"
+            }
+          }
+        ], security config: null  (t=+56.452155ms)
+    tlogger.go:116: INFO clusterresolver.go:84 [xds] [xds-cluster-resolver-lb 0xc000a8c000] Created  (t=+56.601496ms)
+    tlogger.go:116: INFO cdsbalancer.go:356 [xds] [cds-lb 0xc000740340] Created child policy 0xc000a8c000 of type cluster_resolver_experimental  (t=+56.766179ms)
+    tlogger.go:116: INFO clusterresolver.go:165 [xds] [xds-cluster-resolver-lb 0xc000a8c000] Receive update from resolver, balancer config: {
+          "discoveryMechanisms": [
+            {
+              "cluster": "cluster-my-service-client-side-xds",
+              "edsServiceName": "endpoints-my-service-client-side-xds",
+              "outlierDetection": {
+                "interval": 1000000000,
+                "baseEjectionTime": 30000000000,
+                "maxEjectionTime": 300000000000,
+                "maxEjectionPercent": 1,
+                "successRateEjection": {
+                  "stdevFactor": 1900,
+                  "enforcementPercentage": 100,
+                  "minimumHosts": 5,
+                  "requestVolume": 100
+                },
+                "failurePercentageEjection": {
+                  "threshold": 50,
+                  "enforcementPercentage": 100,
+                  "minimumHosts": 1,
+                  "requestVolume": 1
+                }
+              }
+            }
+          ]
+        }  (t=+57.565674ms)
+    tlogger.go:116: INFO resource_resolver.go:257 [xds] [xds-cluster-resolver-lb 0xc000a8c000] EDS watch started on endpoints-my-service-client-side-xds  (t=+57.676621ms)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment[endpoints-my-service-client-side-xds] and known map[]. Diff [endpoints-my-service-client-side-xds]  (t=+58.050053ms)
+    tlogger.go:116: INFO simple.go:421 [xds-e2e] respond type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment[endpoints-my-service-client-side-xds] version "" with version "1"  (t=+58.127485ms)
+    tlogger.go:116: INFO client.go:124 [xds] [xds-client 0xc0000c7500] ADS response received, type: type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment  (t=+59.292639ms)
+    tlogger.go:116: INFO unmarshal_eds.go:58 Resource with name: endpoints-my-service-client-side-xds, type: *endpointv3.ClusterLoadAssignment, contains: {
+          "clusterName": "endpoints-my-service-client-side-xds",
+          "endpoints": [
+            {
+              "locality": {
+                "subZone": "subzone"
+              },
+              "lbEndpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      "socketAddress": {
+                        "address": "localhost",
+                        "portValue": 55049
+                      }
+                    }
+                  }
+                },
+                {
+                  "endpoint": {
+                    "address": {
+                      "socketAddress": {
+                        "address": "localhost",
+                        "portValue": 55050
+                      }
+                    }
+                  }
+                },
+                {
+                  "endpoint": {
+                    "address": {
+                      "socketAddress": {
+                        "address": "localhost",
+                        "portValue": 55051
+                      }
+                    }
+                  }
+                }
+              ],
+              "loadBalancingWeight": 1
+            }
+          ]
+        }  (t=+60.374479ms)
+    tlogger.go:116: INFO transport.go:218 Sending ACK for response type: EndpointsResource, version: 1, nonce: 4  (t=+62.429594ms)
+    tlogger.go:116: INFO clusterresolver.go:197 [xds] [xds-cluster-resolver-lb 0xc000a8c000] resource update: [
+          {}
+        ]  (t=+62.540229ms)
+    tlogger.go:116: INFO balancer.go:66 [xds] [priority-lb 0xc0000f4620] Created  (t=+62.72937ms)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment[endpoints-my-service-client-side-xds] and known map[endpoints-my-service-client-side-xds:{}]. Diff []  (t=+62.798365ms)
+    tlogger.go:116: INFO configbuilder.go:311 [xds] xds lb policy is "round_robin", building config with weighted_target + round_robin  (t=+62.887912ms)
+    tlogger.go:116: INFO simple.go:374 [xds-e2e] open watch 4 for type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment[endpoints-my-service-client-side-xds] from nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8", version "1"  (t=+62.967229ms)
+    tlogger.go:116: INFO clusterresolver.go:229 [xds] [xds-cluster-resolver-lb 0xc000a8c000] build balancer config: {
+          "children": {
+            "priority-0-0": {
+              "config": [
+                {
+                  "outlier_detection_experimental": {
+                    "interval": 1000000000,
+                    "baseEjectionTime": 30000000000,
+                    "maxEjectionTime": 300000000000,
+                    "maxEjectionPercent": 1,
+                    "successRateEjection": {
+                      "stdevFactor": 1900,
+                      "enforcementPercentage": 100,
+                      "minimumHosts": 5,
+                      "requestVolume": 100
+                    },
+                    "failurePercentageEjection": {
+                      "threshold": 50,
+                      "enforcementPercentage": 100,
+                      "minimumHosts": 1,
+                      "requestVolume": 1
+                    },
+                    "childPolicy": [
+                      {
+                        "xds_cluster_impl_experimental": {
+                          "cluster": "cluster-my-service-client-side-xds",
+                          "edsServiceName": "endpoints-my-service-client-side-xds",
+                          "childPolicy": [
+                            {
+                              "weighted_target_experimental": {
+                                "targets": {
+                                  "{\"subZone\":\"subzone\"}": {
+                                    "weight": 1,
+                                    "childPolicy": [
+                                      {
+                                        "round_robin": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "ignoreReresolutionRequests": true
+            }
+          },
+          "priorities": [
+            "priority-0-0"
+          ]
+        }  (t=+64.877141ms)
+    tlogger.go:116: INFO balancer.go:108 [xds] [priority-lb 0xc0000f4620] Received update from resolver, balancer config: {
+          "children": {
+            "priority-0-0": {
+              "config": [
+                {
+                  "outlier_detection_experimental": {
+                    "interval": 1000000000,
+                    "baseEjectionTime": 30000000000,
+                    "maxEjectionTime": 300000000000,
+                    "maxEjectionPercent": 1,
+                    "successRateEjection": {
+                      "stdevFactor": 1900,
+                      "enforcementPercentage": 100,
+                      "minimumHosts": 5,
+                      "requestVolume": 100
+                    },
+                    "failurePercentageEjection": {
+                      "threshold": 50,
+                      "enforcementPercentage": 100,
+                      "minimumHosts": 1,
+                      "requestVolume": 1
+                    },
+                    "childPolicy": [
+                      {
+                        "xds_cluster_impl_experimental": {
+                          "cluster": "cluster-my-service-client-side-xds",
+                          "edsServiceName": "endpoints-my-service-client-side-xds",
+                          "childPolicy": [
+                            {
+                              "weighted_target_experimental": {
+                                "targets": {
+                                  "{\"subZone\":\"subzone\"}": {
+                                    "weight": 1,
+                                    "childPolicy": [
+                                      {
+                                        "round_robin": {}
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "ignoreReresolutionRequests": true
+            }
+          },
+          "priorities": [
+            "priority-0-0"
+          ]
+        }  (t=+65.487757ms)
+    tlogger.go:116: WARNING balancer_priority.go:87 [xds] ciu, cn, cu: , priority-0-0,   (t=+65.647329ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Balancer state update from locality cluster:cluster-my-service-client-side-xds, new state: {ConnectivityState:CONNECTING Picker:0xc000131d20}  (t=+65.735642ms)
+    tlogger.go:116: INFO balancerstateaggregator.go:217 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Child pickers: map[cluster:cluster-my-service-client-side-xds:picker:0xc000131d20,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+65.807367ms)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #9] Channel Connectivity change to CONNECTING  (t=+65.866545ms)
+    tlogger.go:116: INFO balancer_priority.go:92 [xds] [priority-lb 0xc0000f4620] switching to ("priority-0-0", 0) in syncPriority  (t=+65.92574ms)
+    tlogger.go:116: INFO balancergroup.go:100 [xds] [priority-lb 0xc0000f4620] Creating child policy of type outlier_detection_experimental  (t=+65.968461ms)
+    tlogger.go:116: INFO clusterimpl.go:73 [xds] [xds-cluster-impl-lb 0xc0007606c0] Created  (t=+66.258699ms)
+attributes don't matchcreating map for addr: localhost:55049addr.ServerNameattributes don't matchattributes don't matchcreating map for addr: localhost:55050addr.ServerNameattributes don't matchattributes don't matchcreating map for addr: localhost:55051addr.ServerNameattributes don't matchiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address list    tlogger.go:116: INFO clusterimpl.go:224 [xds] [xds-cluster-impl-lb 0xc0007606c0] Received update from resolver, balancer config: {
+          "cluster": "cluster-my-service-client-side-xds",
+          "edsServiceName": "endpoints-my-service-client-side-xds",
+          "childPolicy": [
+            {
+              "weighted_target_experimental": {
+                "targets": {
+                  "{\"subZone\":\"subzone\"}": {
+                    "weight": 1,
+                    "childPolicy": [
+                      {
+                        "round_robin": {}
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }  (t=+66.573452ms)
+    tlogger.go:116: INFO weightedtarget.go:59 [xds] [weighted-target-lb 0xc00062ada0] Created  (t=+66.672557ms)
+    tlogger.go:116: INFO weightedtarget.go:84 [xds] [weighted-target-lb 0xc00062ada0] Received update from resolver, balancer config: {
+          "targets": {
+            "{\"subZone\":\"subzone\"}": {
+              "weight": 1,
+              "childPolicy": [
+                {
+                  "round_robin": {}
+                }
+              ]
+            }
+          }
+        }  (t=+66.806033ms)
+    tlogger.go:116: INFO balancergroup.go:100 [xds] [weighted-target-lb 0xc00062ada0] Creating child policy of type round_robin  (t=+66.88329ms)
+attributes don't matchattributes don't matchnewSubConn called    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #9 SubChannel #14] Subchannel created  (t=+66.983236ms)
+addrs[0]: localhost:55049len(addrs): 1addrs[0]: localhost:55049addrs[0].ServerNameiterating through address listone of them is nilleft side is nil (thing in map): trueright side is nil Address being searched for:  falseattributes don't matchno object found in mapattributes don't matchattributes don't matchattributes don't matchnewSubConn called    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #14] Subchannel Connectivity change to CONNECTING  (t=+67.180608ms)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #9 SubChannel #15] Subchannel created  (t=+67.263343ms)
+addrs[0]: localhost:55050len(addrs): 1addrs[0]: localhost:55050addrs[0].ServerNameiterating through address listone of them is nilleft side is nil (thing in map): trueright side is nil Address being searched for:  falseattributes don't matchno object found in mapattributes don't match    tlogger.go:116: INFO clientconn.go:1212 [core] [Channel #9 SubChannel #14] Subchannel picks a new address "localhost:55049" to connect  (t=+67.342648ms)
+attributes don't matchattributes don't matchnewSubConn called    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #15] Subchannel Connectivity change to CONNECTING  (t=+67.471365ms)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #9 SubChannel #16] Subchannel created  (t=+67.562215ms)
+addrs[0]: localhost:55051len(addrs): 1addrs[0]: localhost:55051addrs[0].ServerNameiterating through address listone of them is nilleft side is nil (thing in map): trueright side is nil Address being searched for:  falseattributes don't matchno object found in mapattributes don't match    tlogger.go:116: INFO clientconn.go:1212 [core] [Channel #9 SubChannel #15] Subchannel picks a new address "localhost:55050" to connect  (t=+67.675272ms)
+iterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address list    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #16] Subchannel Connectivity change to CONNECTING  (t=+67.791694ms)
+    tlogger.go:116: INFO clientconn.go:1212 [core] [Channel #9 SubChannel #16] Subchannel picks a new address "localhost:55051" to connect  (t=+67.883429ms)
+    tlogger.go:116: INFO roundrobin.go:50 [roundrobin] roundrobinPicker: Build called with info: {map[]}  (t=+67.965324ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [weighted-target-lb 0xc00062ada0] Balancer state update from locality {"subZone":"subzone"}, new state: {ConnectivityState:CONNECTING Picker:0xc0007088d0}  (t=+68.068539ms)
+    tlogger.go:116: INFO aggregator.go:201 [xds] [weighted-target-lb 0xc00062ada0] Child pickers with config: map[{"subZone":"subzone"}:weight:1,picker:0xc0007088d0,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+68.197613ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [weighted-target-lb 0xc00062ada0] Balancer state update from locality {"subZone":"subzone"}, new state: {ConnectivityState:CONNECTING Picker:0xc0007088d0}  (t=+68.389608ms)
+    tlogger.go:116: INFO aggregator.go:201 [xds] [weighted-target-lb 0xc00062ada0] Child pickers with config: map[{"subZone":"subzone"}:weight:1,picker:0xc0007088d0,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+68.558325ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [weighted-target-lb 0xc00062ada0] Balancer state update from locality {"subZone":"subzone"}, new state: {ConnectivityState:CONNECTING Picker:0xc0007088d0}  (t=+68.662213ms)
+    tlogger.go:116: INFO aggregator.go:201 [xds] [weighted-target-lb 0xc00062ada0] Child pickers with config: map[{"subZone":"subzone"}:weight:1,picker:0xc0007088d0,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+68.755101ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [priority-lb 0xc0000f4620] Balancer state update from locality priority-0-0, new state: {ConnectivityState:CONNECTING Picker:0xc00000e3c0}  (t=+68.912865ms)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #16] Subchannel Connectivity change to READY  (t=+69.046892ms)
+    tlogger.go:116: WARNING balancer_priority.go:87 [xds] ciu, cn, cu: priority-0-0, priority-0-0, priority-0-0  (t=+69.139779ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Balancer state update from locality cluster:cluster-my-service-client-side-xds, new state: {ConnectivityState:CONNECTING Picker:0xc00000e3c0}  (t=+69.2948ms)
+    tlogger.go:116: INFO balancerstateaggregator.go:217 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Child pickers: map[cluster:cluster-my-service-client-side-xds:picker:0xc00000e3c0,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+69.4105ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [priority-lb 0xc0000f4620] Balancer state update from locality priority-0-0, new state: {ConnectivityState:CONNECTING Picker:0xc00000e408}  (t=+69.471183ms)
+    tlogger.go:116: INFO balancer_priority.go:92 [xds] [priority-lb 0xc0000f4620] switching to ("priority-0-0", 0) in syncPriority  (t=+69.569548ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [weighted-target-lb 0xc00062ada0] Balancer state update from locality {"subZone":"subzone"}, new state: {ConnectivityState:CONNECTING Picker:0xc0007088d0}  (t=+69.690856ms)
+    tlogger.go:116: WARNING balancer_priority.go:87 [xds] ciu, cn, cu: priority-0-0, priority-0-0, priority-0-0  (t=+69.794204ms)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #14] Subchannel Connectivity change to READY  (t=+69.929996ms)
+    tlogger.go:116: INFO aggregator.go:201 [xds] [weighted-target-lb 0xc00062ada0] Child pickers with config: map[{"subZone":"subzone"}:weight:1,picker:0xc0007088d0,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+69.996359ms)
+iterating through address listiterating through address listiterating through address list    tlogger.go:116: INFO balancergroup.go:499 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Balancer state update from locality cluster:cluster-my-service-client-side-xds, new state: {ConnectivityState:CONNECTING Picker:0xc00000e408}  (t=+70.076184ms)
+    tlogger.go:116: INFO balancerstateaggregator.go:217 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Child pickers: map[cluster:cluster-my-service-client-side-xds:picker:0xc00000e408,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+70.183062ms)
+    tlogger.go:116: INFO balancer_priority.go:92 [xds] [priority-lb 0xc0000f4620] switching to ("priority-0-0", 0) in syncPriority  (t=+70.251405ms)
+    tlogger.go:116: INFO roundrobin.go:50 [roundrobin] roundrobinPicker: Build called with info: {map[0xc0006fe180:{{
+          "Addr": "localhost:55051",
+          "ServerName": "",
+          "Attributes": null,
+          "BalancerAttributes": {},
+          "Type": 0,
+          "Metadata": null
+        }}]}  (t=+70.295499ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [weighted-target-lb 0xc00062ada0] Balancer state update from locality {"subZone":"subzone"}, new state: {ConnectivityState:READY Picker:0xc0005a43f0}  (t=+70.417323ms)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #15] Subchannel Connectivity change to READY  (t=+70.493709ms)
+    tlogger.go:116: INFO aggregator.go:201 [xds] [weighted-target-lb 0xc00062ada0] Child pickers with config: map[{"subZone":"subzone"}:weight:1,picker:0xc0005a43f0,state:READY,stateToAggregate:READY]  (t=+70.621106ms)
+iterating through address listiterating through address listiterating through address list    tlogger.go:116: INFO roundrobin.go:50 [roundrobin] roundrobinPicker: Build called with info: {map[0xc00062af60:{{
+          "Addr": "localhost:55049",
+          "ServerName": "",
+          "Attributes": null,
+          "BalancerAttributes": {},
+          "Type": 0,
+          "Metadata": null
+        }} 0xc0006fe180:{{
+          "Addr": "localhost:55051",
+          "ServerName": "",
+          "Attributes": null,
+          "BalancerAttributes": {},
+          "Type": 0,
+          "Metadata": null
+        }}]}  (t=+70.90374ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [weighted-target-lb 0xc00062ada0] Balancer state update from locality {"subZone":"subzone"}, new state: {ConnectivityState:READY Picker:0xc000781800}  (t=+71.000287ms)
+    tlogger.go:116: INFO aggregator.go:201 [xds] [weighted-target-lb 0xc00062ada0] Child pickers with config: map[{"subZone":"subzone"}:weight:1,picker:0xc000781800,state:READY,stateToAggregate:READY]  (t=+71.075324ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [priority-lb 0xc0000f4620] Balancer state update from locality priority-0-0, new state: {ConnectivityState:CONNECTING Picker:0xc00090a078}  (t=+71.152771ms)
+iterating through address listiterating through address listiterating through address list    tlogger.go:116: WARNING balancer_priority.go:87 [xds] ciu, cn, cu: priority-0-0, priority-0-0, priority-0-0  (t=+71.248564ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Balancer state update from locality cluster:cluster-my-service-client-side-xds, new state: {ConnectivityState:CONNECTING Picker:0xc00090a078}  (t=+71.324595ms)
+    tlogger.go:116: INFO balancerstateaggregator.go:217 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Child pickers: map[cluster:cluster-my-service-client-side-xds:picker:0xc00090a078,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+71.418604ms)
+    tlogger.go:116: INFO roundrobin.go:50 [roundrobin] roundrobinPicker: Build called with info: {map[0xc00062af60:{{
+          "Addr": "localhost:55049",
+          "ServerName": "",
+          "Attributes": null,
+          "BalancerAttributes": {},
+          "Type": 0,
+          "Metadata": null
+        }} 0xc0006fe0e0:{{
+          "Addr": "localhost:55050",
+          "ServerName": "",
+          "Attributes": null,
+          "BalancerAttributes": {},
+          "Type": 0,
+          "Metadata": null
+        }} 0xc0006fe180:{{
+          "Addr": "localhost:55051",
+          "ServerName": "",
+          "Attributes": null,
+          "BalancerAttributes": {},
+          "Type": 0,
+          "Metadata": null
+        }}]}  (t=+71.491675ms)
+    tlogger.go:116: INFO balancer_priority.go:92 [xds] [priority-lb 0xc0000f4620] switching to ("priority-0-0", 0) in syncPriority  (t=+71.591201ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [weighted-target-lb 0xc00062ada0] Balancer state update from locality {"subZone":"subzone"}, new state: {ConnectivityState:READY Picker:0xc000781b90}  (t=+71.635857ms)
+    tlogger.go:116: INFO aggregator.go:201 [xds] [weighted-target-lb 0xc00062ada0] Child pickers with config: map[{"subZone":"subzone"}:weight:1,picker:0xc000781b90,state:READY,stateToAggregate:READY]  (t=+71.709455ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [priority-lb 0xc0000f4620] Balancer state update from locality priority-0-0, new state: {ConnectivityState:CONNECTING Picker:0xc000430198}  (t=+71.800564ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [priority-lb 0xc0000f4620] Balancer state update from locality priority-0-0, new state: {ConnectivityState:READY Picker:0xc0004301c8}  (t=+71.877116ms)
+    tlogger.go:116: WARNING balancer_priority.go:87 [xds] ciu, cn, cu: priority-0-0, priority-0-0, priority-0-0  (t=+71.941971ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [priority-lb 0xc0000f4620] Balancer state update from locality priority-0-0, new state: {ConnectivityState:READY Picker:0xc0004301f8}  (t=+72.002121ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Balancer state update from locality cluster:cluster-my-service-client-side-xds, new state: {ConnectivityState:CONNECTING Picker:0xc000430198}  (t=+72.055481ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [priority-lb 0xc0000f4620] Balancer state update from locality priority-0-0, new state: {ConnectivityState:READY Picker:0xc000430228}  (t=+72.120611ms)
+    tlogger.go:116: INFO balancerstateaggregator.go:217 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Child pickers: map[cluster:cluster-my-service-client-side-xds:picker:0xc000430198,state:CONNECTING,stateToAggregate:CONNECTING]  (t=+72.178117ms)
+    tlogger.go:116: INFO balancer_priority.go:92 [xds] [priority-lb 0xc0000f4620] switching to ("priority-0-0", 0) in syncPriority  (t=+72.271146ms)
+    tlogger.go:116: WARNING balancer_priority.go:87 [xds] ciu, cn, cu: priority-0-0, priority-0-0, priority-0-0  (t=+72.33079ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Balancer state update from locality cluster:cluster-my-service-client-side-xds, new state: {ConnectivityState:READY Picker:0xc0004301c8}  (t=+72.387576ms)
+    tlogger.go:116: INFO balancerstateaggregator.go:217 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Child pickers: map[cluster:cluster-my-service-client-side-xds:picker:0xc0004301c8,state:READY,stateToAggregate:READY]  (t=+72.457646ms)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #9] Channel Connectivity change to READY  (t=+72.517319ms)
+    tlogger.go:116: INFO balancer_priority.go:92 [xds] [priority-lb 0xc0000f4620] switching to ("priority-0-0", 0) in syncPriority  (t=+72.573283ms)
+    tlogger.go:116: WARNING balancer_priority.go:87 [xds] ciu, cn, cu: priority-0-0, priority-0-0, priority-0-0  (t=+72.620916ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Balancer state update from locality cluster:cluster-my-service-client-side-xds, new state: {ConnectivityState:READY Picker:0xc0004301f8}  (t=+72.67629ms)
+    tlogger.go:116: INFO balancerstateaggregator.go:217 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Child pickers: map[cluster:cluster-my-service-client-side-xds:picker:0xc0004301f8,state:READY,stateToAggregate:READY]  (t=+72.751378ms)
+    tlogger.go:116: INFO balancer_priority.go:92 [xds] [priority-lb 0xc0000f4620] switching to ("priority-0-0", 0) in syncPriority  (t=+72.801101ms)
+    tlogger.go:116: WARNING balancer_priority.go:87 [xds] ciu, cn, cu: priority-0-0, priority-0-0, priority-0-0  (t=+72.848287ms)
+    tlogger.go:116: INFO balancergroup.go:499 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Balancer state update from locality cluster:cluster-my-service-client-side-xds, new state: {ConnectivityState:READY Picker:0xc000430228}  (t=+72.901628ms)
+    tlogger.go:116: INFO balancerstateaggregator.go:217 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Child pickers: map[cluster:cluster-my-service-client-side-xds:picker:0xc000430228,state:READY,stateToAggregate:READY]  (t=+72.969415ms)
+    tlogger.go:116: INFO balancer_priority.go:92 [xds] [priority-lb 0xc0000f4620] switching to ("priority-0-0", 0) in syncPriority  (t=+73.020229ms)
+object is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilinterval timer algorithm runningiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listfailure percentage algorithm callediterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listiterating through address listiterating through address listobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilinterval timer algorithm runningiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listfailure percentage algorithm callediterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listiterating through address listiterating through address listobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilinterval timer algorithm runningiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listfailure percentage algorithm callediterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listiterating through address listiterating through address listobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilinterval timer algorithm runningobject is niliterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listfailure percentage algorithm callediterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listiterating through address listiterating through address listobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilinterval timer algorithm runningiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listiterating through address listfailure percentage algorithm callediterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listthe address's total request volume is less than failure_percentage_ejection.request_volume, request volume: 0iterating through address listiterating through address listiterating through address listobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilobject is nilcount1: 1000count2: 1000count3: 1000    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #9] Channel Connectivity change to SHUTDOWN  (t=+5.563479446s)
+    tlogger.go:116: INFO cluster_handler.go:195 [xds] [cds-lb 0xc000740340] CDS watch canceled on cluster-my-service-client-side-xds  (t=+5.563632997s)
+    tlogger.go:116: INFO resource_resolver.go:274 [xds] [xds-cluster-resolver-lb 0xc000a8c000] EDS watch canceled on endpoints-my-service-client-side-xds  (t=+5.563783953s)
+    tlogger.go:116: INFO clusterimpl.go:336 [xds] [xds-cluster-impl-lb 0xc0007606c0] Shutdown  (t=+5.563963048s)
+    tlogger.go:116: INFO clusterresolver.go:317 [xds] [xds-cluster-resolver-lb 0xc000a8c000] Shutdown  (t=+5.564056377s)
+    tlogger.go:116: INFO cdsbalancer.go:469 [xds] [cds-lb 0xc000740340] Shutdown  (t=+5.564169905s)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.cluster.v3.Cluster[] and known map[cluster-my-service-client-side-xds:{}]. Diff []  (t=+5.564255893s)
+    tlogger.go:116: INFO clustermanager.go:141 [xds] [xds-cluster-manager-lb 0xc00053ecc0] Shutdown  (t=+5.564345943s)
+    tlogger.go:116: INFO simple.go:374 [xds-e2e] open watch 5 for type.googleapis.com/envoy.config.cluster.v3.Cluster[] from nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8", version "1"  (t=+5.564452535s)
+    tlogger.go:116: INFO xds_resolver.go:143 [xds] [xds-resolver 0xc0002b0c60] Watch cancel on resource name my-service-client-side-xds with xds-client 0xc0001284f8  (t=+5.564529165s)
+    tlogger.go:116: INFO simple.go:354 [xds-e2e] nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8" requested type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment[] and known map[endpoints-my-service-client-side-xds:{}]. Diff []  (t=+5.564602781s)
+    tlogger.go:116: WARNING transport.go:191 ADS stream is closed with error: xds: stream.Recv() failed: rpc error: code = Canceled desc = context canceled  (t=+5.56476754s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #10] Channel Connectivity change to SHUTDOWN  (t=+5.564851237s)
+    tlogger.go:116: INFO simple.go:374 [xds-e2e] open watch 6 for type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment[] from nodeID "1e86e7f3-6fa5-4a3c-8980-eeff0ca282f8", version "1"  (t=+5.564931787s)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #10 SubChannel #11] Subchannel Connectivity change to SHUTDOWN  (t=+5.565000916s)
+    tlogger.go:116: INFO clientconn.go:1457 [core] [Channel #10 SubChannel #11] Subchannel deleted  (t=+5.565107174s)
+    tlogger.go:116: INFO clientconn.go:1056 [core] [Channel #10] Channel deleted  (t=+5.565166649s)
+    tlogger.go:116: INFO client.go:112 [xds] [xds-client 0xc0000c7500] Shutdown  (t=+5.565236811s)
+    tlogger.go:116: INFO xds_resolver.go:314 [xds] [xds-resolver 0xc0002b0c60] Shutdown  (t=+5.56531525s)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #14] Subchannel Connectivity change to SHUTDOWN  (t=+5.565397645s)
+    tlogger.go:116: INFO clientconn.go:1457 [core] [Channel #9 SubChannel #14] Subchannel deleted  (t=+5.565465965s)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #15] Subchannel Connectivity change to SHUTDOWN  (t=+5.565510858s)
+    tlogger.go:116: INFO clientconn.go:1457 [core] [Channel #9 SubChannel #15] Subchannel deleted  (t=+5.565564121s)
+    tlogger.go:116: INFO clientconn.go:1101 [core] [Channel #9 SubChannel #16] Subchannel Connectivity change to SHUTDOWN  (t=+5.565608963s)
+    tlogger.go:116: INFO clientconn.go:1457 [core] [Channel #9 SubChannel #16] Subchannel deleted  (t=+5.565654018s)
+    tlogger.go:116: INFO clientconn.go:1056 [core] [Channel #9] Channel deleted  (t=+5.565690223s)
+    tlogger.go:116: INFO server.go:737 [core] [Server #7 ListenSocket #8] ListenSocket deleted  (t=+5.565810139s)
+    tlogger.go:116: INFO server.go:737 [core] [Server #5 ListenSocket #6] ListenSocket deleted  (t=+5.56599773s)
+    tlogger.go:116: INFO server.go:737 [core] [Server #3 ListenSocket #4] ListenSocket deleted  (t=+5.566133282s)
+    tlogger.go:116: INFO server.go:737 [core] [Server #1 ListenSocket #2] ListenSocket deleted  (t=+5.566280393s)
+--- PASS: Test (5.57s)
+    --- PASS: Test/OutlierDetectionWithOutlier (5.57s)
+PASS
+ok  	google.golang.org/grpc/test/xds	6.444s

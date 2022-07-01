@@ -21,6 +21,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/internal"
 	"io"
 	"math"
 	"net"
@@ -205,6 +206,16 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	// Attributes field of resolver.Address, which is shoved into connectCtx
 	// and passed to the dialer and credential handshaker. This makes it possible for
 	// address specific arbitrary data to reach custom dialers and credential handshakers.
+	name, ok := internal.GetXDSHandshakeClusterName(addr.BalancerAttributes)
+	if ok {
+		internal.SetXDSHandshakeClusterName(addr, name)
+	}
+	internal.SetXDSHandshakeClusterName(addr.Attributes,)
+
+	attrs := addr.Attributes
+	addr.BalancerAttributes
+	attrs.WithValue()
+
 	connectCtx = icredentials.NewClientHandshakeInfoContext(connectCtx, credentials.ClientHandshakeInfo{Attributes: addr.Attributes})
 
 	conn, err := dial(connectCtx, opts.Dialer, addr, opts.UseProxy, opts.UserAgent)

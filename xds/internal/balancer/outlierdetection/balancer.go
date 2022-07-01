@@ -67,12 +67,11 @@ func init() {
 type bb struct{}
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
-	am := resolver.NewAddressMap()
 	b := &outlierDetectionBalancer{
 		cc:             cc,
 		bOpts:          bOpts,
 		closed:         grpcsync.NewEvent(),
-		odAddrs:        am,
+		odAddrs:        resolver.NewAddressMap(),
 		scWrappers:     make(map[balancer.SubConn]*subConnWrapper),
 		scUpdateCh:     buffer.NewUnbounded(),
 		pickerUpdateCh: buffer.NewUnbounded(),
@@ -218,13 +217,16 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	// When the outlier_detection LB policy receives an address update, it will
 	// create a map entry for each subchannel address in the list, and remove
 	// each map entry for a subchannel address not in the list.
-	addrs := make(map[resolver.Address]bool)
+	addrs := resolver.NewAddressMap()
 	for _, addr := range s.ResolverState.Addresses {
-		addrs[addr] = true
+		addrs.Set(addr, struct{}{})
+		print("creating map for addr: ", addr.Addr)
+		print("addr.ServerName", addr.ServerName)
 		b.odAddrs.Set(addr, newObject())
 	}
 	for _, addr := range b.odAddrs.Keys() {
-		if !addrs[addr] {
+		if _, ok := addrs.Get(addr); !ok {
+			print("deleting from map")
 			b.odAddrs.Delete(addr)
 		}
 	}
@@ -398,6 +400,7 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	// timers algorithm.
 	obj := (*object)(atomic.LoadPointer(&scw.obj))
 	if obj == nil {
+		print("object is nil")
 		return
 	}
 	ab := (*bucket)(atomic.LoadPointer(&obj.callCounter.activeBucket))
@@ -407,6 +410,7 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	} else {
 		atomic.AddInt64(&ab.numFailures, 1)
 	}
+	print("request volume increasing by 1")
 	atomic.AddInt64(&ab.requestVolume, 1)
 }
 
@@ -416,6 +420,7 @@ func (b *outlierDetectionBalancer) UpdateState(s balancer.State) {
 }
 
 func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
+	print("newSubConn called")
 	// "When the child policy asks for a subchannel, the outlier_detection will
 	// wrap the subchannel with a wrapper." - A50
 	sc, err := b.cc.NewSubConn(addrs, opts)
@@ -430,17 +435,24 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.scWrappers[sc] = scw
+	print("addrs[0]: ", addrs[0].Addr)
+	print("len(addrs): ", len(addrs))
 	if len(addrs) != 1 {
+		print("len(addrs) != 1")
 		return scw, nil
 	}
 
-	val, ok := b.odAddrs.Get(addrs[0])
+	print("addrs[0]: ", addrs[0].Addr)
+	print("addrs[0].ServerName", addrs[0].ServerName)
+	val, ok := b.odAddrs.Get(addrs[0]) // Problem: this doesn't get it properly. I think it doesn't have correct balancer attributes.
 	if !ok {
+		print("no object found in map")
 		return scw, nil
 	}
 
 	obj, ok := val.(*object)
 	if !ok {
+		print("val is not an object")
 		return scw, nil
 	}
 	obj.sws = append(obj.sws, scw)
@@ -612,6 +624,7 @@ func min(x, y int64) int64 {
 }
 
 func (b *outlierDetectionBalancer) intervalTimerAlgorithm() {
+	print("interval timer algorithm running")
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.timerStartTime = time.Now()
@@ -848,6 +861,7 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 }
 
 func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
+	print("failure percentage algorithm called")
 	// 1. If the number of addresses is less than
 	// failure_percentage_ejection.minimum_hosts, stop.
 	if uint32(b.odAddrs.Len()) < b.odCfg.FailurePercentageEjection.MinimumHosts {
@@ -869,12 +883,14 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 		// i. If the percentage of ejected addresses is greater than
 		// max_ejection_percent, stop.
 		if float64(b.numAddrsEjected)/float64(b.odAddrs.Len())*100 > float64(b.odCfg.MaxEjectionPercent) {
+			print("the percentage of ejected addresses is greater than max_ejection_percent")
 			return
 		}
 		// ii. If the address's total request volume is less than
 		// failure_percentage_ejection.request_volume, continue to the next
 		// address.
 		if uint32(ccb.requestVolume) < fpe.RequestVolume {
+			print("the address's total request volume is less than failure_percentage_ejection.request_volume, request volume: ", uint32(ccb.requestVolume))
 			continue
 		}
 		//  2c. If the address's failure percentage is greater than
@@ -885,6 +901,7 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 			// than failiure_percentage_ejection.enforcement_percentage, eject
 			// that address.
 			if uint32(grpcrand.Int31n(100)) < b.odCfg.FailurePercentageEjection.EnforcementPercentage {
+				print("about to eject address")
 				b.ejectAddress(addr)
 			}
 		}
