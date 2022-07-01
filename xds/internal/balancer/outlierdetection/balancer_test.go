@@ -969,19 +969,7 @@ func (s) TestPicker(t *testing.T) {
 		pi.Done(balancer.DoneInfo{})
 		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
 		od.mu.Lock()
-
-		/*val, ok := od.odAddrs.Get(resolver.Address{
-			Addr: "address1",
-		})
-		if !ok {
-			t.Fatal("map entry for address: address1 not present in map")
-		}
-		obj, ok := val.(*object)
-		if !ok {
-			t.Fatal("map value isn't obj type")
-		}*/
-
-		obj, ok := od.odAddrs2["address1"]
+		obj, ok := od.odAddrs["address1"]
 		if !ok {
 			t.Fatal("map entry for address: address1 not present in map")
 		}
@@ -1051,18 +1039,7 @@ func (s) TestPicker(t *testing.T) {
 		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
 		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
 		od.mu.Lock()
-
-		/*val, ok := od.odAddrs.Get(resolver.Address{
-			Addr: "address1",
-		})
-		if !ok {
-			t.Fatal("map entry for address: address1 not present in map")
-		}
-		obj, ok := val.(*object)
-		if !ok {
-			t.Fatal("map value isn't obj type")
-		}*/
-		obj, ok := od.odAddrs2["address1"]
+		obj, ok := od.odAddrs["address1"]
 		if !ok {
 			t.Fatal("map entry for address: address1 not present in map")
 		}
@@ -1111,18 +1088,7 @@ func (s) TestPicker(t *testing.T) {
 		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
 		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
 		od.mu.Lock()
-
-		/*val, ok := od.odAddrs.Get(resolver.Address{
-			Addr: "address1",
-		})
-		if !ok {
-			t.Fatal("map entry for address: address1 not present in map")
-		}
-		obj, ok := val.(*object)
-		if !ok {
-			t.Fatal("map value isn't obj type")
-		}*/
-		obj, ok := od.odAddrs2["address1"]
+		obj, ok := od.odAddrs["address1"]
 		if !ok {
 			t.Fatal("map entry for address: address1 not present in map")
 		}

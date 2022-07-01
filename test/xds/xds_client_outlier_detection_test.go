@@ -109,17 +109,14 @@ func defaultClusterWithOutlierDetection(clusterName, edsServiceName string, secL
 	cluster := e2e.DefaultCluster(clusterName, edsServiceName, secLevel)
 	cluster.OutlierDetection = &v3clusterpb.OutlierDetection{
 		Interval: &durationpb.Duration{
-			Seconds: 1,
 			// Seconds: 1,
+			// Seconds: 1,
+			Nanos: 500000000,
 			// Nanos: 500000000,
-			// Nanos: 500000000,
-		}, // will constantly trigger interval timer algorithm. Mimics a real configuration
+		},
 		BaseEjectionTime:               &durationpb.Duration{Seconds: 30},
 		MaxEjectionTime:                &durationpb.Duration{Seconds: 300},
 		MaxEjectionPercent:             &wrapperspb.UInt32Value{Value: 1},
-		/*SuccessRateStdevFactor:         &wrapperspb.UInt32Value{Value: 100},
-		SuccessRateMinimumHosts:        &wrapperspb.UInt32Value{Value: 3},
-		SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},*/
 		FailurePercentageThreshold: &wrapperspb.UInt32Value{Value: 50},
 		EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 100},
 		FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 1},
@@ -156,11 +153,8 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 	var count1, count2, count3 int
 
 	// Working backend 1.
-	//updateCh1 := testutils.NewChannel()
 	port1, cleanup1 := startTestService(t, &stubserver.StubServer{
 		EmptyCallF: func(context.Context, *testpb.Empty) (*testpb.Empty, error) {
-			// 1 make sure something is written here
-			// updateCh1.Replace(struct{}{})
 			count1++
 			return &testpb.Empty{}, nil
 		},
@@ -169,23 +163,17 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 	defer cleanup1()
 
 	// Working backend 2.
-	//updateCh2 := testutils.NewChannel()
 	port2, cleanup2 := startTestService(t, &stubserver.StubServer{
 		EmptyCallF: func(context.Context, *testpb.Empty) (*testpb.Empty, error) {
-			// 1 make sure something is written here
-			// updateCh2.Replace(struct{}{})
 			count2++
 			return &testpb.Empty{}, nil
 		},
 		Address: "localhost:0",
 	})
 	defer cleanup2()
-	// Backend that will always return an error and be ejected.
-	//updateCh3 := testutils.NewChannel()
+	// Backend that will always return an error and be eventually ejected.
 	port3, cleanup3 := startTestService(t, &stubserver.StubServer{
 		EmptyCallF: func(context.Context, *testpb.Empty) (*testpb.Empty, error) {
-			// 3 (make sure nothing is written here)
-			// updateCh3.Replace(struct{}{})
 			count3++
 			return nil, errors.New("some error")
 		},
@@ -206,14 +194,6 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Make a bunch of RPC's (15 5 success 5 success 5 failure with my same
-	// config), Round Robining across each of the backends. This should cause
-	// one of the backends to get ejected
-
-	// 15 times, even if one of them is ejected, it's fine just will go 0, 1, 0, 1, 0, 1 wait won't get ejected no intervalTimerAlgorithm call
-
-	// Create a ClientConn and make 15 successful RPCs, which will round robin over the three upstreams.
-
 	cc, err := grpc.Dial(fmt.Sprintf("xds:///%s", serviceName), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(resolver))
 	if err != nil {
 		t.Fatalf("failed to dial local test server: %v", err)
@@ -222,7 +202,7 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 
 
 	client := testgrpc.NewTestServiceClient(cc)
-	for i := 0; i < 3000; i++ {
+	for i := 0; i < 2000; i++ {
 		// Can either error or not depending on the backend called.
 		if _, err := client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil && !strings.Contains(err.Error(), "some error") {
 			t.Fatalf("rpc EmptyCall() failed: %v", err)
@@ -231,79 +211,38 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 	}
 	print("count1: ", count1, "count2: ", count2, "count3: ", count3)
 
+	// "I think the test can be fuzzy, just expect most of the rpcs to go to the
+	// healthy one"
+
+	// Backend 1 should've gotten more than 1/3rd of the load as backend 3
+	// should get ejected, leaving only 1 and 2.
+	if count1 < 700 {
+		t.Fatalf("backend 1 should've gotten more than 1/3rd of the load")
+	}
+	// Backend 2 should've gotten more than 1/3rd of the load as backend 3
+	// should get ejected, leaving only 1 and 2.
+	if count2 < 700 {
+		t.Fatalf("backend 2 should've gotten more than 1/3rd of the load")
+	}
+	// Backend 3 should've gotten less than 1/3rd of the load since it gets
+	// ejected.
+	if count3 > 650 {
+		t.Fatalf("backend 1 should've gotten more than 1/3rd of the load")
+	}
+
+	// Outlier Detection is fine in regards to cleanup
+	// Two things left for this test: cleanup, and assertions on these counts (+
+	// knobs to make it not flaky/take a long time)
+
+	// Cleanup other files, rebase into one commit, send out :D!
+
+
 
 	// cleanup and get it compiling/working, then do the stuff after...
 
 	// TriggerIntervalTimeForTesting (will eject)
 
-	// Two things: 1. No reference to od (part of system)
-	// 2. No reference to intervalTimer (unexported function)
-
-	// od.intervalTimerAlgorithm <- this thing is way into the system
-
-	// the intervalTimerAlgorithm is a function on the balancer...how do we get this to trigger?
-	// simulate time? keep running interval timer (with a short duration),
-
-	// all 3 updates channels should have something there - clear them
-	/*_, err = updateCh1.Receive(ctx)
-	if err != nil {
-		t.Fatalf("error receiving from updateCh1 (backend1 should have been requested): %v", err)
-	}
-	_, err = updateCh2.Receive(ctx)
-	if err != nil {
-		t.Fatalf("error receiving from updateCh2 (backend2 should have been requested): %v", err)
-	}
-	_, err = updateCh3.Receive(ctx)
-	if err != nil {
-		t.Fatalf("error receiving from updateCh3 (backend3 should have been requested): %v", err)
-	}
-
-	// The third backend should eject once that for loop completes and it hits
-	// request volume of 5 each - deterministic from Outlier Detection
-	// Algorithm.
-
-	for i := 0; i < 15; i++ {
-		// Can either error or not depending on the backend called.
-		if _, err := client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil && !strings.Contains(err.Error(), "some error") {
-			t.Fatalf("rpc EmptyCall() failed: %v", err)
-		}
-	}
-
-	// Only the first two upstreams should have received an RPC, as the third should have been ejected from the interval timer algorithm.
-	_, err = updateCh1.Receive(ctx)
-	if err != nil {
-		t.Fatalf("error receiving from updateCh1 (backend1 should have been requested): %v", err)
-	}
-	_, err = updateCh2.Receive(ctx)
-	if err != nil {
-		t.Fatalf("error receiving from updateCh2 (backend2 should have been requested): %v", err)
-	}
-	sCtx, sCancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
-	defer sCancel()
-	_, err = updateCh3.Receive(sCtx)
-	if err == nil {
-		t.Fatalf("there should not have been an update from updateCh3 (backend3 should have not have been requested and should be ejected): %v", err)
-	}*/
-
-	// clear the recent call buffer of the three, and then do 3 rpc's and wait on each of the buffer reads
-
-	// at the end
 
 
-	// maybe just keep running the interval timer algorithm...and wait for it to be ejected for 5 seconds
 
-	// Send a few more RPC's, make sure 1 and 2 are still sent to but 3 isn't
-
-	// 1 (buffer)
-
-	// 2 (buffer)
-
-	// 3 (make sure nothing is written here)
-
-
-	// How to assert that RPC's only go RR across two of the backends?
-
-	// Service 1 and 2 need to assert they got called (with a channel perhaps?)
-
-	// Service 3 needs to assert it didn't get called (make sure a channel receive errors?)
 }
