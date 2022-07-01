@@ -22,6 +22,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"testing"
+	"time"
+
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	v3endpointpb "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	v3listenerpb "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
@@ -32,14 +36,10 @@ import (
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/internal/testutils/xds/e2e"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
-	"strings"
-	"testing"
-	"time"
-
 	testgrpc "google.golang.org/grpc/test/grpc_testing"
 	testpb "google.golang.org/grpc/test/grpc_testing"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // TestOutlierDetection tests an xDS configured ClientConn with an Outlier
@@ -90,8 +90,8 @@ func (s) TestOutlierDetection(t *testing.T) {
 // defaultClientResourcesSpecifyingMultipleBackendsAndOutlierDetection returns
 // xDS resources which correspond to multiple upstreams, corresponding different
 // backends listening on different localhost:port combinations. The resources
-// also configure an Outlier Detection Balancer set up with
-// SuccessRateAlgorithm.
+// also configure an Outlier Detection Balancer set up with Failure Percentage
+// Algorithm, which ejects endpoints based on failure rate.
 func defaultClientResourcesSpecifyingMultipleBackendsAndOutlierDetection(params e2e.ResourceParams, ports []uint32) e2e.UpdateOptions {
 	routeConfigName := "route-" + params.DialTarget
 	clusterName := "cluster-" + params.DialTarget
@@ -101,7 +101,7 @@ func defaultClientResourcesSpecifyingMultipleBackendsAndOutlierDetection(params 
 		Listeners: []*v3listenerpb.Listener{e2e.DefaultClientListener(params.DialTarget, routeConfigName)},
 		Routes:    []*v3routepb.RouteConfiguration{e2e.DefaultRouteConfig(routeConfigName, params.DialTarget, clusterName)},
 		Clusters:  []*v3clusterpb.Cluster{defaultClusterWithOutlierDetection(clusterName, endpointsName, params.SecLevel)},
-		Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.DefaultEndpoint(endpointsName, params.Host, ports)}, // this is the delta
+		Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.DefaultEndpoint(endpointsName, params.Host, ports)},
 	}
 }
 
@@ -109,10 +109,7 @@ func defaultClusterWithOutlierDetection(clusterName, edsServiceName string, secL
 	cluster := e2e.DefaultCluster(clusterName, edsServiceName, secLevel)
 	cluster.OutlierDetection = &v3clusterpb.OutlierDetection{
 		Interval: &durationpb.Duration{
-			// Seconds: 1,
-			// Seconds: 1,
 			Nanos: 500000000,
-			// Nanos: 500000000,
 		},
 		BaseEjectionTime:               &durationpb.Duration{Seconds: 30},
 		MaxEjectionTime:                &durationpb.Duration{Seconds: 300},
@@ -125,18 +122,11 @@ func defaultClusterWithOutlierDetection(clusterName, edsServiceName string, secL
 	return cluster
 }
 
-// backend 1 - normal
-// backend 2 - normal
-// backend 3 - always return error
-
-// ^^^ system it tests
-
 // TestOutlierDetectionWithOutlier tests the Outlier Detection Balancer e2e. It
 // spins up three backends, one which consistently errors, and configures the
 // ClientConn using xDS to connect to all three of those backends. The Outlier
 // Detection Balancer should eject the connection to the backend which
-// constantly errors, meaning it no longer gets round robin requests forwarded
-// to it.
+// constantly errors, and thus RPC's should mainly go to backend 1 and 2.
 func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 	oldOD := envconfig.XDSOutlierDetection
 	envconfig.XDSOutlierDetection = true
@@ -171,7 +161,7 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 		Address: "localhost:0",
 	})
 	defer cleanup2()
-	// Backend that will always return an error and be eventually ejected.
+	// Backend 3 that will always return an error and eventually ejected.
 	port3, cleanup3 := startTestService(t, &stubserver.StubServer{
 		EmptyCallF: func(context.Context, *testpb.Empty) (*testpb.Empty, error) {
 			count3++
@@ -209,10 +199,6 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	print("count1: ", count1, "count2: ", count2, "count3: ", count3)
-
-	// "I think the test can be fuzzy, just expect most of the rpcs to go to the
-	// healthy one"
 
 	// Backend 1 should've gotten more than 1/3rd of the load as backend 3
 	// should get ejected, leaving only 1 and 2.
@@ -229,20 +215,4 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 	if count3 > 650 {
 		t.Fatalf("backend 1 should've gotten more than 1/3rd of the load")
 	}
-
-	// Outlier Detection is fine in regards to cleanup
-	// Two things left for this test: cleanup, and assertions on these counts (+
-	// knobs to make it not flaky/take a long time)
-
-	// Cleanup other files, rebase into one commit, send out :D!
-
-
-
-	// cleanup and get it compiling/working, then do the stuff after...
-
-	// TriggerIntervalTimeForTesting (will eject)
-
-
-
-
 }

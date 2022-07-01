@@ -59,14 +59,12 @@ func NewAddressMap() *AddressMap {
 // present.
 func (l addressMapEntryList) find(addr Address) int {
 	for i, entry := range l {
-		print("iterating through address list")
 		// Attributes are the only thing to match on here, since `Addr` and
 		// `ServerName` are already equal.
 		if entry.addr.Attributes.Equal(addr.Attributes) {
 			return i
 		}
 	}
-	print("attributes don't match")
 	return -1
 }
 
@@ -85,7 +83,6 @@ func (a *AddressMap) Set(addr Address, value interface{}) {
 	addrKey := toMapKey(&addr)
 	entryList := a.m[addrKey]
 	if entry := entryList.find(addr); entry != -1 {
-		print("searching entry list")
 		entryList[entry].value = value
 		return
 	}

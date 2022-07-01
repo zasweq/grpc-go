@@ -77,34 +77,25 @@ func (a *Attributes) Equal(o *Attributes) bool {
 		return true
 	}
 	if a == nil || o == nil {
-		print("one of them is nil")
-		print("left side is nil (thing in map): ", a == nil)
-		print("right side is nil Address being searched for:  ", o == nil)
 		return false
 	}
 	if len(a.m) != len(o.m) {
-		print("lengths are different")
 		return false
 	}
 	for k, v := range a.m {
 		ov, ok := o.m[k]
 		if !ok {
-			print("o missing element of a")
 			// o missing element of a
 			return false
 		}
 		if eq, ok := v.(interface{ Equal(o interface{}) bool }); ok {
 			if !eq.Equal(ov) {
-				print(".Equal is false")
 				return false
 			}
 		} else if v != ov {
-			print("!= is false")
 			// Fallback to a standard equality check if Value is unimplemented.
 			return false
 		}
 	}
 	return true
 }
-
-// Inform Terry that I picked up Observability, through an env var, custom tags, plumbing

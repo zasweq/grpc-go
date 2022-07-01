@@ -47,13 +47,9 @@ const (
 	EndpointHealthStatusDegraded
 )
 
-// "Notifies Envoy of endpoints (host:ports that make up a cluster) iff the cluster was configured to use EDS."
-
 // Endpoint contains information of an endpoint.
-type Endpoint struct { // "specific backend" -
-	// yes, this can be a host/port. Thus, have the EDS resource specify
-	// three addresses, each corresponding to a spun up stub service.
-	Address      string // is this logically equivalent to "host:port", test service is "localhost:8080"...
+type Endpoint struct {
+	Address      string
 	HealthStatus EndpointHealthStatus
 	Weight       uint32
 }
@@ -82,24 +78,3 @@ type EndpointsUpdateErrTuple struct {
 	Update EndpointsUpdate
 	Err    error
 }
-
-
-// stop sending requests to a "specific backend"
-// ejects "endpoints" with high error rates
-
-
-// ring hash flattens the endpoint list across all localities
-
-// each endpoint is a "specific backend", which one or more can be in each "locality".
-
-// Each cluster can have multiple localities with endpoints in each of those localities
-
-// or in the case of ring hash a cluster ("flattened list of endpoints" [])
-
-
-// so we need 3 endpoints...configure with []{Endpoint, Endpoint, Endpoint}
-
-// Server spins up a default service, also need it to spin up three endpoints
-// within that service (s/DefaultEndpoint to []{Endpoint, Endpoint, Endpoint}
-
-
