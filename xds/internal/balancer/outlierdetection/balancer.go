@@ -34,6 +34,7 @@ import (
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal"
+	"google.golang.org/grpc/internal/balancer/gracefulswitch"
 	"google.golang.org/grpc/internal/buffer"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/grpclog"
@@ -72,6 +73,7 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 		cc:             cc,
 		bOpts:          bOpts,
 		closed:         grpcsync.NewEvent(),
+		child:          gracefulswitch.NewBalancer(cc, bOpts),
 		addrs:          make(map[string]*addressInfo),
 		scWrappers:     make(map[balancer.SubConn]*subConnWrapper),
 		scUpdateCh:     buffer.NewUnbounded(),
@@ -167,7 +169,9 @@ type outlierDetectionBalancer struct {
 	// against run() reading that the child is not nil for SubConn updates, and
 	// then UpdateClientConnState or Close writing to the the child.
 	childMu sync.Mutex
-	child   balancer.Balancer
+	// child   balancer.Balancer
+
+	child *gracefulswitch.Balancer
 
 	// mu guards access to the following fields. It also helps to synchronize
 	// behaviors of the following events: config updates, firing of the interval
@@ -197,7 +201,7 @@ type outlierDetectionBalancer struct {
 }
 
 // noopConfig returns whether this balancer is configured with a logical no-op
-// configuration or not.
+// configuration or not. Caller must hold b.mu.
 func (b *outlierDetectionBalancer) noopConfig() bool {
 	return b.cfg.SuccessRateEjection == nil && b.cfg.FailurePercentageEjection == nil
 }
@@ -216,12 +220,19 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		return fmt.Errorf("outlier detection: child balancer %q not registered", lbCfg.ChildPolicy.Name)
 	}
 
+	// Inhibit child picker updates until this UpdateClientConnState() call
+	// completes. This makes sure a single picker update gets sent out
+	// synchronously as a result of this UpdateClientConnState call, and this
+	// picker update contains the most updated no-op config bit and most recent
+	// state from the child.
+	b.inhibitPickerUpdates = true
+	defer func() {
+		b.inhibitPickerUpdates = false
+	}()
+
 	if b.child == nil || b.cfg.ChildPolicy.Name != lbCfg.ChildPolicy.Name {
 		b.childMu.Lock()
-		if b.child != nil {
-			b.child.Close()
-		}
-		b.child = bb.Build(b, b.bOpts)
+		b.child.SwitchTo(bb)
 		b.childMu.Unlock()
 	}
 
@@ -241,6 +252,14 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		}
 	}
 
+	// is this going to cause deadlock?
+	b.childMu.Lock() // now mu has to be grabbed before childMu, implicit ordering requirement now here
+	err := b.child.UpdateClientConnState(balancer.ClientConnState{
+		ResolverState:  s.ResolverState,
+		BalancerConfig: b.cfg.ChildPolicy.Config,
+	})
+	b.childMu.Unlock()
+
 	var interval time.Duration
 	if b.timerStartTime.IsZero() {
 		b.timerStartTime = time.Now()
@@ -259,9 +278,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		b.intervalTimer.Stop()
 	}
 	if !b.noopConfig() {
-		b.intervalTimer = afterFunc(interval, func() {
-			b.intervalTimerAlgorithm()
-		})
+		b.intervalTimer = afterFunc(interval, b.intervalTimerAlgorithm)
 	} else {
 		// "If a config is provided with both the `success_rate_ejection` and
 		// `failure_percentage_ejection` fields unset, skip starting the timer and
@@ -278,18 +295,7 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		}
 	}
 
-	// Inhibit picker updates until run() processes the	lbCfgUpdate. This
-	// makes sure a single picker update gets sent out synchronously as a result
-	// of this UpdateClientConnState call, and this picker update contains the
-	// most updated no-op config bit and most recent state from the child.
-	b.inhibitPickerUpdates = true
 	b.mu.Unlock()
-	b.childMu.Lock()
-	err := b.child.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState:  s.ResolverState,
-		BalancerConfig: b.cfg.ChildPolicy.Config,
-	})
-	b.childMu.Unlock()
 
 	done := make(chan struct{})
 	b.pickerUpdateCh.Put(lbCfgUpdate{
@@ -299,6 +305,13 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	<-done
 	return err
 }
+
+// Two of Easwar's deep comments: why is UpdateSubConnState() called before
+// UpdateClientConnState(), this isn't allowed correct so move the logic of
+// UpdateClientConnState before UpdateSubConnState
+
+// The lb config update, why are we going through the channel instead of simply updating inline?
+// If you update inline, you can set to false and future picker updates will proceed as normal.
 
 func (b *outlierDetectionBalancer) ResolverError(err error) {
 	if b.child == nil {
@@ -332,12 +345,11 @@ func (b *outlierDetectionBalancer) Close() {
 	b.closed.Fire()
 	if b.child != nil {
 		b.childMu.Lock()
-		b.child.Close()
+		b.child.Close() // I think this logic stays the same, child being nil is used as an invariant for this being closed, a lot of this logic is scoped to the graceful switch balancer itself
 		b.child = nil
 		b.childMu.Unlock()
 	}
 
-	// Any other cleanup needs to happen (subconns, other resources?)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.intervalTimer != nil {
@@ -349,16 +361,9 @@ func (b *outlierDetectionBalancer) ExitIdle() {
 	if b.child == nil {
 		return
 	}
-	if ei, ok := b.child.(balancer.ExitIdler); ok {
-		b.childMu.Lock()
-		defer b.childMu.Unlock()
-		ei.ExitIdle()
-		return
-	}
-
-	// Fallback for children handled in clusterimpl balancer Removing SubConns
-	// is defined in API and also in graceful switch balancer, but already done
-	// in ClusterImpl. I guess we should do that here?
+	b.childMu.Lock()
+	defer b.childMu.Unlock()
+	b.child.ExitIdle()
 }
 
 // wrappedPicker delegates to the child policy's picker, and when the request
@@ -417,10 +422,8 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	// an outdated addresses is a very small race and tolerable. After reading
 	// callCounter.activeBucket in this picker a swap call can concurrently
 	// change what activeBucket points to. A50 says to swap the pointer, but I
-	// decided to make create new memory for both active and inactive bucket,
-	// and have this race instead write to deprecated memory. If you swap the
-	// pointers, this write would write to the inactive buckets memory, which is
-	// read throughout in the interval timers algorithm.
+	// decided to make create new memory for the inactive bucket, and have this
+	// race instead write to deprecated memory.
 	addrInfo := (*addressInfo)(atomic.LoadPointer(&scw.addressInfo))
 	if addrInfo == nil {
 		return
@@ -479,7 +482,7 @@ func (b *outlierDetectionBalancer) RemoveSubConn(sc balancer.SubConn) {
 
 // appendIfPresent appends the scw to the address, if the address is present in
 // the Outlier Detection balancers address map. Returns nil if not present, and
-// the map entry if present.
+// the map entry if present. Caller must hold b.mu.
 func (b *outlierDetectionBalancer) appendIfPresent(addr string, scw *subConnWrapper) *addressInfo {
 	addrInfo, ok := b.addrs[addr]
 	if !ok {
@@ -492,7 +495,7 @@ func (b *outlierDetectionBalancer) appendIfPresent(addr string, scw *subConnWrap
 }
 
 // removeSubConnFromAddressesMapEntry removes the scw from its map entry if
-// present.
+// present. Caller must hold b.mu.
 func (b *outlierDetectionBalancer) removeSubConnFromAddressesMapEntry(scw *subConnWrapper) {
 	addrInfo := (*addressInfo)(atomic.LoadPointer(&scw.addressInfo))
 	if addrInfo == nil {
@@ -501,7 +504,7 @@ func (b *outlierDetectionBalancer) removeSubConnFromAddressesMapEntry(scw *subCo
 	for i, sw := range addrInfo.sws {
 		if scw == sw {
 			addrInfo.sws = append(addrInfo.sws[:i], addrInfo.sws[i+1:]...)
-			break
+			return
 		}
 	}
 }
@@ -531,12 +534,12 @@ func (b *outlierDetectionBalancer) UpdateAddresses(sc balancer.SubConn, addrs []
 		addrInfo := b.appendIfPresent(addrs[0].Addr, scw)
 		if addrInfo == nil { // uneject unconditionally because could have come from an ejected address
 			scw.uneject()
+			break
+		}
+		if addrInfo.latestEjectionTimestamp.IsZero() { // relay new updated subconn state
+			scw.uneject()
 		} else {
-			if addrInfo.latestEjectionTimestamp.IsZero() { // relay new updated subconn state
-				scw.uneject()
-			} else {
-				scw.eject()
-			}
+			scw.eject()
 		}
 	case len(scw.addresses) == 1: // single address to multiple/no addresses
 		b.removeSubConnFromAddressesMapEntry(scw)
@@ -609,6 +612,36 @@ func (b *outlierDetectionBalancer) handleEjectedUpdate(u *ejectionUpdate) {
 	b.childMu.Unlock()
 }
 
+// gracefulSwitch handles the removal of the SubConns
+
+// if you forward updateSubConnState to graceful switch will do a few things
+
+// forward to the correct child (current or pending)
+
+// eat the call if it's not the correct child (i.e. not current or pending)
+
+// will need to test this type switch?
+
+// This covers his
+
+// need to instantiate this object along with this balancer
+
+// SwitchTo()
+
+// UpdateClientConnState()
+
+// I don't think ^^^ and vvv still need to be in a certain order, but might as well go ahead and switch
+
+// UpdateSubConnState()
+
+
+// picker update bool for the whole thing
+// run() processing lbCfg update in other goroutine ok with him
+
+// When I get back: now that I switched to graceful switch, actually run it
+// with tests, and then get to the rest of his comments
+
+
 // handleChildStateUpdate forwards the picker update wrapped in a wrapped picker
 // with the noop picker bit present.
 func (b *outlierDetectionBalancer) handleChildStateUpdate(u balancer.State) {
@@ -647,9 +680,13 @@ func (b *outlierDetectionBalancer) handleLBConfigUpdate(u lbCfgUpdate) {
 			},
 		})
 	}
-	b.inhibitPickerUpdates = false
 	close(done)
 }
+
+// Easwar's comment about this being processed in a seperate goroutine in run
+// rather than inline - they each need to read certain state, so run() keeps the
+// events (this LBConfigUpdate and a ChildStateUpdate) logically synchronized
+// without a need for a mutex.
 
 func (b *outlierDetectionBalancer) run() {
 	for {
@@ -722,28 +759,12 @@ func (b *outlierDetectionBalancer) intervalTimerAlgorithm() {
 	if b.intervalTimer != nil {
 		b.intervalTimer.Stop()
 	}
-	b.intervalTimer = afterFunc(b.cfg.Interval, func() {
-		b.intervalTimerAlgorithm()
-	})
-}
-
-// numAddrsWithAtLeastRequestVolume returns the number of addresses present in
-// the map that have request volume of at least requestVolume.
-func (b *outlierDetectionBalancer) numAddrsWithAtLeastRequestVolume() uint32 {
-	var numAddrs uint32
-	for _, addrInfo := range b.addrs {
-		bucket := addrInfo.callCounter.inactiveBucket
-		rv := bucket.numSuccesses + bucket.numFailures
-		if rv >= b.cfg.SuccessRateEjection.RequestVolume {
-			numAddrs++
-		}
-	}
-	return numAddrs
+	b.intervalTimer = afterFunc(b.cfg.Interval, b.intervalTimerAlgorithm)
 }
 
 // addrsWithAtLeastRequestVolume returns a slice of address information of all
 // addresses with at least request volume defined in the success rate ejection
-// configuration.
+// configuration. Caller must hold b.mu.
 func (b *outlierDetectionBalancer) addrsWithAtLeastRequestVolume() []*addressInfo {
 	var addrs []*addressInfo
 	for _, addrInfo := range b.addrs {
@@ -757,7 +778,7 @@ func (b *outlierDetectionBalancer) addrsWithAtLeastRequestVolume() []*addressInf
 }
 
 // meanAndStdDev returns the mean and std dev of the fractions of successful
-// requests of the addresses passed in.
+// requests of the addresses passed in. Caller must hold b.mu.
 func (b *outlierDetectionBalancer) meanAndStdDev(addrs []*addressInfo) (float64, float64) {
 	var totalFractionOfSuccessfulRequests float64
 	var mean float64
@@ -780,14 +801,14 @@ func (b *outlierDetectionBalancer) meanAndStdDev(addrs []*addressInfo) (float64,
 
 // successRateAlgorithm ejects any addresses where the success rate falls below
 // the other addresses according to mean and standard deviation, and if overall
-// applicable from other set heuristics.
+// applicable from other set heuristics. Caller must hold b.mu.
 func (b *outlierDetectionBalancer) successRateAlgorithm() {
-	if b.numAddrsWithAtLeastRequestVolume() < b.cfg.SuccessRateEjection.MinimumHosts {
+	addrsToConsider := b.addrsWithAtLeastRequestVolume()
+	if len(addrsToConsider) < int(b.cfg.SuccessRateEjection.MinimumHosts) {
 		return
 	}
-	awalrv := b.addrsWithAtLeastRequestVolume()
-	mean, stddev := b.meanAndStdDev(awalrv)
-	for _, addrInfo := range awalrv {
+	mean, stddev := b.meanAndStdDev(addrsToConsider)
+	for _, addrInfo := range addrsToConsider {
 		bucket := addrInfo.callCounter.inactiveBucket
 		ejectionCfg := b.cfg.SuccessRateEjection
 		if float64(b.numAddrsEjected)/float64(len(b.addrs))*100 > float64(b.cfg.MaxEjectionPercent) {
@@ -804,7 +825,7 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 
 // failurePercentageAlgorithm ejects any addresses where the failure percentage
 // rate exceeds a set enforcement percentage, if overall applicable from other
-// set heuristics.
+// set heuristics. Caller must hold b.mu.
 func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 	if uint32(len(b.addrs)) < b.cfg.FailurePercentageEjection.MinimumHosts {
 		return
@@ -829,6 +850,7 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 	}
 }
 
+// Caller must hold b.mu.
 func (b *outlierDetectionBalancer) ejectAddress(addrInfo *addressInfo) {
 	b.numAddrsEjected++
 	addrInfo.latestEjectionTimestamp = b.timerStartTime
@@ -838,6 +860,7 @@ func (b *outlierDetectionBalancer) ejectAddress(addrInfo *addressInfo) {
 	}
 }
 
+// Caller must hold b.mu.
 func (b *outlierDetectionBalancer) unejectAddress(addrInfo *addressInfo) {
 	b.numAddrsEjected--
 	addrInfo.latestEjectionTimestamp = time.Time{}
@@ -847,13 +870,11 @@ func (b *outlierDetectionBalancer) unejectAddress(addrInfo *addressInfo) {
 }
 
 // addressInfo contains the runtime information about an address that pertains
-// to Outlier Detection, including the counter for successful/failing RPC's, and
-// also information about whether the addresses has been ejected, and the
-// SubConns that are present that use this address. This struct and all of its
-// fields is protected by outlierDetectionBalancer.mu in the case where it
-// accessed through the address map. In the case of Picker callbacks, the writes
-// to the activeBucket of callCounter are protected by atomically loading and
-// storing unsafe.Pointers (see further explanation in incrementCounter()).
+// to Outlier Detection. This struct and all of its fields is protected by
+// outlierDetectionBalancer.mu in the case where it is accessed through the
+// address map. In the case of Picker callbacks, the writes to the activeBucket
+// of callCounter are protected by atomically loading and storing
+// unsafe.Pointers (see further explanation in incrementCounter()).
 type addressInfo struct {
 	// The call result counter object.
 	callCounter *callCounter

@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/internal/balancer/stub"
 	"strings"
 	"sync"
 	"testing"
@@ -306,7 +307,7 @@ func (errParseConfigBuilder) ParseConfig(c json.RawMessage) (serviceconfig.LoadB
 	return nil, errors.New("some error")
 }
 
-func setup(t *testing.T) (*outlierDetectionBalancer, *testutils.TestClientConn) {
+func setup(t *testing.T) (*outlierDetectionBalancer, *testutils.TestClientConn, func()) {
 	t.Helper()
 	builder := balancer.Get(Name)
 	if builder == nil {
@@ -314,7 +315,9 @@ func setup(t *testing.T) (*outlierDetectionBalancer, *testutils.TestClientConn) 
 	}
 	tcc := testutils.NewTestClientConn(t)
 	odB := builder.Build(tcc, balancer.BuildOptions{})
-	return odB.(*outlierDetectionBalancer), tcc
+	return odB.(*outlierDetectionBalancer), tcc, func() {
+		odB.Close()
+	}
 }
 
 const tcibname = "testClusterImplBalancer"
@@ -421,7 +424,7 @@ func (tb *testClusterImplBalancer) waitForClose(ctx context.Context) error {
 // and updated properly.
 func (s) TestUpdateClientConnState(t *testing.T) {
 	internal.RegisterOutlierDetectionBalancerForTesting()
-	od, _ := setup(t)
+	od, _ := setup(t) // need to switch this to receive a function which you Close() as well
 	defer func() {
 		od.Close() // this will leak a goroutine otherwise
 		internal.UnregisterOutlierDetectionBalancerForTesting()
@@ -537,7 +540,7 @@ func (s) TestUpdateClientConnStateDifferentType(t *testing.T) {
 	})
 
 	// Verify previous child balancer closed.
-	if err := ciChild.waitForClose(ctx); err != nil {
+	if err := ciChild.waitForClose(ctx); err != nil { // When you switch this, graceful switch doesn't close it until it goes !READY
 		t.Fatalf("Error waiting for Close() call on child balancer %v", err)
 	}
 }
