@@ -118,6 +118,7 @@ func (gsb *Balancer) SwitchTo(builder balancer.Builder) error {
 	balToClose.Close()
 	// This function takes a builder instead of a balancer because builder.Build
 	// can call back inline, and this utility needs to handle the callbacks.
+	print("building in graceful switch")
 	newBalancer := builder.Build(bw, gsb.bOpts)
 	if newBalancer == nil {
 		// This is illegal and should never happen; we clear the balancerWrapper
@@ -218,8 +219,10 @@ func (gsb *Balancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubC
 	if balToUpdate == nil {
 		// SubConn belonged to a stale lb policy that has not yet fully closed,
 		// or the balancer was already closed.
+		print("returns")
 		return
 	}
+	print("balToUpdate.UpdateSubConnState")
 	balToUpdate.UpdateSubConnState(sc, state)
 }
 
@@ -328,6 +331,7 @@ func (bw *balancerWrapper) UpdateState(state balancer.State) {
 }
 
 func (bw *balancerWrapper) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
+	print("new sub conn called in balancer wrapper")
 	bw.gsb.mu.Lock()
 	if !bw.gsb.balancerCurrentOrPending(bw) {
 		bw.gsb.mu.Unlock()
