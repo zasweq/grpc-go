@@ -1694,7 +1694,8 @@ func (s) TestSuccessRateAlgorithm(t *testing.T) {
 // with a FailurePercentageEjection algorithm, and connects to 5 upstreams. 2 of
 // the upstreams are unhealthy. At some point in time, the Outlier Detection
 // Balancer should only send RPC's in a Round Robin like fashion across the
-// three healthy upstreams.
+// three healthy upstreams. Other than the intervals the two upstreams are
+// ejected, RPC's should regularly round robin across all 5 upstreams.
 func (s) TestFailurePercentageAlgorithm(t *testing.T) {
 	internal.RegisterOutlierDetectionBalancerForTesting()
 	defer internal.UnregisterOutlierDetectionBalancerForTesting()
@@ -1894,7 +1895,294 @@ func (s) TestFailurePercentageAlgorithm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error in expected round robin: %v", err)
 	}
-} // THIS WORKED I'M CLOSE SHOULD BE ABLE TO FINISH THIS TODAY, NEED TO DO THIS FOR OTHER TWO (IDK HOW TO MAKE THIS NONDETERMINISTIC LOL HOPEFULLY IT'S NOT TOO BAD)
+}
+
+// Make success rate and failure percentage into a t test with a knob on the configJSON
+func (s) TestTTest(t *testing.T) {
+	tests := []struct{
+		name string
+		odscJSON string
+	}{
+		{
+			// can this be uppercase?
+			name: "Success Rate Algorithm",
+			odscJSON: `
+{
+  "loadBalancingConfig": [
+    {
+      "outlier_detection_experimental": {
+        "interval": 50000000,
+		"baseEjectionTime": 100000000,
+		"maxEjectionTime": 300000000000,
+		"maxEjectionPercent": 33,
+		"successRateEjection": {
+			"stdevFactor": 50,
+			"enforcementPercentage": 100,
+			"minimumHosts": 3,
+			"requestVolume": 5
+		},
+        "childPolicy": [
+		{
+			"round_robin": {}
+		}
+		]
+      }
+    }
+  ]
+}`,
+		},
+		{
+			name: "Failure Percentage Algorithm",
+			odscJSON: `
+{
+  "loadBalancingConfig": [
+    {
+      "outlier_detection_experimental": {
+        "interval": 50000000,
+		"baseEjectionTime": 100000000,
+		"maxEjectionTime": 300000000000,
+		"maxEjectionPercent": 33,
+		"failurePercentageEjection": {
+			"threshold": 50,
+			"enforcementPercentage": 100,
+			"minimumHosts": 3,
+			"requestVolume": 5
+		},
+        "childPolicy": [
+		{
+			"round_robin": {}
+		}
+		]
+      }
+    }
+  ]
+}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// I remember there was something you had to consider with this
+			// defer, try and out and see if it works
+			internal.RegisterOutlierDetectionBalancerForTesting()
+			defer internal.UnregisterOutlierDetectionBalancerForTesting()
+			addresses, backends := setupBackends(t)
+			defer func() {
+				for _, backend := range backends {
+					backend.Stop()
+				}
+			}()
+
+			// The addresses which don't return errors.
+			okAddresses := []resolver.Address{
+				{
+					Addr: addresses[0],
+				},
+				{
+					Addr: addresses[1],
+				},
+				{
+					Addr: addresses[2],
+				},
+			}
+
+			// The full list of addresses.
+			fullAddresses := []resolver.Address{
+				{
+					Addr: addresses[0],
+				},
+				{
+					Addr: addresses[1],
+				},
+				{
+					Addr: addresses[2],
+				},
+				{
+					Addr: addresses[3],
+				},
+				{
+					Addr: addresses[4],
+				},
+			}
+
+			mr := manual.NewBuilderWithScheme("od-e2e")
+			defer mr.Close()
+
+			sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(test.odscJSON)
+
+			mr.InitialState(resolver.State{
+				Addresses: fullAddresses,
+				ServiceConfig: sc,
+			})
+
+			cc, err := grpc.Dial(mr.Scheme()+":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatalf("grpc.Dial() failed: %v", err)
+			}
+			defer cc.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+			defer cancel()
+			testServiceClient := testpb.NewTestServiceClient(cc)
+
+			// why rr over 01234 rpc's
+			if err = checkRoundRobinRPCs(ctx, testServiceClient, fullAddresses); err != nil {
+				t.Fatalf("error in expected round robin: %v", err)
+			}
+
+			// comment here why 012 rr
+			if err = checkRoundRobinRPCs(ctx, testServiceClient, okAddresses); err != nil {
+				t.Fatalf("error in expected round robin: %v", err)
+			}
+
+			if err = checkRoundRobinRPCs(ctx, testServiceClient, fullAddresses); err != nil {
+				t.Fatalf("error in expected round robin: %v", err)
+			}
+		})
+	}
+}
+
+// ^^^ vvv no too many differences
+
+// TestNoopConfiguration tests the Outlier Detection configured with a noop
+// configuration. The noop configuration should cause the Outlier Detection
+// Balancer to not count RPC's, and thus never eject any upstreams and continue
+// to route to upstreams, even if they continuously error. Once the balancer
+// gets reconfigured without a noop configuration, the Outlier Detection
+// Balancer should start ejecting any upstreams as specified.
+func (s) TestNoopConfiguration(t *testing.T) {
+	// first part noop configuration, should continue to 12345 12345 12345, no ejection
+	//         either !123 or keep asserting 12345
+
+	// second part flip the noop configuration to be normal, then it should actually count and only route to 123
+	internal.RegisterOutlierDetectionBalancerForTesting()
+	defer internal.UnregisterOutlierDetectionBalancerForTesting()
+	addresses, backends := setupBackends(t)
+	defer func() {
+		for _, backend := range backends {
+			backend.Stop()
+		}
+	}()
+
+	mr := manual.NewBuilderWithScheme("od-e2e")
+	defer mr.Close()
+
+	// The addresses which don't return errors.
+	okAddresses := []resolver.Address{
+		{
+			Addr: addresses[0],
+		},
+		{
+			Addr: addresses[1],
+		},
+		{
+			Addr: addresses[2],
+		},
+	}
+
+	// The full list of addresses.
+	fullAddresses := []resolver.Address{
+		{
+			Addr: addresses[0],
+		},
+		{
+			Addr: addresses[1],
+		},
+		{
+			Addr: addresses[2],
+		},
+		{
+			Addr: addresses[3],
+		},
+		{
+			Addr: addresses[4],
+		},
+	}
+
+	noopODServiceConfigJSON := `
+{
+  "loadBalancingConfig": [
+    {
+      "outlier_detection_experimental": {
+        "interval": 50000000,
+		"baseEjectionTime": 100000000,
+		"maxEjectionTime": 300000000000,
+		"maxEjectionPercent": 33,
+        "childPolicy": [
+		{
+			"round_robin": {}
+		}
+		]
+      }
+    }
+  ]
+}`
+	sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(noopODServiceConfigJSON)
+
+	mr.InitialState(resolver.State{
+		Addresses: fullAddresses,
+		ServiceConfig: sc,
+	})
+	cc, err := grpc.Dial(mr.Scheme()+":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc.Dial() failed: %v", err)
+	}
+	defer cc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	testServiceClient := testpb.NewTestServiceClient(cc)
+	for i := 0; i < 2; i++ {
+		// comment here why 12345 twice?
+		// also this gets called a lot, perhaps pull out into a helper
+		if err := checkRoundRobinRPCs(ctx, testServiceClient, fullAddresses); err != nil {
+			t.Fatalf("error in expected round robin: %v", err)
+		}
+	}
+
+	countingODServiceConfigJSON := `
+{
+  "loadBalancingConfig": [
+    {
+      "outlier_detection_experimental": {
+        "interval": 50000000,
+		"baseEjectionTime": 100000000,
+		"maxEjectionTime": 300000000000,
+		"maxEjectionPercent": 33,
+		"failurePercentageEjection": {
+			"threshold": 50,
+			"enforcementPercentage": 100,
+			"minimumHosts": 3,
+			"requestVolume": 5
+		},
+        "childPolicy": [
+		{
+			"round_robin": {}
+		}
+		]
+      }
+    }
+  ]
+}`
+	sc = internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(countingODServiceConfigJSON)
+
+	mr.UpdateState(resolver.State{
+		Addresses: fullAddresses,
+		ServiceConfig: sc,
+	})
+
+	// comment why 12345
+	// 12345 triggers vvv
+	if err = checkRoundRobinRPCs(ctx, testServiceClient, fullAddresses); err != nil {
+		t.Fatalf("error in expected round robin: %v", err)
+	}
+
+	// 123
+	if err = checkRoundRobinRPCs(ctx, testServiceClient, okAddresses); err != nil {
+		t.Fatalf("error in expected round robin: %v", err)
+	}
+}
+
+
+
+// THIS WORKED I'M CLOSE SHOULD BE ABLE TO FINISH THIS TODAY, NEED TO DO THIS FOR OTHER TWO (IDK HOW TO MAKE THIS NONDETERMINISTIC LOL HOPEFULLY IT'S NOT TOO BAD)
 // WAIT BUT THIS STILL LEAKS LOL (doesn't clean up correctly?)
 
 // Outlier Detection -> child Round Robin
