@@ -1451,7 +1451,7 @@ func (s) TestConcurrentOperations(t *testing.T) {
 // the backends are configured to always work as intended and 2 are configured
 // to always return errors. This scenario of some backends working and some not
 // is used to test common Outlier Detection scenarios.
-func setupBackends(t *testing.T) ([]string/*stubserver.StubServer/*or can you just return addresses does the caller need any other state other than the addresses?*/) {
+func setupBackends(t *testing.T) ([]string, []*stubserver.StubServer/*stubserver.StubServer/*or can you just return addresses does the caller need any other state other than the addresses?*/) {
 	t.Helper()
 
 	backends := make([]*stubserver.StubServer, 5)
@@ -1486,12 +1486,13 @@ func setupBackends(t *testing.T) ([]string/*stubserver.StubServer/*or can you ju
 		addresses[i] = backend.Address
 	}
 
+	// t.cleanup is very flaky, so you can manually call backend.Stop()
 	/*t.Cleanup(func() {
 		for _, backend := range backends {
 			backend.Stop()
 		}
 	})*/
-	return addresses
+	return addresses, backends/*, backends <- then caller closes this, see if this fixes*/
 }
 
 // something similar to e2e test util in regards to round robin
@@ -1522,7 +1523,9 @@ func checkRoundRobinRPCs(ctx context.Context, client testpb.TestServiceClient, a
 				var peer peer.Peer
 				client.EmptyCall(ctx, &testpb.Empty{}, grpc.Peer(&peer))
 				// if this doesn't work yikes
-				iteration[c] = peer.Addr.String() // fuck, does this get populated on an RPC error, peer information AFTER RPC completes
+				if peer.Addr != nil {
+					iteration[c] = peer.Addr.String() // fuck, does this get populated on an RPC error, peer information AFTER RPC completes
+				}
 			}
 			iterations = append(iterations, iteration)
 		}
@@ -1546,19 +1549,144 @@ func checkRoundRobinRPCs(ctx context.Context, client testpb.TestServiceClient, a
 	return fmt.Errorf("Timeout when waiting for roundrobin distribution of RPCs across addresses: %v", addrs)
 }
 
+// After finishing this look at flaky test and Easwar's PR
+
 // TestSuccessRateAlgorithm tests the SuccessRateEjection functionality of the
 // Outlier Detection Balancer. The balancer is configured with a
 // SuccessRateEjection algorithm, and connects to 5 upstreams. 2 of the
 // upstreams are unhealthy. At some point in time, the Outlier Detection
 // Balancer should only send RPC's in a Round Robin like fashion across the
 // three healthy upstreams.
-func (s) TestSuccessRateAlgorithm(t *testing.t) {
+func (s) TestSuccessRateAlgorithm(t *testing.T) {
 	internal.RegisterOutlierDetectionBalancerForTesting()
 	defer internal.UnregisterOutlierDetectionBalancerForTesting()
-	backends := setupBackends(t)
+	addresses, backends := setupBackends(t)
+	defer func() {
+		for _, backend := range backends {
+			backend.Stop()
+		}
+	}()
 
 	mr := manual.NewBuilderWithScheme("od-e2e")
 	defer mr.Close()
+
+	// Figure out the correct stdevFactor to configure the component with
+
+	// If you want this could be knob since the other logic is exactly the same
+
+	odServiceConfigJSON := `
+{
+  "loadBalancingConfig": [
+    {
+      "outlier_detection_experimental": {
+        "interval": 50000000,
+		"baseEjectionTime": 100000000,
+		"maxEjectionTime": 300000000000,
+		"maxEjectionPercent": 33,
+		"successRateEjection": {
+			"stdevFactor": 50,
+			"enforcementPercentage": 100,
+			"minimumHosts": 3,
+			"requestVolume": 5
+		},
+        "childPolicy": [
+		{
+			"round_robin": {}
+		}
+		]
+      }
+    }
+  ]
+}`
+	sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(odServiceConfigJSON)
+
+	mr.InitialState(resolver.State{
+		Addresses: []resolver.Address{
+			{
+				Addr: addresses[0],
+			},
+			{
+				Addr: addresses[1],
+			},
+			{
+				Addr: addresses[2],
+			},
+			{
+				Addr: addresses[3],
+			},
+			{
+				Addr: addresses[4],
+			},
+		},
+		ServiceConfig: sc,
+	})
+	cc, err := grpc.Dial(mr.Scheme()+":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc.Dial() failed: %v", err)
+	}
+	defer cc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	testServiceClient := testpb.NewTestServiceClient(cc)
+
+	// why rr over 01234 rpc's
+	err = checkRoundRobinRPCs(ctx, testServiceClient, []resolver.Address{
+		{ // maybe switch to return just a [] of address strings - that's how they're used anyway
+			Addr: addresses[0], // deterministic since slice - first 3 ok, last 2 not
+		},
+		{
+			Addr: addresses[1],
+		},
+		{
+			Addr: addresses[2],
+		},
+		{
+			Addr: addresses[3],
+		},
+		{
+			Addr: addresses[4],
+		},
+	})
+	if err != nil {
+		t.Fatalf("error in expected round robin: %v", err)
+	}
+
+	// comment here why 012 rr
+	err = checkRoundRobinRPCs(ctx, testServiceClient, []resolver.Address{
+		{ // maybe switch to return just a [] of address strings - that's how they're used anyway
+			Addr: addresses[0], // deterministic since slice - first 3 ok, last 2 not
+		},
+		{
+			Addr: addresses[1],
+		},
+		{
+			Addr: addresses[2],
+		},
+	})
+	if err != nil {
+		t.Fatalf("error in expected round robin: %v", err)
+	}
+
+	err = checkRoundRobinRPCs(ctx, testServiceClient, []resolver.Address{
+		{ // maybe switch to return just a [] of address strings - that's how they're used anyway
+			Addr: addresses[0], // deterministic since slice - first 3 ok, last 2 not
+		},
+		{
+			Addr: addresses[1],
+		},
+		{
+			Addr: addresses[2],
+		},
+		{
+			Addr: addresses[3],
+		},
+		{
+			Addr: addresses[4],
+		},
+	})
+	if err != nil {
+		t.Fatalf("error in expected round robin: %v", err)
+	}
 }
 
 // TestFailurePercentageAlgorithm tests the FailurePercentageEjection
@@ -1571,7 +1699,12 @@ func (s) TestFailurePercentageAlgorithm(t *testing.T) {
 	internal.RegisterOutlierDetectionBalancerForTesting()
 	defer internal.UnregisterOutlierDetectionBalancerForTesting()
 	// call setupBackends()
-	backends := setupBackends(t) // perhaps this isn't getting closed
+	addresses, backends := setupBackends(t) // perhaps this isn't getting closed
+	defer func() {
+		for _, backend := range backends {
+			backend.Stop()
+		}
+	}()
 
 	// configure resolver and top level lb policy on the client conn with the
 	// manual resolver with config call
@@ -1609,7 +1742,7 @@ func (s) TestFailurePercentageAlgorithm(t *testing.T) {
     {
       "outlier_detection_experimental": {
         "interval": 50000000,
-		"baseEjectionTime": 20000000000,
+		"baseEjectionTime": 100000000,
 		"maxEjectionTime": 300000000000,
 		"maxEjectionPercent": 33,
 		"failurePercentageEjection": {
@@ -1638,19 +1771,19 @@ func (s) TestFailurePercentageAlgorithm(t *testing.T) {
 	mr.InitialState(resolver.State{ // i.e. stub the resolver
 		Addresses: []resolver.Address{
 			{ // maybe switch to return just a [] of address strings - that's how they're used anyway
-				Addr: backends[0], // deterministic since map - first 3 ok, last 2 not
+				Addr: addresses[0], // deterministic since map - first 3 ok, last 2 not
 			},
 			{
-				Addr: backends[1],
+				Addr: addresses[1],
 			},
 			{
-				Addr: backends[2],
+				Addr: addresses[2],
 			},
 			{
-				Addr: backends[3],
+				Addr: addresses[3],
 			},
 			{
-				Addr: backends[4],
+				Addr: addresses[4],
 			},
 		},
 		ServiceConfig: sc/*outlier detection + round robin as a child this is end result how to prepare this?*/,
@@ -1682,23 +1815,23 @@ func (s) TestFailurePercentageAlgorithm(t *testing.T) {
 	print("before check round robin RPC's")
 	err = checkRoundRobinRPCs(ctx, testServiceClient, []resolver.Address{
 		{ // maybe switch to return just a [] of address strings - that's how they're used anyway
-			Addr: backends[0], // deterministic since slice - first 3 ok, last 2 not
+			Addr: addresses[0], // deterministic since slice - first 3 ok, last 2 not
 		},
 		{
-			Addr: backends[1],
+			Addr: addresses[1],
 		},
 		{
-			Addr: backends[2],
+			Addr: addresses[2],
 		},
 		{
-			Addr: backends[3],
+			Addr: addresses[3],
 		},
 		{
-			Addr: backends[4],
+			Addr: addresses[4],
 		},
 	})
 	if err != nil {
-		t.Fatalf("error in expected round roubin: %v", err)
+		t.Fatalf("error in expected round robin: %v", err)
 	}
 	print("yo i finished")
 
@@ -1713,17 +1846,17 @@ func (s) TestFailurePercentageAlgorithm(t *testing.T) {
 	// Maybe talk about race condition in this comment ^^^
 	err = checkRoundRobinRPCs(ctx, testServiceClient, []resolver.Address{
 		{ // maybe switch to return just a [] of address strings - that's how they're used anyway
-			Addr: backends[0], // deterministic since slice - first 3 ok, last 2 not
+			Addr: addresses[0], // deterministic since slice - first 3 ok, last 2 not
 		},
 		{
-			Addr: backends[1],
+			Addr: addresses[1],
 		},
 		{
-			Addr: backends[2],
+			Addr: addresses[2],
 		},
 	})
 	if err != nil {
-		t.Fatalf("error in expected round roubin: %v", err)
+		t.Fatalf("error in expected round robin: %v", err)
 	} // WOW THIS WORKS JUST SOMETHING ISN'T CLEANING UP CORRECTLY
 
 
@@ -1743,23 +1876,23 @@ func (s) TestFailurePercentageAlgorithm(t *testing.T) {
 
 	err = checkRoundRobinRPCs(ctx, testServiceClient, []resolver.Address{
 		{ // maybe switch to return just a [] of address strings - that's how they're used anyway
-			Addr: backends[0], // deterministic since slice - first 3 ok, last 2 not
+			Addr: addresses[0], // deterministic since slice - first 3 ok, last 2 not
 		},
 		{
-			Addr: backends[1],
+			Addr: addresses[1],
 		},
 		{
-			Addr: backends[2],
+			Addr: addresses[2],
 		},
 		{
-			Addr: backends[3],
+			Addr: addresses[3],
 		},
 		{
-			Addr: backends[4],
+			Addr: addresses[4],
 		},
 	})
 	if err != nil {
-		t.Fatalf("error in expected round roubin: %v", err)
+		t.Fatalf("error in expected round robin: %v", err)
 	}
 } // THIS WORKED I'M CLOSE SHOULD BE ABLE TO FINISH THIS TODAY, NEED TO DO THIS FOR OTHER TWO (IDK HOW TO MAKE THIS NONDETERMINISTIC LOL HOPEFULLY IT'S NOT TOO BAD)
 // WAIT BUT THIS STILL LEAKS LOL (doesn't clean up correctly?)
