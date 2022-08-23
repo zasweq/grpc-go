@@ -349,14 +349,13 @@ func (s) TestChildBasicOperations(t *testing.T) {
 		},
 	})
 
-
 	stub.Register(verifyBalancerName, stub.BalancerFuncs{
 		UpdateClientConnState: func(bd *stub.BalancerData, _ balancer.ClientConnState) error {
 			// UpdateState inline to READY to complete graceful switch process
 			// synchronously from any UpdateClientConnState call.
 			bd.ClientConn.UpdateState(balancer.State{
 				ConnectivityState: connectivity.Ready,
-				Picker: &testutils.TestConstPicker{},
+				Picker:            &testutils.TestConstPicker{},
 			})
 			ccsCh.Send(nil)
 			return nil
@@ -369,6 +368,8 @@ func (s) TestChildBasicOperations(t *testing.T) {
 	od, tcc, _ := setup(t)
 	defer internal.UnregisterOutlierDetectionBalancerForTesting()
 
+	// This first config update should a child to be built and forwarded it's
+	// first update.
 	od.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: &LBConfig{
 			Interval:           10 * time.Second,
@@ -431,8 +432,9 @@ func (s) TestChildBasicOperations(t *testing.T) {
 			},
 		},
 	})
-	// Verify inline UpdateState() call eventually makes it's way to the Test
-	// Client Conn.
+
+	// Verify inline UpdateState() call from the new child eventually makes it's
+	// way to the Test Client Conn.
 	select {
 	case <-ctx.Done():
 		t.Fatalf("timeout while waiting for a UpdateState call on the ClientConn")
@@ -452,7 +454,6 @@ func (s) TestChildBasicOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("timed out waiting for UpdateClientConnState on the second child balancer: %v", err)
 	}
-	print("628")
 	// Closing the Outlier Detection Balancer should close the newly created
 	// child.
 	od.Close()
@@ -467,9 +468,9 @@ func (s) TestChildBasicOperations(t *testing.T) {
 // Balancer is set up with two upstreams, with one of the upstreams being
 // ejected. Switching a SubConn's address list to the ejected address should
 // cause the SubConn to be ejected, if not already. Switching the address list
-// to plural should cause this SubConn to be unejected, since the SubConn is no
-// longer being tracked by Outlier Detection. Then, switching this SubConn back
-// to the single ejected address should reeject the SubConn.
+// from single to plural should cause this SubConn to be unejected, since the
+// SubConn is no longer being tracked by Outlier Detection. Then, switching this
+// SubConn back to the single ejected address should reeject the SubConn.
 func (s) TestUpdateAddresses(t *testing.T) {
 	scsCh := testutils.NewChannel()
 	var scw1, scw2 balancer.SubConn
@@ -499,7 +500,7 @@ func (s) TestUpdateAddresses(t *testing.T) {
 		},
 		UpdateSubConnState: func(_ *stub.BalancerData, sc balancer.SubConn, state balancer.SubConnState) {
 			scsCh.Send(subConnWithState{
-				sc: sc,
+				sc:    sc,
 				state: state,
 			})
 		}})
@@ -538,7 +539,6 @@ func (s) TestUpdateAddresses(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
-
 
 	od.UpdateState(balancer.State{
 		ConnectivityState: connectivity.Ready,
@@ -857,14 +857,14 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		},
 		UpdateSubConnState: func(_ *stub.BalancerData, sc balancer.SubConn, state balancer.SubConnState) {
 			scsCh.Send(subConnWithState{
-				sc: sc,
+				sc:    sc,
 				state: state,
 			})
 		},
 	})
 
 	od, tcc, cleanup := setup(t)
-	defer func(){
+	defer func() {
 		cleanup()
 	}()
 
@@ -949,7 +949,6 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Error waiting for Sub Conn update: %v", err)
 		}
-		// verify data in scws is scw1 and connecting
 		if err = scwsEqual(gotSCWS.(subConnWithState), subConnWithState{
 			sc:    scw1,
 			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
@@ -1084,14 +1083,14 @@ func (s) TestEjectFailureRate(t *testing.T) {
 		},
 		UpdateSubConnState: func(_ *stub.BalancerData, sc balancer.SubConn, state balancer.SubConnState) {
 			scsCh.Send(subConnWithState{
-				sc: sc,
+				sc:    sc,
 				state: state,
 			})
 		},
 	})
 
 	od, tcc, cleanup := setup(t)
-	defer func(){
+	defer func() {
 		cleanup()
 	}()
 
@@ -1483,9 +1482,8 @@ func (s) TestConcurrentOperations(t *testing.T) {
 }
 
 // Setup spins up 5 test backends, each listening on a port on localhost. 3 of
-// the backends are configured to always work as intended and 2 are configured
-// to always return errors. This scenario of some backends working and some not
-// is used to test common Outlier Detection scenarios.
+// the backends are configured to always reply with an empty response and no
+// error and 2 are configured to always return an error.
 func setupBackends(t *testing.T) ([]string, []*stubserver.StubServer) {
 	t.Helper()
 
@@ -1563,13 +1561,10 @@ func checkRoundRobinRPCs(ctx context.Context, client testpb.TestServiceClient, a
 			logger.Infof("non-roundrobin, first iter: %v, second iter: %v, third iter: %v", iterations[0], iterations[1], iterations[2])
 			continue
 		}
-		fmt.Printf("wow Round Robin helper returned well")
 		return nil
 	}
-	return fmt.Errorf("Timeout when waiting for roundrobin distribution of RPCs across addresses: %v", addrs)
+	return fmt.Errorf("timeout when waiting for roundrobin distribution of RPCs across addresses: %v", addrs)
 }
-
-// After finishing this look at flaky test and Easwar's PR, commit "switched child to gsb, switched testing to use stubs, added e2e tests, and got to all of Easwar's comments"
 
 // TestOutlierDetectionAlgorithmsE2E tests the Outlier Detection Success Rate
 // and Failure Percentage algorithms in an e2e fashion. The Outlier Detection
@@ -1581,12 +1576,11 @@ func checkRoundRobinRPCs(ctx context.Context, client testpb.TestServiceClient, a
 // two unhealthy upstreams are ejected, RPC's should regularly round robin
 // across all 5 upstreams.
 func (s) TestOutlierDetectionAlgorithmsE2E(t *testing.T) {
-	tests := []struct{
-		name string
+	tests := []struct {
+		name     string
 		odscJSON string
 	}{
 		{
-			// can this be uppercase?
 			name: "Success Rate Algorithm",
 			odscJSON: `
 {
@@ -1690,7 +1684,7 @@ func (s) TestOutlierDetectionAlgorithmsE2E(t *testing.T) {
 			sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(test.odscJSON)
 
 			mr.InitialState(resolver.State{
-				Addresses: fullAddresses,
+				Addresses:     fullAddresses,
 				ServiceConfig: sc,
 			})
 
@@ -1800,7 +1794,7 @@ func (s) TestNoopConfiguration(t *testing.T) {
 	sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(noopODServiceConfigJSON)
 
 	mr.InitialState(resolver.State{
-		Addresses: fullAddresses,
+		Addresses:     fullAddresses,
 		ServiceConfig: sc,
 	})
 	cc, err := grpc.Dial(mr.Scheme()+":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -1853,7 +1847,7 @@ func (s) TestNoopConfiguration(t *testing.T) {
 	sc = internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(countingODServiceConfigJSON)
 
 	mr.UpdateState(resolver.State{
-		Addresses: fullAddresses,
+		Addresses:     fullAddresses,
 		ServiceConfig: sc,
 	})
 
@@ -1870,202 +1864,3 @@ func (s) TestNoopConfiguration(t *testing.T) {
 		t.Fatalf("error in expected round robin: %v", err)
 	}
 }
-
-// What I can do here vvv is instead add this to an existing test, such as
-// success rate of failure percentage, covers functionality I wanted to ^^^.
-
-/*
-// TestEjectUnejectSuccessRateFromNoopConfig tests that any ejected Addresses
-// are unejected upon the receipt of a no-op Outlier Detection Configuration.
-func (s) TestEjectUnejectSuccessRateFromNoopConfig(t *testing.T) {
-	internal.RegisterOutlierDetectionBalancerForTesting()
-	// Setup the outlier detection balancer to a point where it will be in a
-	// situation to potentially eject addresses.
-	od, tcc := setup(t)
-	defer func() {
-		od.Close()
-		internal.UnregisterOutlierDetectionBalancerForTesting()
-	}()
-
-	od.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState: resolver.State{
-			Addresses: []resolver.Address{
-				{
-					Addr: "address1",
-				},
-				{
-					Addr: "address2",
-				},
-				{
-					Addr: "address3",
-				},
-			},
-		},
-		BalancerConfig: &LBConfig{
-			Interval:           1<<63 - 1, // so the interval will never run unless called manually in test.
-			BaseEjectionTime:   30 * time.Second,
-			MaxEjectionTime:    300 * time.Second,
-			MaxEjectionPercent: 10,
-			SuccessRateEjection: &SuccessRateEjection{
-				StdevFactor:           500,
-				EnforcementPercentage: 100,
-				MinimumHosts:          3,
-				RequestVolume:         3,
-			},
-			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   tcibname,
-				Config: testClusterImplBalancerConfig{},
-			},
-		},
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
-	defer cancel()
-	child := od.child.(*testClusterImplBalancer)
-	if err := child.waitForClientConnUpdate(ctx, balancer.ClientConnState{
-		ResolverState: resolver.State{
-			Addresses: []resolver.Address{
-				{
-					Addr: "address1",
-				},
-				{
-					Addr: "address2",
-				},
-				{
-					Addr: "address3",
-				},
-			},
-		},
-		BalancerConfig: testClusterImplBalancerConfig{},
-	}); err != nil {
-		t.Fatalf("Error waiting for Client Conn update: %v", err)
-	}
-
-	scw1, err := od.NewSubConn([]resolver.Address{
-		{
-			Addr: "address1",
-		},
-	}, balancer.NewSubConnOptions{})
-	if err != nil {
-		t.Fatalf("error in od.NewSubConn call: %v", err)
-	}
-	if err != nil {
-		t.Fatalf("error in od.NewSubConn call: %v", err)
-	}
-
-	scw2, err := od.NewSubConn([]resolver.Address{
-		{
-			Addr: "address2",
-		},
-	}, balancer.NewSubConnOptions{})
-	if err != nil {
-		t.Fatalf("error in od.NewSubConn call: %v", err)
-	}
-
-	scw3, err := od.NewSubConn([]resolver.Address{
-		{
-			Addr: "address3",
-		},
-	}, balancer.NewSubConnOptions{})
-	if err != nil {
-		t.Fatalf("error in od.NewSubConn call: %v", err)
-	}
-
-	od.UpdateState(balancer.State{
-		ConnectivityState: connectivity.Ready,
-		Picker: &rrPicker{
-			scs: []balancer.SubConn{scw1, scw2, scw3},
-		},
-	})
-
-	select {
-	case <-ctx.Done():
-		t.Fatalf("timeout while waiting for a UpdateState call on the ClientConn")
-	case picker := <-tcc.NewPickerCh:
-		// Set two of the upstream addresses to have five successes each, and
-		// one of the upstream addresses to have five failures. This should
-		// cause the address which has five failures to be ejected according the
-		// SuccessRateAlgorithm.
-		for i := 0; i < 2; i++ {
-			pi, err := picker.Pick(balancer.PickInfo{})
-			if err != nil {
-				t.Fatalf("Picker.Pick should not have errored")
-			}
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-		}
-		pi, err := picker.Pick(balancer.PickInfo{})
-		if err != nil {
-			t.Fatalf("Picker.Pick should not have errored")
-		}
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-
-		// should eject address that always errored.
-		od.intervalTimerAlgorithm()
-		// Due to the address being ejected, the SubConn with that address
-		// should be ejected, meaning a TRANSIENT_FAILURE connectivity state
-		// gets reported to the child.
-		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc:    scw3,
-			state: balancer.SubConnState{ConnectivityState: connectivity.TransientFailure}, // Represents ejected
-		}); err != nil {
-			t.Fatalf("Error waiting for Sub Conn update: %v", err)
-		}
-		// Only one address should be ejected.
-		sCtx, sCancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
-		defer sCancel()
-		if err := child.waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
-			t.Fatalf("Only one SubConn update should have been sent (only one SubConn got ejected)")
-		}
-		// Now that an address is ejected, SubConn updates for SubConns using
-		// that address should not be forwarded downward. These SubConn updates
-		// will be cached to update the child sometime in the future when the
-		// address gets unejected.
-		od.UpdateSubConnState(pi.SubConn, balancer.SubConnState{
-			ConnectivityState: connectivity.Connecting,
-		})
-		if err := child.waitForSubConnUpdate(sCtx, subConnWithState{}); err == nil {
-			t.Fatalf("SubConn update should not have been forwarded (the SubConn is ejected)")
-		}
-		// Update the Outlier Detection Balancer with a no-op configuration.
-		// This should cause any ejected addresses to become unejected.
-		od.UpdateClientConnState(balancer.ClientConnState{
-			ResolverState: resolver.State{
-				Addresses: []resolver.Address{
-					{
-						Addr: "address1",
-					},
-					{
-						Addr: "address2",
-					},
-					{
-						Addr: "address3",
-					},
-				},
-			},
-			BalancerConfig: &LBConfig{
-				Interval: 1<<63 - 1, // so the interval will never run unless called manually in test.
-				ChildPolicy: &internalserviceconfig.BalancerConfig{
-					Name:   tcibname,
-					Config: testClusterImplBalancerConfig{},
-				},
-			},
-		})
-		// unejected SubConn should report latest persisted state - which is
-		// connecting from earlier.
-		if err := child.waitForSubConnUpdate(ctx, subConnWithState{
-			sc:    scw3,
-			state: balancer.SubConnState{ConnectivityState: connectivity.Connecting},
-		}); err != nil {
-			t.Fatalf("Error waiting for Sub Conn update: %v", err)
-		}
-	}
-}
-*/

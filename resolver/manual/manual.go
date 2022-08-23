@@ -57,7 +57,6 @@ type Resolver struct {
 // InitialState adds initial state to the resolver so that UpdateState doesn't
 // need to be explicitly called after Dial.
 func (r *Resolver) InitialState(s resolver.State) {
-	print("initial state")
 	r.bootstrapState = &s
 }
 

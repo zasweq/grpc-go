@@ -170,7 +170,7 @@ type outlierDetectionBalancer struct {
 	// against run() reading that the child is not nil for SubConn updates, and
 	// then UpdateClientConnState or Close writing to the the child.
 	childMu sync.Mutex
-	child *gracefulswitch.Balancer
+	child   *gracefulswitch.Balancer
 
 	// mu guards access to the following fields. It also helps to synchronize
 	// behaviors of the following events: config updates, firing of the interval
@@ -435,10 +435,8 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	ab := (*bucket)(atomic.LoadPointer(&addrInfo.callCounter.activeBucket))
 
 	if info.Err == nil {
-		print("adding 1 to successes")
 		atomic.AddUint32(&ab.numSuccesses, 1)
 	} else {
-		print("adding 1 to failures")
 		atomic.AddUint32(&ab.numFailures, 1)
 	}
 }
@@ -448,7 +446,6 @@ func (b *outlierDetectionBalancer) UpdateState(s balancer.State) {
 }
 
 func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
-	print("newSubConn called")
 	sc, err := b.cc.NewSubConn(addrs, opts)
 	if err != nil {
 		return nil, err
@@ -462,12 +459,10 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	defer b.mu.Unlock()
 	b.scWrappers[sc] = scw
 	if len(addrs) != 1 {
- 		print("len addr !1")
 		return scw, nil
 	}
 	addrInfo, ok := b.addrs[addrs[0].Addr]
 	if !ok {
-		print("!ok")
 		return scw, nil
 	}
 	addrInfo.sws = append(addrInfo.sws, scw)
@@ -475,7 +470,6 @@ func (b *outlierDetectionBalancer) NewSubConn(addrs []resolver.Address, opts bal
 	if !addrInfo.latestEjectionTimestamp.IsZero() {
 		scw.eject()
 	}
-	print("returning scw")
 	return scw, nil
 }
 
@@ -593,7 +587,6 @@ func min(x, y int64) int64 {
 // handleSubConnUpdate stores the recent state and forward the update
 // if the SubConn is not ejected.
 func (b *outlierDetectionBalancer) handleSubConnUpdate(u *scUpdate) {
-	print("handleSubConnUpdate")
 	scw := u.scw
 	scw.latestState = u.state
 	b.childMu.Lock()
@@ -655,7 +648,6 @@ func (b *outlierDetectionBalancer) handleLBConfigUpdate(u lbCfgUpdate) {
 	if b.childState.Picker != nil && noopCfg != b.recentPickerNoop || b.childState.Picker != nil && !b.firstPickerSent {
 		b.recentPickerNoop = noopCfg
 		b.firstPickerSent = true
-		print("UpdateState")
 		b.cc.UpdateState(balancer.State{
 			ConnectivityState: b.childState.ConnectivityState,
 			Picker: &wrappedPicker{
@@ -686,10 +678,8 @@ func (b *outlierDetectionBalancer) run() {
 			}
 			switch u := update.(type) {
 			case balancer.State:
-				print("balancer state update")
 				b.handleChildStateUpdate(u)
 			case lbCfgUpdate:
-				print("lb config update")
 				b.handleLBConfigUpdate(u)
 			}
 		case <-b.closed.Done():
@@ -702,7 +692,6 @@ func (b *outlierDetectionBalancer) run() {
 // Detection configuration and data about each address from the previous
 // interval.
 func (b *outlierDetectionBalancer) intervalTimerAlgorithm() {
-	print("Interval timer algorithm called")
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.timerStartTime = time.Now()
@@ -753,7 +742,6 @@ func (b *outlierDetectionBalancer) addrsWithAtLeastRequestVolume() []*addressInf
 	for _, addrInfo := range b.addrs {
 		bucket := addrInfo.callCounter.inactiveBucket
 		rv := bucket.numSuccesses + bucket.numFailures
-		print("rv: ", rv)
 		if rv >= b.cfg.SuccessRateEjection.RequestVolume {
 			addrs = append(addrs, addrInfo)
 		}
@@ -787,7 +775,6 @@ func (b *outlierDetectionBalancer) meanAndStdDev(addrs []*addressInfo) (float64,
 // the other addresses according to mean and standard deviation, and if overall
 // applicable from other set heuristics. Caller must hold b.mu.
 func (b *outlierDetectionBalancer) successRateAlgorithm() {
-	print("successratealgorithm called")
 	addrsToConsider := b.addrsWithAtLeastRequestVolume()
 	if len(addrsToConsider) < int(b.cfg.SuccessRateEjection.MinimumHosts) {
 		return
@@ -795,8 +782,6 @@ func (b *outlierDetectionBalancer) successRateAlgorithm() {
 	mean, stddev := b.meanAndStdDev(addrsToConsider)
 	for _, addrInfo := range addrsToConsider {
 		bucket := addrInfo.callCounter.inactiveBucket
-		print("numSuccesses: ", bucket.numSuccesses)
-		print("numFailures: ", bucket.numFailures)
 		ejectionCfg := b.cfg.SuccessRateEjection
 		if float64(b.numAddrsEjected)/float64(len(b.addrs))*100 > float64(b.cfg.MaxEjectionPercent) {
 			return
@@ -839,7 +824,6 @@ func (b *outlierDetectionBalancer) failurePercentageAlgorithm() {
 
 // Caller must hold b.mu.
 func (b *outlierDetectionBalancer) ejectAddress(addrInfo *addressInfo) {
-	print("eject address")
 	b.numAddrsEjected++
 	addrInfo.latestEjectionTimestamp = b.timerStartTime
 	addrInfo.ejectionTimeMultiplier++
