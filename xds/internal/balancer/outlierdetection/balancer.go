@@ -170,8 +170,6 @@ type outlierDetectionBalancer struct {
 	// against run() reading that the child is not nil for SubConn updates, and
 	// then UpdateClientConnState or Close writing to the the child.
 	childMu sync.Mutex
-	// child   balancer.Balancer
-
 	child *gracefulswitch.Balancer
 
 	// mu guards access to the following fields. It also helps to synchronize
@@ -207,6 +205,44 @@ func (b *outlierDetectionBalancer) noopConfig() bool {
 	return b.cfg.SuccessRateEjection == nil && b.cfg.FailurePercentageEjection == nil
 }
 
+// onCountingConfig handles logic required specifically on the receipt of a
+// configuration which will count RPC's. Caller must hold b.mu.
+func (b *outlierDetectionBalancer) onCountingConfig() {
+	var interval time.Duration
+	if b.timerStartTime.IsZero() {
+		b.timerStartTime = time.Now()
+		for _, addrInfo := range b.addrs {
+			addrInfo.callCounter.clear()
+		}
+		interval = b.cfg.Interval
+	} else {
+		interval = b.cfg.Interval - now().Sub(b.timerStartTime)
+		if interval < 0 {
+			interval = 0
+		}
+	}
+	b.intervalTimer = afterFunc(interval, b.intervalTimerAlgorithm)
+}
+
+// onCountingConfig handles logic required specifically on the receipt of a
+// configuration which specifies the balancer to be a noop. Caller must hold
+// b.mu.
+func (b *outlierDetectionBalancer) onNoopConfig() {
+	// "If a config is provided with both the `success_rate_ejection` and
+	// `failure_percentage_ejection` fields unset, skip starting the timer and
+	// do the following:"
+	// "Unset the timer start timestamp."
+	b.timerStartTime = time.Time{}
+	for _, addrInfo := range b.addrs {
+		// "Uneject all currently ejected addresses."
+		if !addrInfo.latestEjectionTimestamp.IsZero() {
+			b.unejectAddress(addrInfo)
+		}
+		// "Reset each address's ejection time multiplier to 0."
+		addrInfo.ejectionTimeMultiplier = 0
+	}
+}
+
 func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	lbCfg, ok := s.BalancerConfig.(*LBConfig)
 	if !ok {
@@ -221,7 +257,6 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 		return fmt.Errorf("outlier detection: child balancer %q not registered", lbCfg.ChildPolicy.Name)
 	}
 
-	// TODO: This invariant b.cfg = nil scares me try and break this further
 	if b.cfg == nil || b.cfg.ChildPolicy.Name != lbCfg.ChildPolicy.Name {
 		b.childMu.Lock()
 		err := b.child.SwitchTo(bb)
@@ -259,39 +294,13 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 	}
 
 	if !b.noopConfig() {
-		var interval time.Duration
-		if b.timerStartTime.IsZero() {
-			b.timerStartTime = time.Now()
-			for _, addrInfo := range b.addrs {
-				addrInfo.callCounter.clear()
-			}
-			interval = b.cfg.Interval
-		} else {
-			interval = b.cfg.Interval - now().Sub(b.timerStartTime)
-			if interval < 0 {
-				interval = 0
-			}
-		}
-		b.intervalTimer = afterFunc(interval, b.intervalTimerAlgorithm)
+		b.onCountingConfig()
 	} else {
-		// "If a config is provided with both the `success_rate_ejection` and
-		// `failure_percentage_ejection` fields unset, skip starting the timer and
-		// do the following:"
-		// "Unset the timer start timestamp."
-		b.timerStartTime = time.Time{}
-		for _, addrInfo := range b.addrs {
-			// "Uneject all currently ejected addresses."
-			if !addrInfo.latestEjectionTimestamp.IsZero() {
-				b.unejectAddress(addrInfo)
-			}
-			// "Reset each address's ejection time multiplier to 0."
-			addrInfo.ejectionTimeMultiplier = 0
-		}
+		b.onNoopConfig()
 	}
 	b.mu.Unlock()
 
-	// is this going to cause deadlock?
-	b.childMu.Lock() // now mu has to be grabbed before childMu, implicit ordering requirement now here
+	b.childMu.Lock()
 	err := b.child.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState:  s.ResolverState,
 		BalancerConfig: b.cfg.ChildPolicy.Config,
@@ -307,13 +316,6 @@ func (b *outlierDetectionBalancer) UpdateClientConnState(s balancer.ClientConnSt
 
 	return err
 }
-
-// Two of Easwar's deep comments: why is UpdateSubConnState() called before
-// UpdateClientConnState(), this isn't allowed correct so move the logic of
-// UpdateClientConnState before UpdateSubConnState
-
-// The lb config update, why are we going through the channel instead of simply updating inline?
-// If you update inline, you can set to false and future picker updates will proceed as normal.
 
 func (b *outlierDetectionBalancer) ResolverError(err error) {
 	if b.child == nil {
@@ -347,7 +349,7 @@ func (b *outlierDetectionBalancer) Close() {
 	b.closed.Fire()
 	if b.child != nil {
 		b.childMu.Lock()
-		b.child.Close() // I think this logic stays the same, child being nil is used as an invariant for this being closed, a lot of this logic is scoped to the graceful switch balancer itself
+		b.child.Close()
 		b.child = nil
 		b.childMu.Unlock()
 	}
@@ -423,9 +425,9 @@ func incrementCounter(sc balancer.SubConn, info balancer.DoneInfo) {
 	// UpdateAddresses can switch the addressInfo the scw points to. Writing to
 	// an outdated addresses is a very small race and tolerable. After reading
 	// callCounter.activeBucket in this picker a swap call can concurrently
-	// change what activeBucket points to. A50 says to swap the pointer, but I
-	// decided to make create new memory for the inactive bucket, and have this
-	// race instead write to deprecated memory.
+	// change what activeBucket points to. A50 says to swap the pointer, which
+	// will cause this race to write to deprecated memory the interval timer
+	// algorithm will never read, which makes this race alright.
 	addrInfo := (*addressInfo)(atomic.LoadPointer(&scw.addressInfo))
 	if addrInfo == nil {
 		return
@@ -621,36 +623,6 @@ func (b *outlierDetectionBalancer) handleEjectedUpdate(u *ejectionUpdate) {
 	b.childMu.Unlock()
 }
 
-// gracefulSwitch handles the removal of the SubConns
-
-// if you forward updateSubConnState to graceful switch will do a few things
-
-// forward to the correct child (current or pending)
-
-// eat the call if it's not the correct child (i.e. not current or pending)
-
-// will need to test this type switch?
-
-// This covers his
-
-// need to instantiate this object along with this balancer
-
-// SwitchTo()
-
-// UpdateClientConnState()
-
-// I don't think ^^^ and vvv still need to be in a certain order, but might as well go ahead and switch
-
-// UpdateSubConnState()
-
-
-// picker update bool for the whole thing
-// run() processing lbCfg update in other goroutine ok with him
-
-// When I get back: now that I switched to graceful switch, actually run it
-// with tests, and then get to the rest of his comments
-
-
 // handleChildStateUpdate forwards the picker update wrapped in a wrapped picker
 // with the noop picker bit present.
 func (b *outlierDetectionBalancer) handleChildStateUpdate(u balancer.State) {
@@ -680,7 +652,7 @@ func (b *outlierDetectionBalancer) handleLBConfigUpdate(u lbCfgUpdate) {
 	lbCfg := u.lbCfg
 	done := u.done
 	noopCfg := lbCfg.SuccessRateEjection == nil && lbCfg.FailurePercentageEjection == nil
-	if b.childState.Picker != nil && noopCfg != b.recentPickerNoop || b.childState.Picker != nil && !b.firstPickerSent { // get rid of this if you want to send unconditionally even if state doesn't change
+	if b.childState.Picker != nil && noopCfg != b.recentPickerNoop || b.childState.Picker != nil && !b.firstPickerSent {
 		b.recentPickerNoop = noopCfg
 		b.firstPickerSent = true
 		print("UpdateState")
@@ -692,47 +664,9 @@ func (b *outlierDetectionBalancer) handleLBConfigUpdate(u lbCfgUpdate) {
 			},
 		})
 	}
-	b.inhibitPickerUpdates = false // this happens after the other call guaranteed so you're good.
+	b.inhibitPickerUpdates = false
 	close(done)
-} // the constraint is this happens once at the end of UpdateClientConnState
-
-// If you need to check for sameness as previous, this is orthogonal and will be
-// quite difficult, honestly rethink these two functions in general with new constraint of eating picker updates
-// and shit
-
-// No, there's no requirement to update if there are no changes needed from what
-// was reported before
-
-// Nothing to forward if nothing sent from previous
-
-// Previous sent picker as state persisted
-
-// nothing sent from child
-
-// no update from what was previously there don't send
-
-// Thus if nothing is sent from child, could mean picker isn't updated, don't
-// treat as an error case
-
-// At the end of it check if any state changed compared to the previous
-
-// three pieces of state: ConnectivityState, ChildPicker, noopCfg bit
-
-// if any of those change from the most recent picker sent out, then
-// update
-
-// whether it's nil -> something
-
-// or any of the picker changed. Perhaps if a child sends something always update?
-// How do we even check for equality of picker
-
-// can't check equality of pickers
-
-
-// Easwar's comment about this being processed in a seperate goroutine in run
-// rather than inline - they each need to read certain state, so run() keeps the
-// events (this LBConfigUpdate and a ChildStateUpdate) logically synchronized
-// without a need for a mutex.
+}
 
 func (b *outlierDetectionBalancer) run() {
 	for {
