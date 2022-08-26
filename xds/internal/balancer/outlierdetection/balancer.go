@@ -208,7 +208,7 @@ type outlierDetectionBalancer struct {
 	intervalTimer         *time.Timer
 	inhibitPickerUpdates  bool
 	updateUnconditionally bool
-	numAddrsEjected      int // For fast calculations of percentage of addrs ejected
+	numAddrsEjected       int // For fast calculations of percentage of addrs ejected
 
 	scUpdateCh     *buffer.Unbounded
 	pickerUpdateCh *buffer.Unbounded

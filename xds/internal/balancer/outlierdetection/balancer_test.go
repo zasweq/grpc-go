@@ -65,6 +65,7 @@ func Test(t *testing.T) {
 // TestParseConfig verifies the ParseConfig() method in the Outlier Detection
 // Balancer.
 func (s) TestParseConfig(t *testing.T) {
+	const errParseConfigName = "errParseConfigBalancer"
 	stub.Register(errParseConfigName, stub.BalancerFuncs{
 		ParseConfig: func(json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 			return nil, errors.New("some error")
@@ -297,10 +298,6 @@ func (lbc *LBConfig) Equal(lbc2 *LBConfig) bool {
 	return cmp.Equal(lbc.ChildPolicy, lbc2.ChildPolicy)
 }
 
-const errParseConfigName = "errParseConfigBalancer"
-const tcibname = "testClusterImplBalancer"
-const verifyBalancerName = "verifyBalancer"
-
 type subConnWithState struct {
 	sc    balancer.SubConn
 	state balancer.SubConnState
@@ -321,7 +318,7 @@ func setup(t *testing.T) (*outlierDetectionBalancer, *testutils.TestClientConn, 
 	}
 }
 
-type balancerConfig struct {
+type emptyChildConfig struct {
 	serviceconfig.LoadBalancingConfig
 }
 
@@ -334,12 +331,12 @@ type balancerConfig struct {
 // update. When the Outlier Detection Balancer itself is closed, this second
 // child balancer should also be closed.
 func (s) TestChildBasicOperations(t *testing.T) {
-	bc := balancerConfig{}
+	bc := emptyChildConfig{}
 
 	ccsCh := testutils.NewChannel()
 	closeCh := testutils.NewChannel()
 
-	stub.Register(tcibname, stub.BalancerFuncs{
+	stub.Register(t.Name() + "child1", stub.BalancerFuncs{
 		UpdateClientConnState: func(bd *stub.BalancerData, ccs balancer.ClientConnState) error {
 			ccsCh.Send(ccs.BalancerConfig)
 			return nil
@@ -349,7 +346,7 @@ func (s) TestChildBasicOperations(t *testing.T) {
 		},
 	})
 
-	stub.Register(verifyBalancerName, stub.BalancerFuncs{
+	stub.Register(t.Name() + "child2", stub.BalancerFuncs{
 		UpdateClientConnState: func(bd *stub.BalancerData, _ balancer.ClientConnState) error {
 			// UpdateState inline to READY to complete graceful switch process
 			// synchronously from any UpdateClientConnState call.
@@ -389,7 +386,7 @@ func (s) TestChildBasicOperations(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   tcibname,
+				Name:   t.Name() + "child1",
 				Config: bc,
 			},
 		},
@@ -401,8 +398,8 @@ func (s) TestChildBasicOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("timed out waiting for UpdateClientConnState on the first child balancer: %v", err)
 	}
-	if _, ok := cr.(balancerConfig); !ok {
-		t.Fatalf("config passed to child should be balancerConfig type")
+	if _, ok := cr.(emptyChildConfig); !ok {
+		t.Fatalf("Received child policy config of type %T, want %T", cr, emptyChildConfig{})
 	}
 
 	// This Update Client Conn State call should cause the first child balancer
@@ -427,8 +424,8 @@ func (s) TestChildBasicOperations(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   verifyBalancerName,
-				Config: balancerConfig{},
+				Name:   t.Name() + "child2",
+				Config: emptyChildConfig{},
 			},
 		},
 	})
@@ -445,20 +442,17 @@ func (s) TestChildBasicOperations(t *testing.T) {
 	}
 
 	// Verify the first child balancer closed.
-	_, err = closeCh.Receive(ctx)
-	if err != nil {
+	if _, err = closeCh.Receive(ctx); err != nil {
 		t.Fatalf("timed out waiting for the first child balancer to be closed: %v", err)
 	}
 	// Verify the second child balancer received it's first config update.
-	_, err = ccsCh.Receive(ctx)
-	if err != nil {
+	if _, err = ccsCh.Receive(ctx); err != nil {
 		t.Fatalf("timed out waiting for UpdateClientConnState on the second child balancer: %v", err)
 	}
 	// Closing the Outlier Detection Balancer should close the newly created
 	// child.
 	od.Close()
-	_, err = closeCh.Receive(ctx)
-	if err != nil {
+	if _, err = closeCh.Receive(ctx); err != nil {
 		t.Fatalf("timed out waiting for the second child balancer to be closed: %v", err)
 	}
 }
@@ -475,27 +469,25 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	scsCh := testutils.NewChannel()
 	var scw1, scw2 balancer.SubConn
 	var err error
-	stub.Register(tcibname, stub.BalancerFuncs{
+	stub.Register(t.Name(), stub.BalancerFuncs{
 		UpdateClientConnState: func(bd *stub.BalancerData, _ balancer.ClientConnState) error {
-			scw1, err = bd.ClientConn.NewSubConn([]resolver.Address{
-				{
-					Addr: "address1",
+			scw1, err = bd.ClientConn.NewSubConn([]resolver.Address{{Addr: "address1"}}, balancer.NewSubConnOptions{})
+			if err != nil {
+				t.Fatalf("error in od.NewSubConn call: %v", err)
+			}
+			scw2, err = bd.ClientConn.NewSubConn([]resolver.Address{{Addr: "address2"}}, balancer.NewSubConnOptions{})
+			if err != nil {
+				t.Fatalf("error in od.NewSubConn call: %v", err)
+			}
+			if err != nil {
+				t.Fatalf("error in od.NewSubConn call: %v", err)
+			}
+			bd.ClientConn.UpdateState(balancer.State{
+				ConnectivityState: connectivity.Ready,
+				Picker: &rrPicker{
+					scs: []balancer.SubConn{scw1, scw2},
 				},
-			}, balancer.NewSubConnOptions{})
-			if err != nil {
-				t.Fatalf("error in od.NewSubConn call: %v", err)
-			}
-			scw2, err = bd.ClientConn.NewSubConn([]resolver.Address{
-				{
-					Addr: "address2",
-				},
-			}, balancer.NewSubConnOptions{})
-			if err != nil {
-				t.Fatalf("error in od.NewSubConn call: %v", err)
-			}
-			if err != nil {
-				t.Fatalf("error in od.NewSubConn call: %v", err)
-			}
+			})
 			return nil
 		},
 		UpdateSubConnState: func(_ *stub.BalancerData, sc balancer.SubConn, state balancer.SubConnState) {
@@ -511,12 +503,8 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	od.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState: resolver.State{
 			Addresses: []resolver.Address{
-				{
-					Addr: "address1",
-				},
-				{
-					Addr: "address2",
-				},
+				{Addr: "address1"},
+				{Addr: "address2"},
 			},
 		},
 		BalancerConfig: &LBConfig{
@@ -531,21 +519,14 @@ func (s) TestUpdateAddresses(t *testing.T) {
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   tcibname,
-				Config: balancerConfig{},
+				Name:   t.Name(),
+				Config: emptyChildConfig{},
 			},
 		},
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
-
-	od.UpdateState(balancer.State{
-		ConnectivityState: connectivity.Ready,
-		Picker: &rrPicker{
-			scs: []balancer.SubConn{scw1, scw2},
-		},
-	})
 
 	// Setup the system to where one address is ejected and one address
 	// isn't.
@@ -555,23 +536,19 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	case picker := <-tcc.NewPickerCh:
 		pi, err := picker.Pick(balancer.PickInfo{})
 		if err != nil {
-			t.Fatalf("Picker.Pick should not have errored")
+			t.Fatalf("picker.Pick failed with error: %v", err)
 		}
-		pi.Done(balancer.DoneInfo{})
-		pi.Done(balancer.DoneInfo{})
-		pi.Done(balancer.DoneInfo{})
-		pi.Done(balancer.DoneInfo{})
-		pi.Done(balancer.DoneInfo{})
+		for c := 0; c < 5; c++ {
+			pi.Done(balancer.DoneInfo{})
+		}
 		// Eject the second address.
 		pi, err = picker.Pick(balancer.PickInfo{})
 		if err != nil {
-			t.Fatalf("Picker.Pick should not have errored")
+			t.Fatalf("picker.Pick failed with error: %v", err)
 		}
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		for c := 0; c < 5; c++ {
+			pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		}
 		od.intervalTimerAlgorithm()
 		// verify UpdateSubConnState() got called with TRANSIENT_FAILURE for
 		// child with address that was ejected.
@@ -589,11 +566,7 @@ func (s) TestUpdateAddresses(t *testing.T) {
 
 	// Update scw1 to another address that is currently ejected. This should
 	// cause scw1 to get ejected.
-	od.UpdateAddresses(scw1, []resolver.Address{
-		{
-			Addr: "address2",
-		},
-	})
+	od.UpdateAddresses(scw1, []resolver.Address{{Addr: "address2"}})
 
 	// Verify that update addresses gets forwarded to ClientConn.
 	select {
@@ -617,12 +590,8 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	// Update scw1 to multiple addresses. This should cause scw1 to get
 	// unejected, as is it no longer being tracked for Outlier Detection.
 	od.UpdateAddresses(scw1, []resolver.Address{
-		{
-			Addr: "address1",
-		},
-		{
-			Addr: "address2",
-		},
+		{Addr: "address1"},
+		{Addr: "address2"},
 	})
 	// Verify scw1 got unejected (UpdateSubConnState called with recent state).
 	gotSCWS, err = scsCh.Receive(ctx)
@@ -640,12 +609,8 @@ func (s) TestUpdateAddresses(t *testing.T) {
 	// in which the plurality goes from multiple to multiple should be a no-op,
 	// as the address continues to be ignored by outlier detection.
 	od.UpdateAddresses(scw1, []resolver.Address{
-		{
-			Addr: "address2",
-		},
-		{
-			Addr: "address3",
-		},
+		{Addr: "address2"},
+		{Addr: "address3"},
 	})
 	// Verify no downstream effects.
 	sCtx, cancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
@@ -656,11 +621,7 @@ func (s) TestUpdateAddresses(t *testing.T) {
 
 	// Update scw1 back to a single address, which is ejected. This should cause
 	// the SubConn to be re-ejected.
-	od.UpdateAddresses(scw1, []resolver.Address{
-		{
-			Addr: "address2",
-		},
-	})
+	od.UpdateAddresses(scw1, []resolver.Address{{Addr: "address2"}})
 	// Verify scw1 got ejected (UpdateSubConnState called with TRANSIENT FAILURE).
 	gotSCWS, err = scsCh.Receive(ctx)
 	if err != nil {
@@ -700,7 +661,7 @@ func (rrp *rrPicker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
 // and the previous start timestamp. For a no-op configuration, the timer should
 // not be configured at all.
 func (s) TestDurationOfInterval(t *testing.T) {
-	stub.Register(tcibname, stub.BalancerFuncs{})
+	stub.Register(t.Name(), stub.BalancerFuncs{})
 
 	od, _, cleanup := setup(t)
 	defer func(af func(d time.Duration, f func()) *time.Timer) {
@@ -733,8 +694,8 @@ func (s) TestDurationOfInterval(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   tcibname,
-				Config: balancerConfig{},
+				Name:   t.Name(),
+				Config: emptyChildConfig{},
 			},
 		},
 	})
@@ -780,8 +741,8 @@ func (s) TestDurationOfInterval(t *testing.T) {
 				RequestVolume:         50,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   tcibname,
-				Config: balancerConfig{},
+				Name:   t.Name(),
+				Config: emptyChildConfig{},
 			},
 		},
 	})
@@ -801,8 +762,8 @@ func (s) TestDurationOfInterval(t *testing.T) {
 		BalancerConfig: &LBConfig{
 			Interval: 10 * time.Second,
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   tcibname,
-				Config: balancerConfig{},
+				Name:   t.Name(),
+				Config: emptyChildConfig{},
 			},
 		},
 	})
@@ -812,8 +773,7 @@ func (s) TestDurationOfInterval(t *testing.T) {
 	// No timer should have been started.
 	sCtx, cancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
 	defer cancel()
-	_, err = durationChan.Receive(sCtx)
-	if err == nil {
+	if _, err = durationChan.Receive(sCtx); err == nil {
 		t.Fatal("No timer should have started.")
 	}
 }
@@ -827,29 +787,17 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 	scsCh := testutils.NewChannel()
 	var scw1, scw2, scw3 balancer.SubConn
 	var err error
-	stub.Register(tcibname, stub.BalancerFuncs{
+	stub.Register(t.Name(), stub.BalancerFuncs{
 		UpdateClientConnState: func(bd *stub.BalancerData, _ balancer.ClientConnState) error {
-			scw1, err = bd.ClientConn.NewSubConn([]resolver.Address{
-				{
-					Addr: "address1",
-				},
-			}, balancer.NewSubConnOptions{})
+			scw1, err = bd.ClientConn.NewSubConn([]resolver.Address{{Addr: "address1"}}, balancer.NewSubConnOptions{})
 			if err != nil {
 				t.Fatalf("error in od.NewSubConn call: %v", err)
 			}
-			scw2, err = bd.ClientConn.NewSubConn([]resolver.Address{
-				{
-					Addr: "address2",
-				},
-			}, balancer.NewSubConnOptions{})
+			scw2, err = bd.ClientConn.NewSubConn([]resolver.Address{{Addr: "address2"}}, balancer.NewSubConnOptions{})
 			if err != nil {
 				t.Fatalf("error in od.NewSubConn call: %v", err)
 			}
-			scw3, err = bd.ClientConn.NewSubConn([]resolver.Address{
-				{
-					Addr: "address3",
-				},
-			}, balancer.NewSubConnOptions{})
+			scw3, err = bd.ClientConn.NewSubConn([]resolver.Address{{Addr: "address3"}}, balancer.NewSubConnOptions{})
 			if err != nil {
 				t.Fatalf("error in od.NewSubConn call: %v", err)
 			}
@@ -871,15 +819,9 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 	od.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState: resolver.State{
 			Addresses: []resolver.Address{
-				{
-					Addr: "address1",
-				},
-				{
-					Addr: "address2",
-				},
-				{
-					Addr: "address3",
-				},
+				{Addr: "address1"},
+				{Addr: "address2"},
+				{Addr: "address3"},
 			},
 		},
 		BalancerConfig: &LBConfig{
@@ -894,8 +836,8 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   tcibname,
-				Config: balancerConfig{},
+				Name:   t.Name(),
+				Config: emptyChildConfig{},
 			},
 		},
 	})
@@ -920,13 +862,11 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			pi, err := picker.Pick(balancer.PickInfo{})
 			if err != nil {
-				t.Fatalf("Picker.Pick should not have errored")
+				t.Fatalf("picker.Pick failed with error: %v", err)
 			}
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
+			for c := 0; c < 5; c++ {
+				pi.Done(balancer.DoneInfo{})
+			}
 		}
 
 		od.intervalTimerAlgorithm()
@@ -963,23 +903,19 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 		for i := 0; i < 2; i++ {
 			pi, err := picker.Pick(balancer.PickInfo{})
 			if err != nil {
-				t.Fatalf("Picker.Pick should not have errored")
+				t.Fatalf("picker.Pick failed with error: %v", err)
 			}
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
+			for c := 0; c < 5; c++ {
+				pi.Done(balancer.DoneInfo{})
+			}
 		}
 		pi, err := picker.Pick(balancer.PickInfo{})
 		if err != nil {
-			t.Fatalf("Picker.Pick should not have errored")
+			t.Fatalf("picker.Pick failed with error: %v", err)
 		}
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		for c := 0; c < 5; c++ {
+			pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		}
 
 		// should eject address that always errored.
 		od.intervalTimerAlgorithm()
@@ -1050,32 +986,20 @@ func (s) TestEjectFailureRate(t *testing.T) {
 	scsCh := testutils.NewChannel()
 	var scw1, scw2, scw3 balancer.SubConn
 	var err error
-	stub.Register(tcibname, stub.BalancerFuncs{
+	stub.Register(t.Name(), stub.BalancerFuncs{
 		UpdateClientConnState: func(bd *stub.BalancerData, _ balancer.ClientConnState) error {
 			if scw1 != nil { // UpdateClientConnState was already called, no need to recreate SubConns.
 				return nil
 			}
-			scw1, err = bd.ClientConn.NewSubConn([]resolver.Address{
-				{
-					Addr: "address1",
-				},
-			}, balancer.NewSubConnOptions{})
+			scw1, err = bd.ClientConn.NewSubConn([]resolver.Address{{Addr: "address1"}}, balancer.NewSubConnOptions{})
 			if err != nil {
 				t.Fatalf("error in od.NewSubConn call: %v", err)
 			}
-			scw2, err = bd.ClientConn.NewSubConn([]resolver.Address{
-				{
-					Addr: "address2",
-				},
-			}, balancer.NewSubConnOptions{})
+			scw2, err = bd.ClientConn.NewSubConn([]resolver.Address{{Addr: "address2"}}, balancer.NewSubConnOptions{})
 			if err != nil {
 				t.Fatalf("error in od.NewSubConn call: %v", err)
 			}
-			scw3, err = bd.ClientConn.NewSubConn([]resolver.Address{
-				{
-					Addr: "address3",
-				},
-			}, balancer.NewSubConnOptions{})
+			scw3, err = bd.ClientConn.NewSubConn([]resolver.Address{{Addr: "address3"}}, balancer.NewSubConnOptions{})
 			if err != nil {
 				t.Fatalf("error in od.NewSubConn call: %v", err)
 			}
@@ -1097,15 +1021,9 @@ func (s) TestEjectFailureRate(t *testing.T) {
 	od.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState: resolver.State{
 			Addresses: []resolver.Address{
-				{
-					Addr: "address1",
-				},
-				{
-					Addr: "address2",
-				},
-				{
-					Addr: "address3",
-				},
+				{Addr: "address1"},
+				{Addr: "address2"},
+				{Addr: "address3"},
 			},
 		},
 		BalancerConfig: &LBConfig{
@@ -1120,8 +1038,8 @@ func (s) TestEjectFailureRate(t *testing.T) {
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   tcibname,
-				Config: balancerConfig{},
+				Name:   t.Name(),
+				Config: emptyChildConfig{},
 			},
 		},
 	})
@@ -1146,13 +1064,11 @@ func (s) TestEjectFailureRate(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			pi, err := picker.Pick(balancer.PickInfo{})
 			if err != nil {
-				t.Fatalf("Picker.Pick should not have errored")
+				t.Fatalf("picker.Pick failed with error: %v", err)
 			}
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
+			for c := 0; c < 5; c++ {
+				pi.Done(balancer.DoneInfo{})
+			}
 		}
 
 		od.intervalTimerAlgorithm()
@@ -1169,23 +1085,19 @@ func (s) TestEjectFailureRate(t *testing.T) {
 		for i := 0; i < 2; i++ {
 			pi, err := picker.Pick(balancer.PickInfo{})
 			if err != nil {
-				t.Fatalf("Picker.Pick should not have errored")
+				t.Fatalf("picker.Pick failed with error: %v", err)
 			}
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
-			pi.Done(balancer.DoneInfo{})
+			for c := 0; c < 5; c++ {
+				pi.Done(balancer.DoneInfo{})
+			}
 		}
 		pi, err := picker.Pick(balancer.PickInfo{})
 		if err != nil {
-			t.Fatalf("Picker.Pick should not have errored")
+			t.Fatalf("picker.Pick failed with error: %v", err)
 		}
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
-		pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		for c := 0; c < 5; c++ {
+			pi.Done(balancer.DoneInfo{Err: errors.New("some error")})
+		}
 
 		// should eject address that always errored.
 		od.intervalTimerAlgorithm()
@@ -1215,15 +1127,9 @@ func (s) TestEjectFailureRate(t *testing.T) {
 		od.UpdateClientConnState(balancer.ClientConnState{
 			ResolverState: resolver.State{
 				Addresses: []resolver.Address{
-					{
-						Addr: "address1",
-					},
-					{
-						Addr: "address2",
-					},
-					{
-						Addr: "address3",
-					},
+					{Addr: "address1"},
+					{Addr: "address2"},
+					{Addr: "address3"},
 				},
 			},
 			BalancerConfig: &LBConfig{
@@ -1232,8 +1138,8 @@ func (s) TestEjectFailureRate(t *testing.T) {
 				MaxEjectionTime:    300 * time.Second,
 				MaxEjectionPercent: 10,
 				ChildPolicy: &internalserviceconfig.BalancerConfig{
-					Name:   tcibname,
-					Config: balancerConfig{},
+					Name:   t.Name(),
+					Config: emptyChildConfig{},
 				},
 			},
 		})
@@ -1256,7 +1162,7 @@ func (s) TestEjectFailureRate(t *testing.T) {
 // called after the child balancer is closed.
 func (s) TestConcurrentOperations(t *testing.T) {
 	closed := grpcsync.NewEvent()
-	stub.Register(verifyBalancerName, stub.BalancerFuncs{
+	stub.Register(t.Name(), stub.BalancerFuncs{
 		UpdateClientConnState: func(*stub.BalancerData, balancer.ClientConnState) error {
 			if closed.HasFired() {
 				t.Fatal("UpdateClientConnState was called after Close(), which breaks the balancer API")
@@ -1291,15 +1197,9 @@ func (s) TestConcurrentOperations(t *testing.T) {
 	od.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState: resolver.State{
 			Addresses: []resolver.Address{
-				{
-					Addr: "address1",
-				},
-				{
-					Addr: "address2",
-				},
-				{
-					Addr: "address3",
-				},
+				{Addr: "address1"},
+				{Addr: "address2"},
+				{Addr: "address3"},
 			},
 		},
 		BalancerConfig: &LBConfig{
@@ -1320,19 +1220,15 @@ func (s) TestConcurrentOperations(t *testing.T) {
 				RequestVolume:         3,
 			},
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   verifyBalancerName,
-				Config: balancerConfig{},
+				Name:   t.Name(),
+				Config: emptyChildConfig{},
 			},
 		},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 
-	scw1, err := od.NewSubConn([]resolver.Address{
-		{
-			Addr: "address1",
-		},
-	}, balancer.NewSubConnOptions{})
+	scw1, err := od.NewSubConn([]resolver.Address{{Addr: "address1"}}, balancer.NewSubConnOptions{})
 	if err != nil {
 		t.Fatalf("error in od.NewSubConn call: %v", err)
 	}
@@ -1340,20 +1236,12 @@ func (s) TestConcurrentOperations(t *testing.T) {
 		t.Fatalf("error in od.NewSubConn call: %v", err)
 	}
 
-	scw2, err := od.NewSubConn([]resolver.Address{
-		{
-			Addr: "address2",
-		},
-	}, balancer.NewSubConnOptions{})
+	scw2, err := od.NewSubConn([]resolver.Address{{Addr: "address2"}}, balancer.NewSubConnOptions{})
 	if err != nil {
 		t.Fatalf("error in od.NewSubConn call: %v", err)
 	}
 
-	scw3, err := od.NewSubConn([]resolver.Address{
-		{
-			Addr: "address3",
-		},
-	}, balancer.NewSubConnOptions{})
+	scw3, err := od.NewSubConn([]resolver.Address{{Addr: "address3"}}, balancer.NewSubConnOptions{})
 	if err != nil {
 		t.Fatalf("error in od.NewSubConn call: %v", err)
 	}
@@ -1443,28 +1331,20 @@ func (s) TestConcurrentOperations(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		od.UpdateAddresses(scw2, []resolver.Address{
-			{
-				Addr: "address3",
-			},
-		})
+		od.UpdateAddresses(scw2, []resolver.Address{{Addr: "address3"}})
 	}()
 
 	// Call balancer.Balancers synchronously in this goroutine, upholding the
 	// balancer.Balancer API guarantee of synchronous calls.
 	od.UpdateClientConnState(balancer.ClientConnState{ // This will delete addresses and flip to no op
 		ResolverState: resolver.State{
-			Addresses: []resolver.Address{
-				{
-					Addr: "address1",
-				},
-			},
+			Addresses: []resolver.Address{{Addr: "address1"}},
 		},
 		BalancerConfig: &LBConfig{
 			Interval: 1<<63 - 1,
 			ChildPolicy: &internalserviceconfig.BalancerConfig{
-				Name:   verifyBalancerName,
-				Config: balancerConfig{},
+				Name:   t.Name(),
+				Config: emptyChildConfig{},
 			},
 		},
 	})
@@ -1646,25 +1526,15 @@ func (s) TestOutlierDetectionAlgorithmsE2E(t *testing.T) {
 
 			// The addresses which don't return errors.
 			okAddresses := []resolver.Address{
-				{
-					Addr: addresses[0],
-				},
-				{
-					Addr: addresses[1],
-				},
+				{Addr: addresses[0]},
+				{Addr: addresses[1]},
 			}
 
 			// The full list of addresses.
 			fullAddresses := []resolver.Address{
-				{
-					Addr: addresses[0],
-				},
-				{
-					Addr: addresses[1],
-				},
-				{
-					Addr: addresses[2],
-				},
+				{Addr: addresses[0]},
+				{Addr: addresses[1]},
+				{Addr: addresses[2]},
 			}
 
 			mr := manual.NewBuilderWithScheme("od-e2e")
@@ -1732,25 +1602,15 @@ func (s) TestNoopConfiguration(t *testing.T) {
 
 	// The addresses which don't return errors.
 	okAddresses := []resolver.Address{
-		{
-			Addr: addresses[0],
-		},
-		{
-			Addr: addresses[1],
-		},
+		{Addr: addresses[0]},
+		{Addr: addresses[1]},
 	}
 
 	// The full list of addresses.
 	fullAddresses := []resolver.Address{
-		{
-			Addr: addresses[0],
-		},
-		{
-			Addr: addresses[1],
-		},
-		{
-			Addr: addresses[2],
-		},
+		{Addr: addresses[0]},
+		{Addr: addresses[1]},
+		{Addr: addresses[2]},
 	}
 
 	noopODServiceConfigJSON := `
