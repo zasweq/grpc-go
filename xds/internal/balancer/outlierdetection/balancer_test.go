@@ -318,13 +318,16 @@ type emptyChildConfig struct {
 }
 
 // TestChildBasicOperations tests basic operations of the Outlier Detection
-// Balancer and it's interaction with it's child. On the first receipt of a good
-// config, the balancer is expected to eventually create a child and send the
-// child it's configuration. When a new configuration comes in that changes the
-// child's type which reports READY immediately, the first child balancer should
-// be closed and the second child balancer should receive it's first config
-// update. When the Outlier Detection Balancer itself is closed, this second
-// child balancer should also be closed.
+// Balancer and it's interaction with it's child. The following scenarios are
+// tested, in a step by step fashion:
+// 1. The Outlier Detection Balancer receives it's first good configuration. The
+// balancer is expected to create a child and sent the child it's configuration.
+// 2. The Outlier Detection Balancer receives new configuration that specifies a
+// child's type, and the new type immediately reports READY inline. The first
+// child balancer should be closed and the second child balancer should receive
+// a config update.
+// 3. The Outlier Detection Balancer is closed. The second child balancer should
+// be closed.
 func (s) TestChildBasicOperations(t *testing.T) {
 	bc := emptyChildConfig{}
 
@@ -455,11 +458,18 @@ func (s) TestChildBasicOperations(t *testing.T) {
 // TestUpdateAddresses tests the functionality of UpdateAddresses and any
 // changes in the addresses/plurality of those addresses for a SubConn. The
 // Balancer is set up with two upstreams, with one of the upstreams being
-// ejected. Switching a SubConn's address list to the ejected address should
-// cause the SubConn to be ejected, if not already. Switching the address list
-// from single to plural should cause this SubConn to be unejected, since the
-// SubConn is no longer being tracked by Outlier Detection. Then, switching this
-// SubConn back to the single ejected address should reeject the SubConn.
+// ejected. Initially, there is one SubConn for each address. The following
+// scenarios are tested, in a step by step fashion:
+// 1. The SubConn not currently ejected switches addresses to the address that
+// is ejected. This should cause the SubConn to get ejected.
+// 2. Update this same SubConn to multiple addresses. This should cause the
+// SubConn to get unejected, as it is no longer being tracked by Outlier
+// Detection at that point.
+// 3. Update this same SubConn to different addresses, still multiple. This
+// should be a noop, as the SubConn is still no longer being tracked by Outlier
+// Detection.
+// 4. Update this same SubConn to the a single address which is ejected. This
+// should cause the SubConn to be ejected.
 func (s) TestUpdateAddresses(t *testing.T) {
 	scsCh := testutils.NewChannel()
 	var scw1, scw2 balancer.SubConn
@@ -653,13 +663,15 @@ func (rrp *rrPicker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
 	return balancer.PickResult{SubConn: sc}, nil
 }
 
-// TestDurationOfInterval tests the configured interval timer. On the first
-// config received, the Outlier Detection balancer should configure the timer
-// with whatever is directly specified on the config. On subsequent configs
-// received, the Outlier Detection balancer should configure the timer with
-// whatever interval is configured minus the difference between the current time
-// and the previous start timestamp. For a no-op configuration, the timer should
-// not be configured at all.
+// TestDurationOfInterval tests the configured interval timer.
+// The following scenarios are tested:
+// 1. The Outlier Detection Balancer receives it's first config. The balancer
+// should configure the timer with whatever is directly specified on the config.
+// 2. The Outlier Detection Balancer receives a subsequent config. The balancer
+// should configure with whatever interval is configured minus the difference
+// between the current time and the previous start timestamp.
+// 3. The Outlier Detection Balancer receives a no-op configuration. The
+// balancer should not configure a timer at all.
 func (s) TestDurationOfInterval(t *testing.T) {
 	stub.Register(t.Name(), stub.BalancerFuncs{})
 
@@ -781,10 +793,15 @@ func (s) TestDurationOfInterval(t *testing.T) {
 }
 
 // TestEjectUnejectSuccessRate tests the functionality of the interval timer
-// algorithm of ejecting/unejecting SubConns when configured with
-// SuccessRateEjection. It also tests a desired invariant of a SubConnWrapper
-// being ejected or unejected, which is to either forward or not forward SubConn
-// updates received from grpc.
+// algorithm when configured with SuccessRateEjection. The Outlier Detection
+// Balancer will be set up with 3 SubConns, each with a different address.
+// It tests the following scenarios, in a step by step fashion:
+// 1. The three addresses each have 5 successes. The interval timer algorithm should
+// not eject any of the addresses.
+// 2. Two of the addresses have 5 successes, the third has five failures. The
+// interval timer algorithm should eject the third address with five failures.
+// 3. The interval timer algorithm is run at a later time past max ejection
+// time. The interval timer algorithm should uneject the third address.
 func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 	scsCh := testutils.NewChannel()
 	var scw1, scw2, scw3 balancer.SubConn
@@ -899,8 +916,8 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 
 		// Set two of the upstream addresses to have five successes each, and
 		// one of the upstream addresses to have five failures. This should
-		// cause the address which has five failures to be ejected according the
-		// SuccessRateAlgorithm.
+		// cause the address which has five failures to be ejected according to
+		// the SuccessRateAlgorithm.
 		for i := 0; i < 2; i++ {
 			pi, err := picker.Pick(balancer.PickInfo{})
 			if err != nil {
@@ -982,9 +999,16 @@ func (s) TestEjectUnejectSuccessRate(t *testing.T) {
 }
 
 // TestEjectFailureRate tests the functionality of the interval timer algorithm
-// of ejecting SubConns when configured with FailurePercentageEjection. It also
-// tests the functionality of unejecting SubConns when the balancer flips to a
-// noop configuration.
+// when configured with FailurePercentageEjection, and also the functionality of
+// noop configuration. The Outlier Detection Balancer will be set up with 3
+// SubConns, each with a different address. It tests the following scenarios, in
+// a step by step fashion:
+// 1. The three addresses each have 5 successes. The interval timer algorithm
+// should not eject any of the addresses.
+// 2. Two of the addresses have 5 successes, the third has five failures. The
+// interval timer algorithm should eject the third address with five failures.
+// 3. The Outlier Detection Balancer receives a subsequent noop config update.
+// The balancer should uneject all ejected addresses.
 func (s) TestEjectFailureRate(t *testing.T) {
 	scsCh := testutils.NewChannel()
 	var scw1, scw2, scw3 balancer.SubConn
