@@ -1240,7 +1240,7 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 			t.closeStream(stream, errStreamDrain, false, http2.ErrCodeNo, statusGoAway, nil, false)
 		}
 	}*/
-	/*
+
 	activeStreams := t.activeStreams
 	t.prevGoAwayID = id // Does having this here change anything?, write to it before next handleGoAway is called...but that would happen serially
 	t.mu.Unlock()
@@ -1264,8 +1264,8 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 	active := len(activeStreams)
 	if active == 0 {
 		t.Close(connectionErrorf(true, nil, "received goaway and there are no active streams"))
-	}*/
-	for streamID, stream := range t.activeStreams {
+	}
+	/*for streamID, stream := range t.activeStreams {
 		if streamID > id && streamID <= upperLimit {
 			// The stream was unprocessed by the server.
 			print("the stream was unprocessed by the server")
@@ -1279,7 +1279,7 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 	t.mu.Unlock()
 	if active == 0 {
 		t.Close(connectionErrorf(true, nil, "received goaway and there are no active streams"))
-	}
+	}*/
 }
 
 /*
