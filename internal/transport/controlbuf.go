@@ -328,12 +328,13 @@ func (c *controlBuffer) put(it cbItem) error {
 
 func (c *controlBuffer) executeAndPut(f func(it interface{}) bool, it cbItem) (bool, error) {
 	var wakeUp bool
-	c.mu.Lock()
+	c.mu.Lock() // locks control bufs mu
 	if c.err != nil {
 		c.mu.Unlock()
 		return false, c.err
 	}
 	if f != nil {
+		// calls back into function - a function on the created client has a t.mutex grab
 		if !f(it) { // f wasn't successful
 			c.mu.Unlock()
 			return false, nil
@@ -750,7 +751,8 @@ func (l *loopyWriter) outFlowControlSizeRequestHandler(o *outFlowControlSizeRequ
 }
 
 func (l *loopyWriter) cleanupStreamHandler(c *cleanupStream) error {
-	c.onWrite()
+	c.onWrite() // calls onWrite - this deletes from t.activeStreams s.id...invariant of activeStreams being 3
+	// cleans up stream 7 and 9, what effects do those cause?
 	if str, ok := l.estdStreams[c.streamID]; ok {
 		// On the server side it could be a trailers-only response or
 		// a RST_STREAM before stream initialization thus the stream might
@@ -759,7 +761,7 @@ func (l *loopyWriter) cleanupStreamHandler(c *cleanupStream) error {
 		str.deleteSelf()
 	}
 	if c.rst { // If RST_STREAM needs to be sent.
-		if err := l.framer.fr.WriteRSTStream(c.streamID, c.rstCode); err != nil {
+		if err := l.framer.fr.WriteRSTStream(c.streamID, c.rstCode); err != nil { // doesn't write onto framer
 			return err
 		}
 	}

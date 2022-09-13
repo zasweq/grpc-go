@@ -294,6 +294,7 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	if opts.MaxHeaderListSize != nil {
 		maxHeaderListSize = *opts.MaxHeaderListSize
 	}
+	// 1 3 5 7 9
 	t := &http2Client{
 		ctx:                   ctx,
 		ctxDone:               ctx.Done(), // Cache Done chan.
@@ -1009,7 +1010,7 @@ func (t *http2Client) updateWindow(s *Stream, n uint32) {
 func (t *http2Client) updateFlowControl(n uint32) {
 	updateIWS := func(interface{}) bool {
 		t.initialWindowSize = int32(n)
-		t.mu.Lock()
+		t.mu.Lock() // closes on this func, takes t.Mu here
 		for _, s := range t.activeStreams {
 			s.fc.newLimit(n)
 		}
@@ -1232,10 +1233,44 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 	if upperLimit == 0 { // This is the first GoAway Frame.
 		upperLimit = math.MaxUint32 // Kill all streams after the GoAway ID.
 	}
-	for streamID, stream := range t.activeStreams {
+	/*for streamID, stream := range t.activeStreams {
 		if streamID > id && streamID <= upperLimit {
 			// The stream was unprocessed by the server.
 			atomic.StoreUint32(&stream.unprocessed, 1)
+			t.closeStream(stream, errStreamDrain, false, http2.ErrCodeNo, statusGoAway, nil, false)
+		}
+	}*/
+	/*
+	activeStreams := t.activeStreams
+	t.prevGoAwayID = id // Does having this here change anything?, write to it before next handleGoAway is called...but that would happen serially
+	t.mu.Unlock()
+
+	// Option 1: read t.activeStreams into a local var, do all of this accounting after
+
+	// Option 2: defer t.closeStream (eh, I find this ugly, would mess up ordering)
+
+	// Option 3: If closeStream might need the lock than you need to think of a whole other solution
+
+	// To send this out I need to write a testcase to reproduce this
+
+	for streamID, stream := range activeStreams {
+		if streamID > id && streamID <= upperLimit {
+			// The stream was unprocessed by the server.
+			atomic.StoreUint32(&stream.unprocessed, 1)
+			t.closeStream(stream, errStreamDrain, false, http2.ErrCodeNo, statusGoAway, nil, false)
+		}
+	}
+
+	active := len(activeStreams)
+	if active == 0 {
+		t.Close(connectionErrorf(true, nil, "received goaway and there are no active streams"))
+	}*/
+	for streamID, stream := range t.activeStreams {
+		if streamID > id && streamID <= upperLimit {
+			// The stream was unprocessed by the server.
+			print("the stream was unprocessed by the server")
+			atomic.StoreUint32(&stream.unprocessed, 1)
+			// I need to get this to hit, it should
 			t.closeStream(stream, errStreamDrain, false, http2.ErrCodeNo, statusGoAway, nil, false)
 		}
 	}
@@ -1246,6 +1281,37 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 		t.Close(connectionErrorf(true, nil, "received goaway and there are no active streams"))
 	}
 }
+
+/*
+anyway this should be reproducible by creating streams and then GOAWAYing from
+the server with a stream ID lower than one/more of them
+
+// don't stream ids have to be even or something
+
+// stream 1 id x1
+
+// stream 2 id x2
+
+// stream 3 id x3
+
+// send a goaway from the server with last stream id
+// less then stream 4 or 5
+
+// stream 4 id x4
+
+// stream 5 id x5
+
+// need two things: on client side a way to create a stream (and know stream id,
+// maybe that's just part of the object)
+
+// a way to send a GO_AWAY frame on server side with the correct stream id
+
+// goaway{lastStreamId: the middle one}
+
+// ^^^ example test case
+
+
+*/
 
 // setGoAwayReason sets the value of t.goAwayReason based
 // on the GoAway frame received.

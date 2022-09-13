@@ -273,7 +273,7 @@ func (h *testStreamHandler) handleStreamDelayRead(t *testing.T, s *Stream) {
 	// This write will cause server to run out of stream level,
 	// flow control and the other side won't send a window update
 	// until that happens.
-	if err := h.t.Write(s, nil, resp, &Options{}); err != nil {
+	if err := h.t.Write(s, nil, resp, &Options{}); err != nil { // ONE OPTION OF WRITING A HEADERS FRAME
 		t.Errorf("server Write got %v, want <nil>", err)
 		return
 	}
@@ -2500,4 +2500,120 @@ func (s) TestPeerSetInServerContext(t *testing.T) {
 		}
 	}
 	server.mu.Unlock()
+}
+
+
+// you need GO_AWAY granularity, can you even get that
+// at an e2e level? I feel like it has to be here
+
+
+// look for knobs on stream creation and ways to send a GOAWAY frame from server
+// this will have to have the rest of correct context
+
+// ... ct ... := setup()
+
+// stream := ct.NewStream()
+// stream.id (since in package) so handles stream id logic
+
+// server needs to send GO_AWAY frame
+
+/*
+var st *http2Server
+	server.mu.Lock()
+	for k := range server.conns {
+		st = k.(*http2Server)
+	}
+	notifyChan := make(chan struct{})
+	server.h.notify = notifyChan
+	server.mu.Unlock()
+
+st.Write(a GOAWAY frame here)
+
+*/
+
+// I have a feeling I need to have another thing which grabs the lock in a seperate goroutine and induces AB BA crap
+
+
+// TestGoAwayCloseStreams tests the scenario where you have many streams
+// created, and the server sends a GOAWAY frame with a stream id less than some
+// of them. The active streams should only consistent of streams with stream ids
+// less than or equal to the GOAWAY frames stream ID. This should not induce a
+// deadlock.
+func (s) TestGoAwayCloseStreams(t *testing.T) {
+	server, ct, cancel := setUp(t, 0, math.MaxUint32, normal)
+	defer cancel()
+	defer server.stop()
+	defer ct.Close(fmt.Errorf("closed manually by test"))
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	for i := 0; i < 5; i++ {
+		_, err := ct.NewStream(ctx, &CallHdr{}) // creates stream object and writes the stream initial frames onto wire (header frame corresponding)
+		if err != nil {
+			t.Fatalf("error creating stream: %v", err)
+		}
+	}
+	// stream := ct.NewStream() // do this 5 times - are the stream ids for this deterministic?
+
+	// stream.Read() // do I need this? I just want to induce race
+	// 1 3 5 7 9
+	// 5
+
+	waitWhileTrue(t, func() (bool, error) {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+
+		if len(server.conns) == 0 {
+			return true, fmt.Errorf("timed-out while waiting for connection to be created on the server")
+		}
+		return false, nil
+	})
+
+	var st *http2Server
+	server.mu.Lock()
+	for k := range server.conns { // I feel like this should be populated, st per conn accepted, there's a client transport being created?
+		print("st = k.(*http2Server)")
+		st = k.(*http2Server)
+	}
+	server.mu.Unlock()
+
+	// does this need to do anything else to speak HTTP2?
+	// does setUp handle the preface and crap, yeah it does, newClientTransport()
+
+	// is there anything else that needs to be done for stream?
+
+	// into HTTP 2 Data frame. Is a HTTP 2 data frame GOAWAY?
+	// HTTP 2 Data Frame != HTTP 2 GOAWAY
+	st.framer.fr.WriteGoAway(5, http2.ErrCodeNo, []byte{})
+
+	// I have a feeling I need to have another thing which grabs the lock in a separate goroutine and induces AB BA crap
+
+
+	// this codepath takes t.mu, then calls controlBuf.executeAndPut(), which takes c.mu
+
+	// executeAndPut (takes c.mu) with checkForStreamQuota callback (takes t.mu)
+	// can any other codepath induce this ordering?
+	// create a bunch of streams to induce deadlock
+	for i := 0; i < 10; i++ {
+		_, err := ct.NewStream(ctx, &CallHdr{}) // creates stream object and writes the stream initial frames onto wire (header frame corresponding)
+		if err != nil {
+			t.Fatalf("error creating stream: %v", err)
+		}
+	}
+
+	// Also this needs to wait for the client to actually finish that handleGoAway() call, which would require...some downstream
+	// effect of closeStream on 7 and 9 to happen, wait on that even (downstream effect)
+
+	// could an invariant I can wait on be the stream list being of length 3? in the cl ient transport?
+
+	// wait for t.activeStreams == 3
+	print("len(ct.activeStreams): ", len(ct.activeStreams))
+	waitWhileTrue(t, func() (bool, error) {
+		if len(ct.activeStreams) > 3 {
+			return true, fmt.Errorf("timed-out while waiting for streams to delete client side")
+		}
+		return false, nil
+	})
+
+	// t.controlBuf.Put(goAway{})...
+	// if err := t.framer.fr.WriteGoAway(math.MaxUint32, http2.ErrCodeNo, []byte{}); err != nil
 }
