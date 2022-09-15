@@ -8197,16 +8197,36 @@ func (s) TestGoAwayStreamIDSmallerThanCreatedStreams(t *testing.T) {
 	tc := testpb.NewTestServiceClient(cc)
 
 	// I'll learn relation between the client and the application layer
-	for i := 0; i < 10; i++ {
+	someStreamsCreated := grpcsync.NewEvent()
+	goAwayWritten := grpcsync.NewEvent()
+	go func() {
+		for i := 0; i < 20; i++ {
+			if i == 10 {
+				<-goAwayWritten.Done()
+			}
+			// tc.EmptyCall(ctx, &testpb.Empty{})
+			print("FullDuplexCall attempt: ", i)
+			tc.FullDuplexCall(ctx) // so it does happen concurrently, just doesn't call downward all the way into NewStream() correctly
+			if i == 4 {
+				someStreamsCreated.Fire()
+			}
+		}
+	}()
+
+	<-someStreamsCreated.Done()
+	ct.writeGoAway(1, http2.ErrCodeNo, []byte{})
+	goAwayWritten.Fire()
+
+	/*for i := 0; i < 10; i++ {
 		// when do I exit this loop?
 		// 1 3 5 7 9
 		// or have this happen asynchronously - do implementation changes later, when this fails vs. passes, etc. for this to fail you need to
 		// make it go back to old commented out code.
-		tc.EmptyCall(ctx, &testpb.Empty{}) // will this work without the server, tracing it down this invokes the client stream
+		tc.EmptyCall(ctx, &testpb.Empty{}) // will this work without the server, tracing it down this invokes the client stream, if it doesn't get response does it still persist the newly created streams?
 		if i == 4 {
 			ct.writeGoAway(5, http2.ErrCodeNo, []byte{}) // send on a channel, 5 should be in the middle at this point
 		}
-	}
+	}*/
 
 	// this is done. This induces the deadlock.
 
