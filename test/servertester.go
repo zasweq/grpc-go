@@ -91,12 +91,12 @@ func (st *serverTester) readFrame() (http2.Frame, error) {
 // greet initiates the client's HTTP/2 connection into a state where
 // frames may be sent.
 func (st *serverTester) greet() {
-	st.writePreface() // serial - this line happens before intial settings, then it needs to read settings then it writes setting ack
+	st.writePreface()
 	st.writeInitialSettings()
 	st.wantSettings()
 	st.writeSettingsAck()
 	for {
-		f, err := st.readFrame() // any of the cases and happen and we're fine with it
+		f, err := st.readFrame()
 		if err != nil {
 			st.t.Fatal(err)
 		}

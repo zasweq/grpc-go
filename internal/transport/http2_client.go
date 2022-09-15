@@ -727,7 +727,6 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (*Stream,
 			t.mu.Unlock()
 			return false // Don't create a stream if the transport is already closed.
 		}
-		print("writing to active streams with stream id: ", s.id)
 		t.activeStreams[s.id] = s
 		t.mu.Unlock()
 		if t.streamQuota > 0 && t.waitingStreams > 0 {
@@ -754,8 +753,6 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (*Stream,
 		return true
 	}
 	for {
-		// this should take controlBuf mu then call back into this and take transport mu UGH
-		print("execute and put, should take controlBuf mu then transports")
 		success, err := t.controlBuf.executeAndPut(func(it interface{}) bool {
 			return checkForHeaderListSize(it) && checkForStreamQuota(it)
 		}, hdr)
@@ -848,7 +845,6 @@ func (t *http2Client) closeStream(s *Stream, err error, rst bool, rstCode http2.
 		onWrite: func() {
 			t.mu.Lock()
 			if t.activeStreams != nil {
-				print("deleting from active streams")
 				delete(t.activeStreams, s.id)
 			}
 			t.mu.Unlock()
@@ -1237,7 +1233,7 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 		upperLimit = math.MaxUint32 // Kill all streams after the GoAway ID.
 	}
 
-	/*activeStreams := make(map[uint32]*Stream)
+	activeStreams := make(map[uint32]*Stream)
 	for streamID, stream := range t.activeStreams {
 		activeStreams[streamID] = stream
 	}
@@ -1255,41 +1251,7 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 	active := len(activeStreams)
 	if active == 0 {
 		t.Close(connectionErrorf(true, nil, "received goaway and there are no active streams"))
-	}*/
-
-	if len(t.activeStreams) == 0 {
-		t.Close(connectionErrorf(true, nil, "received goaway and there are no active streams"))
 	}
-
-	streamsToClose := make([]*Stream, 0)
-	for streamID, stream := range t.activeStreams {
-		if streamID > id && streamID <= upperLimit {
-			atomic.StoreUint32(&stream.unprocessed, 1)
-			streamsToClose = append(streamsToClose, stream)
-		}
-	}
-	t.mu.Unlock()
-	for _, stream := range streamsToClose {
-		atomic.StoreUint32(&stream.unprocessed, 1)
-		t.closeStream(stream, errStreamDrain, false, http2.ErrCodeNo, statusGoAway, nil, false)
-	}
-
-	/*print("about to loop over t.activeStreams")
-	print("t.activeStreams length: ", len(t.activeStreams))
-	for streamID, stream := range t.activeStreams {
-		if streamID > id && streamID <= upperLimit {
-			// The stream was unprocessed by the server.
-			print("the stream was unprocessed by the server")
-			atomic.StoreUint32(&stream.unprocessed, 1)
-			t.closeStream(stream, errStreamDrain, false, http2.ErrCodeNo, statusGoAway, nil, false)
-		}
-	}
-	t.prevGoAwayID = id
-	active := len(t.activeStreams)
-	t.mu.Unlock()
-	if active == 0 {
-		t.Close(connectionErrorf(true, nil, "received goaway and there are no active streams"))
-	}*/
 }
 
 // setGoAwayReason sets the value of t.goAwayReason based
