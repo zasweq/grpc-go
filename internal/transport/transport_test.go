@@ -2537,8 +2537,22 @@ func (s) TestGoAwayCloseStreams(t *testing.T) {
 	}
 	server.mu.Unlock()
 
-	st.framer.fr.WriteGoAway(5, http2.ErrCodeNo, []byte{})
-	for i := 0; i < 10; i++ {
+	// you can only write one thing to framer at a time. thus, wait for server
+	// setting ack to be sent
+	// st.controlBuf.put(&goAway{code: http2.ErrCodeNo, debugData: []byte{}})
+	// sync point of client receiving settings ack
+
+	// this shit is in a speperate goroutine can't block
+	done := make(chan struct{})
+	go func() {
 		ct.NewStream(ctx, &CallHdr{})
-	}
+		close(done)
+	}()
+
+	// st.framer.fr.WriteGoAway(5, http2.ErrCodeNo, []byte{})
+	st.controlBuf.put(&goAway{code: http2.ErrCodeNo, debugData: []byte{}})
+	/*for i := 0; i < 10; i++ {
+		ct.NewStream(ctx, &CallHdr{})
+	}*/
+	<-done
 }

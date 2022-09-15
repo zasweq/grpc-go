@@ -7352,6 +7352,8 @@ type httpServerResponse struct {
 	trailers [][]string
 }
 
+// clientTester version of server tester, meld what's below into that as well
+
 type httpServer struct {
 	// If waitForEndStream is set, wait for the client to send a frame with end
 	// stream in it before sending a response/refused stream.
@@ -7407,7 +7409,7 @@ func (s *httpServer) start(t *testing.T, lis net.Listener) {
 			return
 		}
 		writer.Flush() // necessary since client is expecting preface before declaring connection fully setup.
-
+		// is the preface and settings per http2 conn?
 		var sid uint32
 		// Loop until conn is closed and framer returns io.EOF
 		for requestNum := 0; ; requestNum = (requestNum + 1) % len(s.responses) {
@@ -8129,4 +8131,118 @@ func (s) TestRecvWhileReturningStatus(t *testing.T) {
 			t.Fatalf("stream.Recv() = %v, want io.EOF", err)
 		}
 	}
+}
+
+// TestGoAwayStreamIDSmallerThanCreatedStreams tests the scenario where a server
+// sends a goaway with a stream id that is smaller than some created streams on
+// the client, while the client is simultaneously creating new streams. This
+// should not induce a deadlock.
+
+func (s) TestGoAwayStreamIDSmallerThanCreatedStreams(t *testing.T) {
+	// client side: normal service/RPCs called on that service
+
+	// server side: "running the service but with a knob on the conn object to pass to this constructor"
+	// s.Serve(lis), wrap this listener, pass the conn accepted? Won't that still try and create the transport though?
+	// lmao, the lis.Accept() and the conn wrapped are wrapped by the server
+
+	// all you need to do is wrap the conn yourself with the class, and have
+	// that do the http2 crap like wrapping the conn with a framer, and writing the correct
+	// http 2 frames to the framer. This writing of the GOAWAY http 2 frame breaks http2 which our
+	// transport doesn't implement.
+
+	lis, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("error listening: %v", err)
+	}
+
+	ctCh := testutils.NewChannel()
+	go func() {
+		conn, err := lis.Accept()
+
+		// now the testing.T is in a separate goroutine.
+
+		if err != nil {
+			t.Fatalf("error in lis.Accept(): %v", err)
+		}
+		ct := newClientTester(t, conn)
+		ct.greet()
+		ctCh.Send(ct) // <- are these http2 frames enough to get grpc.Dial working etc.
+	}()
+
+	cc, err := grpc.Dial(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("error dialing: %v", err)
+	}
+	defer cc.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+
+	// conn accept on server side, grpc.Dial handles all the http2 - an http2 connection.
+
+	// thennn you create streams on that http2 connection - "A bidirectional
+	// flow of bytes within an established connection, which may carry one or
+	// more messages."
+
+	val, err := ctCh.Receive(ctx)
+	if err != nil {
+		t.Fatalf("timeout waiting for client transport (should be given after http2 creation)")
+	}
+	ct, ok := val.(*clientTester)
+	// This won't happen
+	if !ok {
+		t.Fatalf("value received not a clientTester")
+	}
+
+	tc := testpb.NewTestServiceClient(cc)
+
+	// I'll learn relation between the client and the application layer
+	for i := 0; i < 10; i++ {
+		// when do I exit this loop?
+		// 1 3 5 7 9
+		// or have this happen asynchronously - do implementation changes later, when this fails vs. passes, etc. for this to fail you need to
+		// make it go back to old commented out code.
+		tc.EmptyCall(ctx, &testpb.Empty{}) // will this work without the server, tracing it down this invokes the client stream
+		if i == 4 {
+			ct.writeGoAway(5, http2.ErrCodeNo, []byte{}) // send on a channel, 5 should be in the middle at this point
+		}
+	}
+
+	// this is done. This induces the deadlock.
+
+
+	/*
+	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			log.Fatalf("did not connect: %v", err)
+		}
+		defer conn.Close()
+		c := pb.NewGreeterClient(conn)
+
+		// Contact the server and print out its response.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		r, err := c.SayHello(ctx, &pb.HelloRequest{Name: *name})
+		if err != nil {
+			log.Fatalf("could not greet: %v", err)
+		}
+		log.Printf("Greeting: %s", r.GetMessage())
+	*/
+
+	/*
+	tc := testpb.NewTestServiceClient(cc)
+		ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+		if _, err := tc.EmptyCall(ctx, &testpb.Empty{}); err != nil {
+			t.Fatalf("TestService/EmptyCall(_, _) = _, %v, want _, <nil>", err)
+		}
+		cancel()
+		atomic.StoreInt32(&(lc.beLazy), 1)
+		ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		t1 := time.Now()
+		if _, err := tc.EmptyCall(ctx, &testpb.Empty{}); status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("TestService/EmptyCall(_, _) = _, %v, want _, context.DeadlineExceeded", err)
+		}
+	*/
+
 }

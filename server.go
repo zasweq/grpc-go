@@ -810,7 +810,7 @@ func (s *Server) Serve(lis net.Listener) error {
 
 	var tempDelay time.Duration // how long to sleep on accept failure
 	for {
-		rawConn, err := lis.Accept()
+		rawConn, err := lis.Accept() // the moment you accept a conn on the server side, it wraps it, sends it down to the transport to finish http2 handshake
 		if err != nil {
 			if ne, ok := err.(interface {
 				Temporary() bool
