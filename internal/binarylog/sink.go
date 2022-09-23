@@ -47,6 +47,10 @@ type Sink interface {
 	Close() error
 }
 
+// log lb config to see if it's xDS problem or LB problem
+
+// log internals of algorithm, one of the addresses on wrong side of algorithm
+
 type noopSink struct{}
 
 func (ns *noopSink) Write(*pb.GrpcLogEntry) error { return nil }
@@ -65,6 +69,27 @@ func newWriterSink(w io.Writer) Sink {
 type writerSink struct {
 	out io.Writer
 }
+
+// WRITE MICHAEL ABOUT OUTLIER DETECTION
+
+// jump around super quickly - still lacking confidence in your own ability,
+// even though I have ability. Obv. I wasn't confidence, be confident in
+// technical ability before O11Y. People don't feel confident in you, wind up with
+// unnecessary pressure on me, and puts pressure on me, because more eyes.
+
+// More mature of a response to those things like challenges, more of the types
+// of statements and doubts, make it impossible to push promo through. People
+// have to feel confident on me jumping into projects. Self confidence.
+
+// "I need more time to scope this" is fine
+
+// Other than that, on track for promo in 6 months, Abishek will do unofficial
+// calibration on me to bring me up Feb, during meeting Kevin will talk to
+// Abhishek. Close to Wenbo, make sure he has confidence in your work.
+
+// More experience codebase and features.
+
+// Checkin task sometime in next week.
 
 func (ws *writerSink) Write(e *pb.GrpcLogEntry) error {
 	b, err := proto.Marshal(e)
@@ -131,6 +156,8 @@ func (fs *bufferedSink) startFlushGoroutine() {
 		}
 	}()
 }
+
+// i do well at jumping between projects, but just need to show confidence
 
 func (fs *bufferedSink) Close() error {
 	fs.mu.Lock()

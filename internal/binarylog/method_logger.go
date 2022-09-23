@@ -59,14 +59,16 @@ type methodLogger struct {
 	idWithinCallGen *callIDGenerator
 
 	sink Sink // TODO(blog): make this plugable.
-}
+} // right now it's not pluggable, we need this to be pluggable from the Dial Options/Server Options
 
+// generic header, message uint64, called by the precedence order of the method
+// name. Methods, services, then all precedence ordering. Generic for all them.
 func newMethodLogger(h, m uint64) *methodLogger {
 	return &methodLogger{
 		headerMaxLen:  h,
 		messageMaxLen: m,
 
-		callID:          idGen.next(),
+		callID:          idGen.next(), // new sequence id
 		idWithinCallGen: &callIDGenerator{},
 
 		sink: DefaultSink, // TODO(blog): make it plugable.
@@ -85,18 +87,18 @@ func (ml *methodLogger) Build(c LogEntryConfig) *pb.GrpcLogEntry {
 
 	switch pay := m.Payload.(type) {
 	case *pb.GrpcLogEntry_ClientHeader:
-		m.PayloadTruncated = ml.truncateMetadata(pay.ClientHeader.GetMetadata())
+		m.PayloadTruncated = ml.truncateMetadata(pay.ClientHeader.GetMetadata()) // truncates client header
 	case *pb.GrpcLogEntry_ServerHeader:
-		m.PayloadTruncated = ml.truncateMetadata(pay.ServerHeader.GetMetadata())
+		m.PayloadTruncated = ml.truncateMetadata(pay.ServerHeader.GetMetadata()) // truncates server header
 	case *pb.GrpcLogEntry_Message:
-		m.PayloadTruncated = ml.truncateMessage(pay.Message)
+		m.PayloadTruncated = ml.truncateMessage(pay.Message) // truncate message
 	}
 	return m
 }
 
 // Log creates a proto binary log entry, and logs it to the sink.
-func (ml *methodLogger) Log(c LogEntryConfig) {
-	ml.sink.Write(ml.Build(c))
+func (ml *methodLogger) Log(c LogEntryConfig) { // gets the data (headers and messages length of bytes) attached to the method with the precedence orderings - then send it Log based on events
+	ml.sink.Write(ml.Build(c)) // same Log flow, what's different
 }
 
 func (ml *methodLogger) truncateMetadata(mdPb *pb.Metadata) (truncated bool) {
@@ -146,7 +148,7 @@ type LogEntryConfig interface {
 }
 
 // ClientHeader configs the binary log entry to be a ClientHeader entry.
-type ClientHeader struct {
+type ClientHeader struct { // takes one of the events and populates that generic proto log, writes to sink
 	OnClientSide bool
 	Header       metadata.MD
 	MethodName   string
@@ -156,6 +158,10 @@ type ClientHeader struct {
 	PeerAddr net.Addr
 }
 
+// Logs an interface toProto() - one of the events that can get converted to
+// this log entry "binary logging = output protos (GrpcLogEntry, the smaller
+// structs covnert to this proto) every time something happens on a stream"
+// (such as headers) new rpc, message sent/received, headers/trailers, etc.
 func (c *ClientHeader) toProto() *pb.GrpcLogEntry {
 	// This function doesn't need to set all the fields (e.g. seq ID). The Log
 	// function will set the fields when necessary.
@@ -168,7 +174,7 @@ func (c *ClientHeader) toProto() *pb.GrpcLogEntry {
 		clientHeader.Timeout = ptypes.DurationProto(c.Timeout)
 	}
 	ret := &pb.GrpcLogEntry{
-		Type: pb.GrpcLogEntry_EVENT_TYPE_CLIENT_HEADER,
+		Type: pb.GrpcLogEntry_EVENT_TYPE_CLIENT_HEADER, // Type Client Header
 		Payload: &pb.GrpcLogEntry_ClientHeader{
 			ClientHeader: clientHeader,
 		},

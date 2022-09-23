@@ -80,6 +80,12 @@ var protoToJSONOptions = &protojson.MarshalOptions{
 
 func (cle *cloudLoggingExporter) EmitGrpcLogRecord(l *grpclogrecordpb.GrpcLogRecord) {
 	// Converts the log record content to a more readable format via protojson.
+
+	// populates proto, converts to json here, awrites json as a logging entry for cloud logging
+
+	// the proto schema switch to direct JSON. But this schema itself is going
+	// to change. Switch to direct JSON, and also switch the schema.
+
 	jsonBytes, err := protoToJSONOptions.Marshal(l)
 	if err != nil {
 		logger.Infof("Unable to marshal log record: %v", l)

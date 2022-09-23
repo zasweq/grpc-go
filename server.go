@@ -1515,8 +1515,14 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 			}
 		}()
 	}
+	// where do I stick this binLog object, ss, server? stream?
+	ss.binlog = binarylog.GetMethodLogger(stream.Method()) // processStreamingRPC, hold it for both client and server
+	// ss.binlog2 = /*whatever holds onto object*/.GetMethodLogger(stream.Method())
+	// returns nil in that case of it hitting a node at it being negated
 
-	ss.binlog = binarylog.GetMethodLogger(stream.Method())
+	// {if it hits any entry in list} - ss.binlog == nil
+	// [{h, b <- if not set, defaults to zero bytes}]
+
 	if ss.binlog != nil {
 		md, _ := metadata.FromIncomingContext(ctx)
 		logEntry := &binarylog.ClientHeader{

@@ -57,9 +57,18 @@ func NewLoggerFromConfigString(s string) Logger {
 	return l
 }
 
+// specific precedence logic defined in gRFC for binary logging, fills out a config string
+// and logic for this path. For o11y, configure with o11y specific logic (the wildcards and such defined in o11y,
+// fill out the config, and reuse that. However, Doug is allowing me to change the layer completly,
+// with it's own config and GetMethodLogger() <- which does the filtering. Right, this extra layer is how we'llb uild if the rpc matches
+
+// and the weird logic about duplication - what does o11y config say the
+// duplication rules should be? I don't see any logic whatsoever about the
+// duplication rules...
+
 // fillMethodLoggerWithConfigString parses config, creates methodLogger and adds
 // it to the right map in the logger.
-func (l *logger) fillMethodLoggerWithConfigString(config string) error {
+func (l *logger) fillMethodLoggerWithConfigString(config string) error { // this inherently has the precedence crap to it
 	// "" is invalid.
 	if config == "" {
 		return errors.New("empty string is not a valid method binary logging config")
