@@ -313,7 +313,7 @@ func (bl *binaryLogger2) GetMethodLogger(methodName string) MethodLogger {
 		grpclogLogger.Infof("binarylogging: failed to parse %q: %v", methodName, err)
 		return nil
 	}
-	for _, eventConfig := range bl.eventConfigs {
+	for _, eventConfig := range bl.EventConfigs {
 		// three ifs for matching or just one big considated if
 		/*if eventConfig.matchAll {
 			return newMethodLogger(eventConfig.headerBytes, eventConfig.messageBytes)
@@ -327,11 +327,11 @@ func (bl *binaryLogger2) GetMethodLogger(methodName string) MethodLogger {
 			return newMethodLogger(eventConfig.headerBytes, eventConfig.messageBytes)
 		}*/
 
-		if eventConfig.matchAll || eventConfig.serviceMethod["/" + s + "/" + m] || eventConfig.services[s] {
-			if eventConfig.negation {
+		if eventConfig.MatchAll || eventConfig.ServiceMethod["/" + s + "/" + m] || eventConfig.Services[s] {
+			if eventConfig.Negation {
 				return nil
 			}
-			return newMethodLogger(eventConfig.headerBytes, eventConfig.messageBytes)
+			return newMethodLogger(eventConfig.HeaderBytes, eventConfig.MessageBytes)
 		}
 	}
 	// if it does hit a node, return {h, b} for that node

@@ -50,12 +50,12 @@ func init() {
 // Note: this method should only be invoked once.
 // Note: handle the error
 func Start(ctx context.Context) error {
-	config, err := parseObservabilityConfig()
+	config, err := parseObservabilityConfig2()
 	if err != nil {
 		return err
 	}
 	if config == nil {
-		return fmt.Errorf("no ObservabilityConfig found, it can be set via env %s", envObservabilityConfig)
+		return fmt.Errorf("no ObservabilityConfig found, it can be set via env %s or env %v (with that precedence)", envObservabilityConfigJSON, envObservabilityConfig)
 	}
 
 	// Set the project ID if it isn't configured manually.
@@ -64,12 +64,39 @@ func Start(ctx context.Context) error {
 	}
 
 	// Enabling tracing and metrics via OpenCensus
-	if err := startOpenCensus(config); err != nil {
+	if err := startOpenCensus(config); err != nil { // rewrite metrics and tracing, very trivial, structure for both metrics and tracing changes
 		return fmt.Errorf("failed to instrument OpenCensus: %v", err)
 	}
 
 	// Logging is controlled by the config at methods level.
 	return defaultLogger.Start(ctx, config)
+	// This gets switched from overwriting the global bin logger to creating a
+	// global dial and server option to plumb a logger with an iterative config.
+}
+
+func Start2(ctx context.Context) error {
+	config, err := parseObservabilityConfig2()
+	if err != nil {
+		return err
+	}
+	if config == nil {
+		return fmt.Errorf("no ObservabilityConfig found, it can be set via env %s or env %v", envObservabilityConfig, envObservabilityConfigJSON)
+	}
+	// Set the project ID if it isn't configured manually.
+	if err := ensureProjectIDInObservabilityConfig(ctx, config); err != nil {
+		return err
+	} // this is exact same, documentation is the same, only type and slight name in helper
+
+	// Enabling tracing and metrics via OpenCensus
+	if err := startOpenCensus2(config); err != nil { // rewrite metrics and tracing, very trivial, structure for both metrics and tracing changes
+		return fmt.Errorf("failed to instrument OpenCensus: %v", err)
+	}
+
+	// function that creates global dial and server options, rewrite ^^^ first, then
+	// call this function which will help you figure out how to plumb exporter down.
+	// global dial options in startOpenCensus2,
+	// err? yeah def in exporter creation
+	return startLogging(ctx, config) // gcplogging.NewClient receives on the context, part of exporter
 }
 
 // End is the clean-up API for gRPC Observability plugin. It is expected to be
@@ -79,6 +106,6 @@ func Start(ctx context.Context) error {
 //
 // Note: this method should only be invoked once.
 func End() {
-	defaultLogger.Close()
-	stopOpenCensus()
+	defaultLogger.Close() // close both client and server loggers? Or just cleanup global dial/server options?
+	stopOpenCensus() // cleanup stays the same
 }

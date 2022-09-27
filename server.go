@@ -156,6 +156,7 @@ type serverOptions struct {
 	streamInt             StreamServerInterceptor
 	chainUnaryInts        []UnaryServerInterceptor
 	chainStreamInts       []StreamServerInterceptor
+	binaryLogger          binarylog.Logger // already a pointer
 	inTapHandle           tap.ServerInHandle
 	statsHandlers         []stats.Handler
 	maxConcurrentStreams  uint32
@@ -469,6 +470,16 @@ func StatsHandler(h stats.Handler) ServerOption {
 	})
 }
 
+// BinaryLogger returns a ServerOption that can set the binary logger for the
+// server. (how is this plumbed?) to server, then to a created stream?
+func BinaryLogger(bl binarylog.Logger) ServerOption {
+	return newFuncServerOption(func(o *serverOptions) {
+		// Is there any thing that needs to be checked?
+		// Preconditions, bl being nil...
+		o.bl = bl
+	})
+}
+
 // UnknownServiceHandler returns a ServerOption that allows for adding a custom
 // unknown service handler. The provided method is a bidi-streaming RPC service
 // handler that will be invoked instead of returning the "unimplemented" gRPC
@@ -598,7 +609,7 @@ func NewServer(opt ...ServerOption) *Server {
 	}
 	s := &Server{
 		lis:      make(map[net.Listener]bool),
-		opts:     opts,
+		opts:     opts, // the whole thing is persisted in the server
 		conns:    make(map[string]map[transport.ServerTransport]bool),
 		services: make(map[string]*serviceInfo),
 		quit:     grpcsync.NewEvent(),
@@ -1519,9 +1530,10 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 	ss.binlog = binarylog.GetMethodLogger(stream.Method()) // processStreamingRPC, hold it for both client and server
 	// ss.binlog2 = /*whatever holds onto object*/.GetMethodLogger(stream.Method())
 	// returns nil in that case of it hitting a node at it being negated
-
+	ss.binlog2 = s.opts.binaryLogger.GetMethodLogger(stream.Method()) // ss.localLogger, also need to make sure this is actually invoked
 	// {if it hits any entry in list} - ss.binlog == nil
 	// [{h, b <- if not set, defaults to zero bytes}]
+
 
 	if ss.binlog != nil {
 		md, _ := metadata.FromIncomingContext(ctx)

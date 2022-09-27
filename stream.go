@@ -302,6 +302,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 		cs.retryThrottler = cc.retryThrottler.Load().(*retryThrottler)
 	}
 	cs.binlog = binarylog.GetMethodLogger(method)
+	cs.newBinLog = cc.dopts.binaryLogger.GetMethodLogger(method)
 
 	// Pick the transport to use and create a new stream on the transport.
 	// Assign cs.attempt upon success.
@@ -481,6 +482,7 @@ type clientStream struct {
 	retryThrottler *retryThrottler // The throttler active when the RPC began.
 
 	binlog binarylog.MethodLogger // Binary logger, can be nil.
+	newBinlog binarylog.MethodLogger // Binary logger, can be nil. also needs to write to same entries.
 	// serverHeaderBinlogged is a boolean for whether server header has been
 	// logged. Server header will be logged when the first time one of those
 	// happens: stream.Header(), stream.Recv().
@@ -1454,6 +1456,8 @@ type serverStream struct {
 	statsHandler []stats.Handler
 
 	binlog binarylog.MethodLogger
+	binlog2 binarylog.MethodLogger // TOD0: needs to also write all the events binlog writes to
+
 	// serverHeaderBinlogged indicates whether server header has been logged. It
 	// will happen when one of the following two happens: stream.SendHeader(),
 	// stream.Send().

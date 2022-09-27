@@ -82,6 +82,25 @@ func newStackdriverExporter(config *config) (tracingMetricsExporter, error) {
 	return exporter, nil
 }
 
+var newExporter2 = newStackdriverExporter2
+
+func newStackdriverExporter2(config *newConfig) (tracingMetricsExporter, error) {
+	// Create the Stackdriver exporter, which is shared between tracing and stats
+	mr := monitoredresource.Autodetect()
+	logger.Infof("Detected MonitoredResource:: %+v", mr)
+	var err error
+	exporter, err := stackdriver.NewExporter(stackdriver.Options{
+		ProjectID:               config.ProjectID,
+		MonitoredResource:       mr,
+		DefaultMonitoringLabels: tagsToMonitoringLabels(config.Labels),
+		DefaultTraceAttributes:  tagsToTraceAttributes(config.Labels),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Stackdriver exporter: %v", err)
+	}
+	return exporter, nil
+}
+
 // This method accepts config and exporter; the exporter argument is exposed to
 // assist unit testing of the OpenCensus behavior.
 func startOpenCensus(config *config) error {
@@ -98,17 +117,17 @@ func startOpenCensus(config *config) error {
 	}
 
 	var so trace.StartOptions
-	if config.EnableCloudTrace {
+	if config.EnableCloudTrace { // if config.CloudTrace != nil
 		so.Sampler = trace.ProbabilitySampler(config.GlobalTraceSamplingRate)
 		trace.RegisterExporter(exporter.(trace.Exporter))
 		logger.Infof("Start collecting and exporting trace spans with global_trace_sampling_rate=%.2f", config.GlobalTraceSamplingRate)
 	}
 
 	if config.EnableCloudMonitoring {
-		if err := view.Register(ocgrpc.DefaultClientViews...); err != nil {
+		if err := view.Register(ocgrpc.DefaultClientViews...); err != nil { // we're changing these defaults
 			return fmt.Errorf("failed to register default client views: %v", err)
 		}
-		if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
+		if err := view.Register(ocgrpc.DefaultServerViews...); err != nil { // same here
 			return fmt.Errorf("failed to register default server views: %v", err)
 		}
 		view.SetReportingPeriod(defaultMetricsReportingInterval)
@@ -117,7 +136,46 @@ func startOpenCensus(config *config) error {
 	}
 
 	// Only register default StatsHandlers if other things are setup correctly.
-	internal.AddExtraServerOptions.(func(opt ...grpc.ServerOption))(grpc.StatsHandler(&ocgrpc.ServerHandler{StartOptions: so}))
+	internal.AddExtraServerOptions.(func(opt ...grpc.ServerOption))(grpc.StatsHandler(&ocgrpc.ServerHandler{StartOptions: so})) // oh nice, you can see how it's plumbed right here. Switch this to "Global" Dial Option
+	internal.AddExtraDialOptions.(func(opt ...grpc.DialOption))(grpc.WithStatsHandler(&ocgrpc.ClientHandler{StartOptions: so}))
+	logger.Infof("Enabled OpenCensus StatsHandlers for clients and servers")
+
+	return nil
+}
+
+func startOpenCensus2(config *newConfig) error {
+	// If both tracing and metrics are disabled, there's no point inject default
+	// StatsHandler.
+	if config == nil || (config.CloudTrace == nil && config.CloudMonitoring == nil) {
+		return nil
+	}
+	var err error
+	exporter, err = newExporter2(config) // I also overrode this for testing
+	if err != nil {
+		return err
+	}
+
+	var so trace.StartOptions
+	if config.CloudTrace != nil {
+		so.Sampler = trace.ProbabilitySampler(config.CloudTrace.SamplingRate) // default to 0 = not being written to
+		trace.RegisterExporter(exporter.(trace.Exporter))
+		logger.Infof("Start collecting and exporting trace spans with global_trace_sampling_rate=%.2f", config.GlobalTraceSamplingRate)
+	}
+	if config.CloudMonitoring != nil {
+		// THIRD CHANGE: SWITCH THESE TWO VIEWS TO STUFF WE ACTUALLY WANT
+		if err := view.Register(ocgrpc.DefaultClientViews...); err != nil { // we're changing these defaults
+			return fmt.Errorf("failed to register default client views: %v", err)
+		}
+		if err := view.Register(ocgrpc.DefaultServerViews...); err != nil { // same here
+			return fmt.Errorf("failed to register default server views: %v", err)
+		}
+		view.SetReportingPeriod(defaultMetricsReportingInterval)
+		view.RegisterExporter(exporter.(view.Exporter))
+		logger.Infof("Start collecting and exporting metrics")
+	}
+
+	// Only register default StatsHandlers if other things are setup correctly.
+	internal.AddExtraServerOptions.(func(opt ...grpc.ServerOption))(grpc.StatsHandler(&ocgrpc.ServerHandler{StartOptions: so})) // oh nice, you can see how it's plumbed right here. Switch this to "Global" Dial Option
 	internal.AddExtraDialOptions.(func(opt ...grpc.DialOption))(grpc.WithStatsHandler(&ocgrpc.ClientHandler{StartOptions: so}))
 	logger.Infof("Enabled OpenCensus StatsHandlers for clients and servers")
 

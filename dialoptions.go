@@ -20,6 +20,7 @@ package grpc
 
 import (
 	"context"
+	"google.golang.org/grpc/internal/binarylog"
 	"net"
 	"time"
 
@@ -61,6 +62,7 @@ type dialOptions struct {
 	timeout                     time.Duration
 	scChan                      <-chan ServiceConfig
 	authority                   string
+	binaryLogger                binarylog.Logger
 	copts                       transport.ConnectOptions
 	callOptions                 []CallOption
 	channelzParentID            *channelz.Identifier
@@ -398,6 +400,15 @@ func WithStatsHandler(h stats.Handler) DialOption {
 			return
 		}
 		o.copts.StatsHandlers = append(o.copts.StatsHandlers, h)
+	})
+}
+
+// WithBinaryLogger returns a DialOption that specifies the binary logger
+// for this ClientConn.
+func WithBinaryLogger(bl binarylog.Logger) DialOption { // plumb this into the variadic arg (...) function at call site
+	return newFuncDialOption(func (o *dialOptions) {
+		// any checks here - nil (nil binary logger is valid), already set, etc. MAKE THIS GLOBAL DIAL OPTION/SERVER OPTION PR ASAP for bin logging
+		o.binaryLogger = bl
 	})
 }
 

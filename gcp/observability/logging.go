@@ -20,6 +20,7 @@ package observability
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"google.golang.org/grpc/internal/grpcutil"
 	"strings"
@@ -42,8 +43,71 @@ func translateMetadata(m *binlogpb.Metadata) *grpclogrecordpb.GrpcLogRecord_Meta
 			Key:   e.Key,
 			Value: e.Value,
 		}
+		// assuming multiple values:
+		// switch this to [k]:{"v", "v", "v"}
+		// and binary headers: [k]:["string representing base64 of 010101", "string representing base64 of 010101", "string representing base64 of 010101"]
+		// base64.RawStdEncoding.EncodeToString(bits) and base64.RawStdEncoding.DecodeString(str)
 	}
 	return &res
+}
+
+func translateMetadata2(m *binlogpb.Metadata) map[string]string {
+	metadata := make(map[string]string)
+
+	for _, entry := range m.GetEntry() {
+
+		// if binary header (ends with -bin):
+		// same thing, except take the 010101010101 and base64 encode.
+		// still same thing, either create or append , base64 encoded (how to merge all these logic cleanly)
+
+		// []byte -> string
+
+		// entry.GetValue()
+
+		// str := base64.StdEncoding.EncodeToString(entry.GetValue()) // do I ever even have to decode
+
+		// str is the same node as string(entry.GetValue)
+
+		// create a string from both paths, then helper or inline iteration for
+		// metadata - run this through tests, this should work
+		entryKey := entry.GetKey()
+		var newVal string
+		if strings.HasSuffix(entryKey, "-bin") { // bin header
+			newVal = base64.StdEncoding.EncodeToString(entry.GetValue())
+		} else { // normal header
+			newVal = string(entry.GetValue())
+		}
+
+		var val string
+		var ok bool
+		if val, ok = metadata[entryKey]; !ok {
+			metadata[entryKey] = newVal
+			continue
+		}
+		// = old string + , + newstring
+		// metadata[entry.GetKey()] = append(metadata[entry.GetKey()], ",")
+		metadata[entryKey] = metadata[entryKey] + "," + val
+
+
+
+
+
+		// can value be ""
+		/*var value string
+		var ok bool
+		if value, ok = metadata[entry.GetKey()]; !ok {
+			metadata[entry.GetKey()] = string(entry.GetValue()) // string([]byte) - is this correct?
+			continue
+		}
+		// value append (+) ", entry.GetValue()"
+		// Build out map using these keys and values, using the logic I outlined above
+		entry.GetKey()
+		entry.GetValue()
+		*/
+	}
+
+
+	return metadata
 }
 
 func setPeerIfPresent(binlogEntry *binlogpb.GrpcLogEntry, grpcLogRecord *grpclogrecordpb.GrpcLogRecord) {
@@ -56,10 +120,10 @@ func setPeerIfPresent(binlogEntry *binlogpb.GrpcLogEntry, grpcLogRecord *grpclog
 	}
 }
 
-var loggerTypeToEventLogger = map[binlogpb.GrpcLogEntry_Logger]grpclogrecordpb.GrpcLogRecord_EventLogger{
-	binlogpb.GrpcLogEntry_LOGGER_UNKNOWN: grpclogrecordpb.GrpcLogRecord_LOGGER_UNKNOWN,
-	binlogpb.GrpcLogEntry_LOGGER_CLIENT:  grpclogrecordpb.GrpcLogRecord_LOGGER_CLIENT,
-	binlogpb.GrpcLogEntry_LOGGER_SERVER:  grpclogrecordpb.GrpcLogRecord_LOGGER_SERVER,
+var loggerTypeToEventLogger = map[binlogpb.GrpcLogEntry_Logger]grpclogrecordpb.GrpcLogRecord_Logger {
+	binlogpb.GrpcLogEntry_LOGGER_UNKNOWN: grpclogrecordpb.GrpcLogRecord_UNKNOWN,
+	binlogpb.GrpcLogEntry_LOGGER_CLIENT:  grpclogrecordpb.GrpcLogRecord_CLIENT,
+	binlogpb.GrpcLogEntry_LOGGER_SERVER:  grpclogrecordpb.GrpcLogRecord_SERVER,
 }
 
 type binaryMethodLogger struct {
@@ -68,6 +132,15 @@ type binaryMethodLogger struct {
 	childMethodLogger              iblog.MethodLogger
 	exporter                       loggingExporter
 }
+
+type binaryMethodLogger2 struct { // This also includes Eric's changes
+	rpcID, serviceName, methodName string
+	childMethodLogger iblog.MethodLogger // switch created function to exported
+	exporter loggingExporter
+}
+
+// within this new proto: define this new proto, compile it, use that for populating? What is different or should it just be
+// the same
 
 func (ml *binaryMethodLogger) Log(c iblog.LogEntryConfig) {
 	// Invoke the original MethodLogger to maintain backward compatibility
@@ -93,6 +166,11 @@ func (ml *binaryMethodLogger) Log(c iblog.LogEntryConfig) {
 		logger.Error("Failed to locate the Build method in wrapped method logger")
 		return
 	}
+	// This is the exported Build binary log exported thing
+
+	// sink.Write(o.Build(c)), this doesn't write to the sink, takes the
+	// binLogEntry -> converts it to GrpcLogRecord
+
 	binlogEntry = o.Build(c) // gets binary log entry from observability path, translates that
 	// to o11y schema to export to cloud logging
 
@@ -166,6 +244,241 @@ func (ml *binaryMethodLogger) Log(c iblog.LogEntryConfig) {
 	ml.exporter.EmitGrpcLogRecord(grpcLogRecord) // export to stackdriver - part of wrapped, this is the extra functionality using bin logging infra, this function will have to change
 }
 
+func (ml *binaryMethodLogger2) Log(c iblog.LogEntryConfig) {
+	if ml.childMethodLogger == nil {
+		logger.Info("No wrapped method logger found")
+		return
+	}
+	var binlogEntry *binlogpb.GrpcLogEntry
+	o, ok := ml.childMethodLogger.(interface {
+		Build(iblog.LogEntryConfig) *binlogpb.GrpcLogEntry
+	})
+	if !ok {
+		logger.Error("Failed to locate the Build method in wrapped method logger")
+		return
+	}
+	binlogEntry = o.Build(c)
+
+	grpcLogRecord := &grpclogrecordpb.GrpcLogRecord{
+
+	}
+
+	// See how the proto changes, then see if any logic compared
+	// to what Lidi had changes based on Eric's document.
+	grpcLogRecord := &grpclogrecordpb.GrpcLogRecord{ // internal format - Doug wants me to switch this to JSON. The bin log stuff too?
+		// Timestamp:   binlogEntry.GetTimestamp(), // 1. we're getting rid of this, Timestamp for cloud logging, which is already there, use cloud logging timestamp instead
+		CallId:       ml.rpcID, // is this correct? Both of these
+		SequenceId:  binlogEntry.GetSequenceIdWithinCall(),
+		EventLogger: loggerTypeToEventLogger[binlogEntry.Logger],
+		// Making DEBUG the default LogLevel
+		// LogLevel: grpclogrecordpb.GrpcLogRecord_LOG_LEVEL_DEBUG,
+	}
+	// 2. message Metadata -> inline repeated MetadataEntry
+
+	// 3. Make metadata values string (in both bin logging and in o11y package
+	// it's []byte s/ string), manually Base64 encode -bin headers. "Base 64
+	// encode" I'm assuming means take the groups of characters make them bytes,
+	// then take the representation of the bytes six bits each why it's string
+
+	// string - lol -> 24 bits, six bits each with character set of 64 possibilities
+	// 24 bits -> bG9s
+
+	// 4. change call_id to UUID, is this what we already have?
+
+	// 5. Repeat method and authority on each log entry, for routing
+
+	// 6. Separate method and service into independent fields; for easier routing
+
+	// 7. Rename "message" to "rpc_message", "message" means "log message"
+	// (unnecessary if using message Payload later)
+
+	// 8. Change "sequence_id_within_call" to "sequence_id" to save the bytes.
+
+	// Right, so these heuristics are how Eric defined this conversion, just go ahead and do it.
+	// and ending changed
+
+	// Conversion here - pull from Lidi's
+
+
+	// Compile new proto and put here and that'll make it easier
+
+
+	// Are these different from what Lidi has?
+
+
+	// rewrite this to be cleaner
+	switch binlogEntry.GetType() { // gets the binlog format, converts it to grpcLogRecord
+	case binlogpb.GrpcLogEntry_EVENT_TYPE_UNKNOWN:
+		grpcLogRecord.EventType = grpclogrecordpb.GrpcLogRecord_NONE
+	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_HEADER:
+		grpcLogRecord.EventType = grpclogrecordpb.GrpcLogRecord_CLIENT_HEADER
+		if binlogEntry.GetClientHeader() != nil {
+			methodName := binlogEntry.GetClientHeader().MethodName
+			// Example method name: /grpc.testing.TestService/UnaryCall
+			if strings.Contains(methodName, "/") {
+				tokens := strings.Split(methodName, "/")
+				if len(tokens) == 3 {
+					// Record service name and method name for all events
+					ml.serviceName = tokens[1]
+					ml.methodName = tokens[2]
+				} else {
+					logger.Infof("Malformed method name: %v", methodName)
+				}
+			}
+			// why is this complicated?
+			grpcLogRecord.Payload.Timeout = binlogEntry.GetClientHeader().Timeout /// did I delete this?
+			grpcLogRecord.Authority = binlogEntry.GetClientHeader().Authority
+			grpcLogRecord.Payload.Metadata = translateMetadata2(binlogEntry.GetClientHeader().Metadata)
+		}
+		grpcLogRecord.PayloadTruncated = binlogEntry.GetPayloadTruncated()
+		setPeerIfPresent(binlogEntry, grpcLogRecord)
+	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_HEADER:
+		grpcLogRecord.EventType = grpclogrecordpb.GrpcLogRecord_SERVER_HEADER
+		grpcLogRecord.Payload.Metadata = translateMetadata2(binlogEntry.GetServerHeader().Metadata)
+		grpcLogRecord.PayloadTruncated = binlogEntry.GetPayloadTruncated()
+		setPeerIfPresent(binlogEntry, grpcLogRecord)
+	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_MESSAGE:
+		grpcLogRecord.EventType = grpclogrecordpb.GrpcLogRecord_CLIENT_MESSAGE
+		grpcLogRecord.Payload.Message = binlogEntry.GetMessage().GetData()
+		grpcLogRecord.PayloadSize = binlogEntry.GetMessage().GetLength()
+		grpcLogRecord.PayloadTruncated = binlogEntry.GetPayloadTruncated()
+	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_MESSAGE:
+		grpcLogRecord.EventType = grpclogrecordpb.GrpcLogRecord_SERVER_MESSAGE
+		grpcLogRecord.Payload.Message = binlogEntry.GetMessage().GetData()
+		grpcLogRecord.PayloadSize = binlogEntry.GetMessage().GetLength()
+		grpcLogRecord.PayloadTruncated = binlogEntry.GetPayloadTruncated()
+	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_HALF_CLOSE:
+		grpcLogRecord.EventType = grpclogrecordpb.GrpcLogRecord_CLIENT_HALF_CLOSE
+	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_TRAILER:
+		grpcLogRecord.EventType = grpclogrecordpb.GrpcLogRecord_SERVER_TRAILER
+		grpcLogRecord.Payload.Metadata = translateMetadata2(binlogEntry.GetTrailer().Metadata)
+		grpcLogRecord.Payload.StatusCode = binlogEntry.GetTrailer().GetStatusCode()
+		grpcLogRecord.Payload.StatusMessage = binlogEntry.GetTrailer().GetStatusMessage()
+		grpcLogRecord.Payload.StatusDetails = binlogEntry.GetTrailer().GetStatusDetails()
+		grpcLogRecord.PayloadTruncated = binlogEntry.GetPayloadTruncated()
+		setPeerIfPresent(binlogEntry, grpcLogRecord)
+	case binlogpb.GrpcLogEntry_EVENT_TYPE_CANCEL:
+		grpcLogRecord.EventType = grpclogrecordpb.GrpcLogRecord_CANCEL
+	default:
+		logger.Infof("Unknown event type: %v", binlogEntry.Type)
+		return
+	}
+	grpcLogRecord.ServiceName = ml.serviceName
+	grpcLogRecord.MethodName = ml.methodName
+
+
+
+	ml.exporter.EmitGrpcLogRecord(grpcLogRecord) // even this I think gets changed
+}
+
+// new binaryLogger at the binaryLogger level with new config
+// needs the exporter (needs to only build exporter when either client rpc events or server rpc events will actually export)
+
+// myMethodLogger (in binary log package?) exporter
+
+// func (mml *myMethodLogger) Log(c iblog.LogEntryConfig) {
+//         binlogEntry = o.Build(c)
+//         convert to Eric's proto similar to Lidi's - switch proto first, then fill out a new helper based on Lidi's
+//         outside of the schema changes to grpcLogRecord, also need to map changes from binary logging slide to Lidi's code and my code.
+//         binLogEntry -> grpcLogRecord
+//         mml.exporter.EmitGrpcLogRecord(grpcLogRecord)
+// }
+
+/*
+type loggingExporter interface {
+    EmitGrpcLogRecord(*logging.GrpcLogRecord)
+    Close() error
+}
+*/
+
+
+// 1. Rewriting this whole module to take new config, will help you figure out vvv
+
+
+
+// 2. When to create exporter/how to send it down to the binlog layer to persist to log on Log()...exporter.EmitGrpcLogRecord()
+
+// Once I've figured out 2, I can do vvv
+// steps: Eric's schema changes, this changes the layer of method logger
+// grpcLogRecord defined in method above will have names switched, and also
+// there's specific funny annoying logic that got added.
+
+// Problem with 2 and 3, GetMethodLogger() (which I guess reuses the binary logging logic layer in it's wrapper)
+// and Log(), touches grpc-proto type, which is scoped to this package, would have to export...but I guess this package is
+// that would be a circular dependency, binaryLog -> `grpcproto`, `exporter`.EmitGrpcLogRecord(grpcLogRecord)
+
+// the types are scoped to this package and you can't pass them downward.
+
+// (binarylog literally cannot import proto). This package already uses the logger interface, so can I just define them here? and have them implement the iblog.Interface definitions (talk to Doug about that change - he should agree)
+// internal.AddExtraDialOptions(iblog.Logger) <- this implements interface already, so you're fine
+
+type EventConfig struct {
+	// these three matchers are just (match || not match) - no precedence needed
+	ServiceMethod map[string]bool
+	Services map[string]bool // need to create this
+	// If set, this will always match
+	MatchAll bool
+
+	// If true, won't log anything, "excluded from logging" from Feng's design.
+	Negation bool // or exclude?
+	HeaderBytes uint64 // can never be negative, use uint64 like in codebase?
+	MessageBytes uint64
+} // orrr persist something and build at a later date, conversion will always be needed
+
+type LoggerConfigObservability struct { // now that's here, it's an internal detail, I don't think you need to export anymore
+	EventConfigs []EventConfig
+}
+
+type binaryLogger2 struct {
+	EventConfigs []EventConfig // pointer or not?
+	exporter loggingExporter/*Lidi had an unsafe pointer?*/
+}
+
+func (bl *binaryLogger2) GetMethodLogger(methodName string) iblog.MethodLogger {
+	s, m, err := grpcutil.ParseMethod(methodName)
+	if err != nil {
+		logger.Infof("binarylogging: failed to parse %q: %v", methodName, err)
+		return nil
+	}
+	for _, eventConfig := range bl.EventConfigs {
+		// three ifs for matching or just one big considated if
+		/*if eventConfig.matchAll {
+			return newMethodLogger(eventConfig.headerBytes, eventConfig.messageBytes)
+		}
+		// /service/method comes in
+		if eventConfig.serviceMethod["/" + s + "/" + m] { // matches against service/method, or just use methodName
+			return newMethodLogger(eventConfig.headerBytes, eventConfig.messageBytes)
+		}
+
+		if eventConfig.services[s] {
+			return newMethodLogger(eventConfig.headerBytes, eventConfig.messageBytes)
+		}*/
+
+		if eventConfig.MatchAll || eventConfig.ServiceMethod["/" + s + "/" + m] || eventConfig.Services[s] {
+			if eventConfig.Negation {
+				return nil
+			}
+			ml := newMethodLogger(eventConfig.HeaderBytes, eventConfig.MessageBytes) // switch this to return correct method logger type, the one with wrapped data you need
+			return &binaryMethodLogger2{
+				childMethodLogger: ml,
+				exporter: bl.exporter,
+			}
+		}
+	}
+	// if it does hit a node, return {h, b} for that node
+
+	return nil // equivalent to logging nothing - have at end of function and also if hits a negation
+}
+
+// For this new method logger to actually get invoked, it needs to be plumbed in
+// through global dial/newServer options.
+
+// Instead of stream calling global.Log()...,
+// locallyScoped.GetMethodLogger()..., locallyScoped.Log() on each operation
+
+// ^^^ still scoped from global dial/server options/but still
+
+
 type binaryLogger struct { // this binaryLogger type is a wrapper of the original logger.
 	// originalLogger is needed to ensure binary logging users won't be impacted
 	// by this plugin. Users are allowed to subscribe to a completely different
@@ -235,8 +548,8 @@ func (l *binaryLogger) GetMethodLogger(methodName string) iblog.MethodLogger {
 	return &binaryMethodLogger{
 		originalMethodLogger: ol,
 		childMethodLogger:    ml,
-		rpcID:                uuid.NewString(),
-		exporter:             exporter,
+		rpcID:                uuid.NewString(), // is this related to Eric's logging schema change?
+		exporter:             exporter, // This happens at the wrapper layer, how do we plumb this all the way down? Does the config you send to binary logger need this? Doug doesn't want global, so it as an object needs to hold onto it (config, exporter) or ((config (contains exporter)))
 	}
 }
 
@@ -286,7 +599,8 @@ func createBinaryLoggerConfig3() iblog.LoggerConfigObservability {
 			All necessary validation of the configuration data would happen at
 			the observability initialization time, if any error happens, the
 			observability initialization method must return an error status to
-			the caller and all initialization should be noop.
+			the caller and all initialization should be noop. Validation at observability
+			initialization time.
 			*/
 			s, m, err := grpcutil.ParseMethod(method)
 			if err != nil { // Shouldn't happen, already validated
@@ -301,20 +615,21 @@ func createBinaryLoggerConfig3() iblog.LoggerConfigObservability {
 
 			eventConfig.ServiceMethod[method] = true
 		}
-		// eventConfig.MatchAll = true
-
-		clientRPCEvent.Exclude // do we build out the whole matcher unconditionally - yeah might as well, unless we are optimizing for preprocessing, also after validation what is the state space of this?
-		clientRPCEvent.MaxMetadataBytes
-		clientRPCEvent.MaxMessageBytes
-		clientRPCEvent.Method // []string - this is the only thing that gets converted, the others you can just convert inline
 	}
 	clientSideConfig := iblog.LoggerConfigObservability{
 		EventConfigs: eventConfigs,
 	}
+	// returns a binLog that holds onto this config
+	clientSideLogger := iblog.NewLoggerFromConfig(clientSideConfig) // NewLoggerFromConfig, binaryLogger[config] - once it holds onto it, iterates through it for GetMethodLogger().
+
+	// package.AddGlobalDialOptions(WithBinaryLogger(clientSideLogger))
+
 	// var clientSideConfig iblog.LoggerConfigObservability // not a global object, an object you pass around to internal Dial Options (holds a ref to heap memory)
 	// clientSideConfig.EventConfigs // []EventConfig, 1:1 with clientRPCEvents
 
 	var serverRPCEvents []serverRPCEvents // plumb this in - this will become a binary logging object held by server side - what object on server side?
+	// same flow as client events
+	// package.AddGlobalServerOptions
 }
 
 func createBinaryLoggerConfig2() (iblog.LoggerConfig) {
@@ -532,11 +847,12 @@ func (l *binaryLogger) start(config *config, exporter loggingExporter) error {
 	return nil
 }
 
+// the config is already verified by the time it reaches here
 func (l *binaryLogger) Start(ctx context.Context, config *config) error {
 	if config == nil || !config.EnableCloudLogging {
 		return nil
 	}
-	if config.DestinationProjectID == "" {
+	if config.DestinationProjectID == "" { // this has already been validated, this will never hit
 		return fmt.Errorf("failed to enable CloudLogging: empty destination_project_id")
 	}
 	exporter, err := newCloudLoggingExporter(ctx, config)
@@ -556,7 +872,140 @@ func newBinaryLogger(iblogger iblog.Logger) *binaryLogger {
 var defaultLogger *binaryLogger
 
 func prepareLogging() {
+	// yeah gets the global, wraps it in the wrapper global, this doesn't need to happen, ib log already registered so old plumbing is already there
 	// ib.GetLogger = normal binary logger, newBinaryLogger(normal binary logger)
 	defaultLogger = newBinaryLogger(iblog.GetLogger()) // sets the global logger to the binlog wrapper. This global logger holds onto a bin log method logger etc.
 	iblog.SetLogger(defaultLogger) // sets global to the thing
 }
+
+// we're switching this whole flow from binLog{original binLog, o11y binLog}
+// to leave the old codepath alone, (just needs to make sure original binary logging is still there...)
+
+// new codepath - goal is internal global dial option/internal global NewServer option
+
+// registerClientRPCEvents registers clientRPCEvents as a global Dial Option.
+func registerClientRPCEvents(clientRPCEvents []clientRPCEvents, exporter loggingExporter) {
+	if len(clientRPCEvents) == 0 {
+		return
+	}
+	var eventConfigs []EventConfig
+	for _, clientRPCEvent := range clientRPCEvents {
+		eventConfig := EventConfig{}
+		eventConfig.Negation = clientRPCEvent.Exclude
+		eventConfig.HeaderBytes = uint64(clientRPCEvent.MaxMetadataBytes)
+		eventConfig.MessageBytes = uint64(clientRPCEvent.MaxMessageBytes)
+		for _, method := range clientRPCEvent.Method {
+			eventConfig.ServiceMethod = make(map[string]bool)
+			eventConfig.Services = make(map[string]bool)
+			if method == "*" {
+				eventConfig.MatchAll = true // defaults to false
+				continue
+			}
+			// are we validating it's a valid method name? isn't it validated at
+			// this point
+			/*
+				All necessary validation of the configuration data would happen at
+				the observability initialization time, if any error happens, the
+				observability initialization method must return an error status to
+				the caller and all initialization should be noop. Validation at observability
+				initialization time.
+			*/
+			s, m, err := grpcutil.ParseMethod(method)
+			if err != nil { // Shouldn't happen, already validated
+				continue
+			}
+			if m == "*" {
+				eventConfig.Services[s] = true
+				continue
+			}
+			eventConfig.ServiceMethod[method] = true
+		}
+	}
+	clientSideConfig := iblog.LoggerConfigObservability{
+		EventConfigs: eventConfigs,
+	}
+	// returns a binLog that holds onto this config
+	// clientSideLogger := iblog.NewLoggerFromConfig(clientSideConfig, loggingExporter) // NewLoggerFromConfig, binaryLogger[config] - once it holds onto it, iterates through it for GetMethodLogger().
+	clientSideLogger := &binaryLogger2{
+		EventConfigs: eventConfigs,
+		exporter: exporter,
+	}
+	// package.AddGlobalClientSideOptions(WithBinaryLogger(clientSideLogger))
+}
+
+func registerServerRPCEvents(serverRPCEvents []serverRPCEvents, exporter loggingExporter) {
+	if len(serverRPCEvents) == 0 {
+		return
+	}
+	var eventConfigs []EventConfig
+	for _, serverRPCEvent := range serverRPCEvents {
+		eventConfig := EventConfig{}
+		eventConfig.Negation = serverRPCEvent.Exclude
+		eventConfig.HeaderBytes = uint64(serverRPCEvent.MaxMetadataBytes)
+		eventConfig.MessageBytes = uint64(serverRPCEvent.MaxMessageBytes)
+		for _, method := range serverRPCEvent.Method {
+			eventConfig.ServiceMethod = make(map[string]bool)
+			eventConfig.Services = make(map[string]bool)
+			if method == "*" {
+				eventConfig.MatchAll = true
+				continue
+			}
+			// are we validating it's a valid method name? isn't it validated at
+			// this point
+			/*
+				All necessary validation of the configuration data would happen at
+				the observability initialization time, if any error happens, the
+				observability initialization method must return an error status to
+				the caller and all initialization should be noop. Validation at observability
+				initialization time.
+			*/
+			s, m, err := grpcutil.ParseMethod(method)
+			if err != nil { // Shouldn't happen, already validated
+				continue
+			}
+			if m == "*" {
+				eventConfig.Services[s] = true
+				continue
+			}
+			eventConfig.ServiceMethod[method] = true
+		}
+	}
+	/*serverSideConfig := iblog.LoggerConfigObservability{
+		EventConfigs: eventConfigs,
+	}*/
+	// returns a binLog that holds onto this config
+	// serverSideLogger := iblog.NewLoggerFromConfig(serverSideConfig) // NewLoggerFromConfig, binaryLogger[config] - once it holds onto it, iterates through it for GetMethodLogger().
+	serverSideLogger := &binaryLogger2{
+		EventConfigs: eventConfigs,
+		exporter: exporter,
+	}
+	// package.AddGlobalServerOptions(WithBinaryLogger(serverSideLogger))
+}
+
+
+// on client side and server side, {original binLog}, client (some object on client side).ClientSideBinLog != nil, server (some object on server side).ServerSideBinLog != nil
+func startLogging(ctx context.Context, config *newConfig) error { // does this even need an error?
+
+	if config == nil || config.CloudLogging == nil {
+		return nil
+	}
+
+	exporter, err := newCloudLoggingExporter2(ctx, config)
+	if err != nil {
+		return fmt.Errorf("unable to create CloudLogging exporter: %v", err)
+	}
+	// this is our own type, can send it downward? and define interface in binarylog.go?
+	exporter.EmitGrpcLogRecord()
+	exporter.Close()
+
+
+	cl := config.CloudLogging // what part of this config are we validating?
+	// Goal: client side global DialOption registered - when does it actually need to register?
+	registerClientRPCEvents(cl.ClientRPCEvents, exporter)
+	// Goal: server side global NewServerOption registered
+	registerServerRPCEvents(cl.ServerRPCEvents, exporter)
+}
+
+// cleanup new config path, binary logging
+
+// then plumb the global dial options/server options around

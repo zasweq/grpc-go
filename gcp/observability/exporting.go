@@ -44,7 +44,7 @@ type cloudLoggingExporter struct {
 	logger    *gcplogging.Logger
 }
 
-func newCloudLoggingExporter(ctx context.Context, config *config) (*cloudLoggingExporter, error) {
+func newCloudLoggingExporter(ctx context.Context, config *config) (*cloudLoggingExporter, error) { // this needs to be created before the binary Logger, the binary Logger needs to use this, this is the question of do you pass this down?
 	c, err := gcplogging.NewClient(ctx, fmt.Sprintf("projects/%v", config.DestinationProjectID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cloudLoggingExporter: %v", err)
@@ -57,6 +57,22 @@ func newCloudLoggingExporter(ctx context.Context, config *config) (*cloudLogging
 		projectID: config.DestinationProjectID,
 		client:    c,
 		logger:    c.Logger("microservices.googleapis.com/observability/grpc", gcplogging.CommonLabels(config.CustomTags)),
+	}, nil
+}
+
+func newCloudLoggingExporter2(ctx context.Context, config *newConfig) (*cloudLoggingExporter, error) { // this needs to be created before the binary Logger, the binary Logger needs to use this, this is the question of do you pass this down?
+	c, err := gcplogging.NewClient(ctx, fmt.Sprintf("projects/%v", config.ProjectID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cloudLoggingExporter: %v", err)
+	}
+	defer logger.Infof("Successfully created cloudLoggingExporter")
+	if len(config.Labels) != 0 {
+		logger.Infof("Adding custom tags: %+v", config.Labels)
+	}
+	return &cloudLoggingExporter{
+		projectID: config.ProjectID,
+		client:    c,
+		logger:    c.Logger("microservices.googleapis.com/observability/grpc", gcplogging.CommonLabels(config.Labels)),
 	}, nil
 }
 
@@ -97,9 +113,13 @@ func (cle *cloudLoggingExporter) EmitGrpcLogRecord(l *grpclogrecordpb.GrpcLogRec
 		logger.Infof("Unable to unmarshal bytes to JSON: %v", jsonBytes)
 		return
 	}
-	entry := gcplogging.Entry{
-		Timestamp: l.Timestamp.AsTime(),
-		Severity:  logLevelToSeverity[l.LogLevel],
+
+	// if it's the normal timestamp as is, will have to figure out how to plumb
+	// that to here without marshaling it as part of the json map[string]interface{} we actually log
+
+	entry := gcplogging.Entry{ // plumb timestamp here...timestamp from gRPC log entry, or from the moment this writes
+		Timestamp: l.Timestamp.AsTime(), // we're already using timestamp, hwo do I plumb this in now? Take timestamp of this system right now?
+		Severity:  logLevelToSeverity[l.LogLevel], // what about this, we don't want logLevel anymore, ask Eric about this, the spec for the gcplogging.Entry we actually send up
 		Payload:   payload,
 	}
 	cle.logger.Log(entry)

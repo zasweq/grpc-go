@@ -472,7 +472,7 @@ type ClientConn struct {
 	target          string               // User's dial target.
 	parsedTarget    resolver.Target      // See parseTargetAndFindResolver().
 	authority       string               // See determineAuthority().
-	dopts           dialOptions          // Default and user specified dial options.
+	dopts           dialOptions          // Default and user specified dial options. sticks here and you're gtg right?
 	channelzID      *channelz.Identifier // Channelz identifier for the channel.
 	balancerWrapper *ccBalancerWrapper   // Uses gracefulswitch.balancer underneath.
 
