@@ -27,7 +27,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"google.golang.org/grpc/internal/binarylog"
 	"io"
 	"math"
 	"net"
@@ -58,6 +57,7 @@ import (
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/internal"
+	"google.golang.org/grpc/internal/binarylog"
 	"google.golang.org/grpc/internal/channelz"
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/grpctest"
@@ -8196,9 +8196,7 @@ func newMockBinaryLogger() *mockBinaryLogger {
 	}
 }
 
-// how will I return binarylog.MethodLogger in observability module if can't import interface
-func (mbl *mockBinaryLogger) GetMethodLogger(methodName string) binarylog.MethodLogger { // If it returns an implementation of interface does it count?
-	// branch based on method name or just fixed mock method logger?
+func (mbl *mockBinaryLogger) GetMethodLogger(string) binarylog.MethodLogger {
 	return mbl.mml
 }
 
@@ -8207,10 +8205,8 @@ type mockMethodLogger struct {
 }
 
 func (mml *mockMethodLogger) Log(binarylog.LogEntryConfig) {
-	// Downstream effect of writing an event to a sink? Check different events?
 	mml.events++
 }
-
 
 // TestGlobalBinaryLoggingOptions tests the binary logging options for client
 // and server side. The test configures a binary logger to be plumbed into every
@@ -8219,13 +8215,10 @@ func (mml *mockMethodLogger) Log(binarylog.LogEntryConfig) {
 // result of the stream operations on each of these calls.
 func (s) TestGlobalBinaryLoggingOptions(t *testing.T) {
 	csbl := newMockBinaryLogger()
-	// csbl.mml.events == 5 // client side validations
 	ssbl := newMockBinaryLogger()
-	// ssbl.mml.events == 5 // server side validations
 
-	// rename to global, cleanup, how/when is this interface{} set copy from the codepath you're copying this line from?
-	internal.AddExtraDialOptions.(func(opt ...grpc.DialOption))(grpc.WithBinaryLogger(csbl)) // switch this to GlobalDialOptions
-	internal.AddExtraServerOptions.(func(opt ...grpc.ServerOption))(grpc.BinaryLogger(ssbl)) // this isn't getting picked up, but it was getting picked up for other tests
+	internal.AddExtraDialOptions.(func(opt ...grpc.DialOption))(grpc.WithBinaryLogger(csbl))
+	internal.AddExtraServerOptions.(func(opt ...grpc.ServerOption))(grpc.BinaryLogger(ssbl))
 	defer func() {
 		internal.ClearExtraDialOptions()
 		internal.ClearExtraServerOptions()
@@ -8243,13 +8236,9 @@ func (s) TestGlobalBinaryLoggingOptions(t *testing.T) {
 			}
 		},
 	}
-	// make an RPC, expect downstream effects to happen.
-	// setup a service
-	// grpc.Dial to that service
 
 	// No client or server options specified, because should pick up configured
 	// global options.
-
 	if err := ss.Start(nil); err != nil {
 		t.Fatalf("Error starting endpoint server: %v", err)
 	}
@@ -8257,36 +8246,18 @@ func (s) TestGlobalBinaryLoggingOptions(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
+	// Make a Unary RPC. This should cause Log calls on the MethodLogger.
 	if _, err := ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{}); err != nil {
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
-	} // waits for it to call back so shouldn't happen concurrently
-
-	// Verify some downstream effect - a single global for any methods,
-
-	// logs each part of a client/server streaming call, setup like Lidi's where
-	// you want certain RPC events?
-
-	// Write certain RPC events (like 5 events) to standard out, or look at
-	// binary logging tests and see what they do, and copy those verifications over to here
-
-	// honestly I think just count events (for client and server, one test) -
-	// couples it to binary logging implementation, but that's fine, should stay
-	// constant number for a unary RPC a stream with fixed number of events,
-	// it's not like this will change over time.
-
-	// should have 5 rpc events for each
+	}
 	if csbl.mml.events != 5 {
 		t.Fatalf("want 5 client side binary logging events, got %v", csbl.mml.events)
 	}
-
 	if ssbl.mml.events != 5 {
 		t.Fatalf("want 5 server side binary logging events, got %v", ssbl.mml.events)
 	}
 
-	// streaming rpc should also add to events (tests second branch, processStreamingRPC
-
-	// internal.ClearExtraDialOptions() // one for client, one for server, or one for both?
-	// internal.ClearExtraServerOptions()
+	// Make a streaming RPC. This should cause Log calls on the MethodLogger.
 	stream, err := ss.Client.FullDuplexCall(ctx)
 	if err != nil {
 		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
@@ -8303,7 +8274,7 @@ func (s) TestGlobalBinaryLoggingOptions(t *testing.T) {
 	}()
 	stream.CloseSend()
 	<-rpcDone
-	if csbl.mml.events != 9 {
+	if csbl.mml.events != 9 { // ohhhhh wait this may be something wrong with how we log
 		t.Fatalf("want 9 client side binary logging events, got %v", csbl.mml.events)
 	}
 	if ssbl.mml.events != 8 {

@@ -893,7 +893,7 @@ func testClientBinaryLog(t *testing.T, c *rpcConfig) error {
 	}
 	var errored bool
 	for i := 0; i < len(got); i++ {
-		if !equalLogEntry(want[i], got[i]) { // this is checking the equality of log entry. I need to check simply the presence of
+		if !equalLogEntry(want[i], got[i]) {
 			t.Errorf("entry: %d, want %+v, got %+v", i, want[i], got[i])
 			errored = true
 		}
