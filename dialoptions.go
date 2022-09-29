@@ -37,10 +37,10 @@ import (
 )
 
 func init() {
-	internal.AddExtraDialOptions = func(opt ...DialOption) {
+	internal.AddGlobalDialOptions = func(opt ...DialOption) {
 		extraDialOptions = append(extraDialOptions, opt...)
 	}
-	internal.ClearExtraDialOptions = func() {
+	internal.ClearGlobalDialOptions = func() {
 		extraDialOptions = nil
 	}
 }
@@ -403,10 +403,10 @@ func WithStatsHandler(h stats.Handler) DialOption {
 	})
 }
 
-// WithBinaryLogger returns a DialOption that specifies the binary logger for this ClientConn.
+// WithBinaryLogger returns a DialOption that specifies the binary logger for
+// this ClientConn.
 func WithBinaryLogger(bl binarylog.Logger) DialOption {
-	return newFuncDialOption(func (o *dialOptions) {
-		// Check here for already set? What should the behavior be in that case?
+	return newFuncDialOption(func(o *dialOptions) {
 		o.binaryLogger = bl
 	})
 }

@@ -8217,11 +8217,11 @@ func (s) TestGlobalBinaryLoggingOptions(t *testing.T) {
 	csbl := newMockBinaryLogger()
 	ssbl := newMockBinaryLogger()
 
-	internal.AddExtraDialOptions.(func(opt ...grpc.DialOption))(grpc.WithBinaryLogger(csbl))
-	internal.AddExtraServerOptions.(func(opt ...grpc.ServerOption))(grpc.BinaryLogger(ssbl))
+	internal.AddGlobalDialOptions.(func(opt ...grpc.DialOption))(grpc.WithBinaryLogger(csbl))
+	internal.AddGlobalServerOptions.(func(opt ...grpc.ServerOption))(grpc.BinaryLogger(ssbl))
 	defer func() {
-		internal.ClearExtraDialOptions()
-		internal.ClearExtraServerOptions()
+		internal.ClearGlobalDialOptions()
+		internal.ClearGlobalServerOptions()
 	}()
 	ss := &stubserver.StubServer{
 		UnaryCallF: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
@@ -8274,13 +8274,10 @@ func (s) TestGlobalBinaryLoggingOptions(t *testing.T) {
 	}()
 	stream.CloseSend()
 	<-rpcDone
-	if csbl.mml.events != 9 { // ohhhhh wait this may be something wrong with how we log
+	if csbl.mml.events != 9 {
 		t.Fatalf("want 9 client side binary logging events, got %v", csbl.mml.events)
 	}
 	if ssbl.mml.events != 8 {
 		t.Fatalf("want 8 server side binary logging events, got %v", ssbl.mml.events)
 	}
 }
-
-
-// TURN DEFAULT ENABLED TO TRUE

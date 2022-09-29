@@ -73,10 +73,10 @@ func init() {
 	internal.DrainServerTransports = func(srv *Server, addr string) {
 		srv.drainServerTransports(addr)
 	}
-	internal.AddExtraServerOptions = func(opt ...ServerOption) { // switch to internal.AddGlobalServerOptions
+	internal.AddGlobalServerOptions = func(opt ...ServerOption) {
 		extraServerOptions = opt
 	}
-	internal.ClearExtraServerOptions = func() {
+	internal.ClearGlobalServerOptions = func() {
 		extraServerOptions = nil
 	}
 	internal.JoinServerOptions = newJoinServerOption
@@ -470,10 +470,10 @@ func StatsHandler(h stats.Handler) ServerOption {
 	})
 }
 
-// BinaryLogger returns a ServerOption that can set the binary logger for the server.
+// BinaryLogger returns a ServerOption that can set the binary logger for the
+// server.
 func BinaryLogger(bl binarylog.Logger) ServerOption {
 	return newFuncServerOption(func(o *serverOptions) {
-		print("writing to o.binaryLogger")
 		o.binaryLogger = bl
 	})
 }
@@ -600,7 +600,6 @@ func (s *Server) stopServerWorkers() {
 func NewServer(opt ...ServerOption) *Server {
 	opts := defaultServerOptions
 	for _, o := range extraServerOptions {
-		print("iteration through extraServerOptions")
 		o.apply(&opts)
 	}
 	for _, o := range opt {
@@ -1226,13 +1225,16 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 			}
 		}()
 	}
-
-	binlog := binarylog.GetMethodLogger(stream.Method())
-	var ssBinLog binarylog.MethodLogger
-	if s.opts.binaryLogger != nil {
-		ssBinLog = s.opts.binaryLogger.GetMethodLogger(stream.Method())
+	var binlogs []binarylog.MethodLogger
+	if ml := binarylog.GetMethodLogger(stream.Method()); ml != nil {
+		binlogs = append(binlogs, ml)
 	}
-	if binlog != nil || ssBinLog != nil {
+	if s.opts.binaryLogger != nil {
+		if ml := s.opts.binaryLogger.GetMethodLogger(stream.Method()); ml != nil {
+			binlogs = append(binlogs, ml)
+		}
+	}
+	if len(binlogs) != 0 {
 		ctx := stream.Context()
 		md, _ := metadata.FromIncomingContext(ctx)
 		logEntry := &binarylog.ClientHeader{
@@ -1252,11 +1254,8 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 		if peer, ok := peer.FromContext(ctx); ok {
 			logEntry.PeerAddr = peer.Addr
 		}
-		if binlog != nil {
+		for _, binlog := range binlogs {
 			binlog.Log(logEntry)
-		}
-		if ssBinLog != nil {
-			ssBinLog.Log(logEntry)
 		}
 	}
 
@@ -1297,7 +1296,7 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 	}
 
 	var payInfo *payloadInfo
-	if len(shs) != 0 || (binlog != nil || ssBinLog != nil) {
+	if len(shs) != 0 || len(binlogs) != 0 {
 		payInfo = &payloadInfo{}
 	}
 	d, err := recvAndDecompress(&parser{r: stream}, stream, dc, s.opts.maxReceiveMessageSize, payInfo, decomp)
@@ -1323,15 +1322,12 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 				Length:     len(d),
 			})
 		}
-		if binlog != nil || ssBinLog != nil {
+		if len(binlogs) != 0 {
 			cm := &binarylog.ClientMessage{
 				Message: d,
 			}
-			if binlog != nil {
+			for _, binlog := range binlogs {
 				binlog.Log(cm)
-			}
-			if ssBinLog != nil {
-				ssBinLog.Log(cm)
 			}
 		}
 		if trInfo != nil {
@@ -1356,29 +1352,23 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 		if e := t.WriteStatus(stream, appStatus); e != nil {
 			channelz.Warningf(logger, s.channelzID, "grpc: Server.processUnaryRPC failed to write status: %v", e)
 		}
-		if binlog != nil || ssBinLog != nil {
+		if len(binlogs) != 0 {
 			if h, _ := stream.Header(); h.Len() > 0 {
 				// Only log serverHeader if there was header. Otherwise it can
 				// be trailer only.
 				sh := &binarylog.ServerHeader{
 					Header: h,
 				}
-				if binlog != nil {
+				for _, binlog := range binlogs {
 					binlog.Log(sh)
-				}
-				if ssBinLog != nil {
-					ssBinLog.Log(sh)
 				}
 			}
 			st := &binarylog.ServerTrailer{
 				Trailer: stream.Trailer(),
 				Err:     appErr,
 			}
-			if binlog != nil {
+			for _, binlog := range binlogs {
 				binlog.Log(st)
-			}
-			if ssBinLog != nil {
-				ssBinLog.Log(st)
 			}
 		}
 		return appErr
@@ -1405,7 +1395,7 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 				panic(fmt.Sprintf("grpc: Unexpected error (%T) from sendResponse: %v", st, st))
 			}
 		}
-		if binlog != nil || ssBinLog != nil {
+		if len(binlogs) != 0 {
 			h, _ := stream.Header()
 			sh := &binarylog.ServerHeader{
 				Header: h,
@@ -1414,18 +1404,14 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 				Trailer: stream.Trailer(),
 				Err:     appErr,
 			}
-			if binlog != nil {
+			for _, binlog := range binlogs {
 				binlog.Log(sh)
 				binlog.Log(st)
-			}
-			if ssBinLog != nil {
-				ssBinLog.Log(sh)
-				ssBinLog.Log(st)
 			}
 		}
 		return err
 	}
-	if binlog != nil || ssBinLog != nil {
+	if len(binlogs) != 0 {
 		h, _ := stream.Header()
 		sh := &binarylog.ServerHeader{
 			Header: h,
@@ -1433,13 +1419,9 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 		sm := &binarylog.ServerMessage{
 			Message: reply,
 		}
-		if binlog != nil {
+		for _, binlog := range binlogs {
 			binlog.Log(sh)
 			binlog.Log(sm)
-		}
-		if ssBinLog != nil {
-			ssBinLog.Log(sh)
-			ssBinLog.Log(sm)
 		}
 	}
 	if channelz.IsOn() {
@@ -1452,16 +1434,13 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 	// Should the logging be in WriteStatus?  Should we ignore the WriteStatus
 	// error or allow the stats handler to see it?
 	err = t.WriteStatus(stream, statusOK)
-	if binlog != nil || ssBinLog != nil {
+	if len(binlogs) != 0 {
 		st := &binarylog.ServerTrailer{
 			Trailer: stream.Trailer(),
 			Err:     appErr,
 		}
-		if binlog != nil {
+		for _, binlog := range binlogs {
 			binlog.Log(st)
-		}
-		if ssBinLog != nil {
-			ssBinLog.Log(st)
 		}
 	}
 	return err
@@ -1575,14 +1554,15 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		}()
 	}
 
-	// if set? I guess GetMethodLogger has that check/guard for presence
-	ss.binlog = binarylog.GetMethodLogger(stream.Method())
-	print("about to check if s.opts.binaryLogger != nil")
-	if s.opts.binaryLogger != nil {
-		print("setting ss bin log")
-		ss.ssBinLog = s.opts.binaryLogger.GetMethodLogger(stream.Method())
+	if ml := binarylog.GetMethodLogger(stream.Method()); ml != nil {
+		ss.binlogs = append(ss.binlogs, ml)
 	}
-	if ss.binlog != nil || ss.ssBinLog != nil {
+	if s.opts.binaryLogger != nil {
+		if ml := s.opts.binaryLogger.GetMethodLogger(stream.Method()); ml != nil {
+			ss.binlogs = append(ss.binlogs, ml)
+		}
+	}
+	if len(ss.binlogs) != 0 {
 		md, _ := metadata.FromIncomingContext(ctx)
 		logEntry := &binarylog.ClientHeader{
 			Header:     md,
@@ -1601,11 +1581,8 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		if peer, ok := peer.FromContext(ss.Context()); ok {
 			logEntry.PeerAddr = peer.Addr
 		}
-		if ss.binlog != nil {
-			ss.binlog.Log(logEntry)
-		}
-		if ss.ssBinLog != nil {
-			ss.ssBinLog.Log(logEntry)
+		for _, binlog := range ss.binlogs {
+			binlog.Log(logEntry)
 		}
 	}
 
@@ -1672,16 +1649,13 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 			ss.mu.Unlock()
 		}
 		t.WriteStatus(ss.s, appStatus)
-		if ss.binlog != nil || ss.ssBinLog != nil {
+		if len(ss.binlogs) != 0 {
 			st := &binarylog.ServerTrailer{
 				Trailer: ss.s.Trailer(),
 				Err:     appErr,
 			}
-			if ss.binlog != nil {
-				ss.binlog.Log(st)
-			}
-			if ss.ssBinLog != nil {
-				ss.ssBinLog.Log(st)
+			for _, binlog := range ss.binlogs {
+				binlog.Log(st)
 			}
 		}
 		// TODO: Should we log an error from WriteStatus here and below?
@@ -1693,16 +1667,13 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		ss.mu.Unlock()
 	}
 	err = t.WriteStatus(ss.s, statusOK)
-	if ss.binlog != nil || ss.ssBinLog != nil {
+	if len(ss.binlogs) != 0 {
 		st := &binarylog.ServerTrailer{
 			Trailer: ss.s.Trailer(),
 			Err:     appErr,
 		}
-		if ss.binlog != nil {
-			ss.binlog.Log(st)
-		}
-		if ss.ssBinLog != nil {
-			ss.ssBinLog.Log(st)
+		for _, binlog := range ss.binlogs {
+			binlog.Log(st)
 		}
 	}
 	return err
