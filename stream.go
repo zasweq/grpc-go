@@ -301,7 +301,11 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	if !cc.dopts.disableRetry {
 		cs.retryThrottler = cc.retryThrottler.Load().(*retryThrottler)
 	}
-	cs.binlog = binarylog.GetMethodLogger(method)
+	cs.binlog = binarylog.GetMethodLogger(method) // no if nil check? This seems to be the only place you can create a client stream, only allocation on the heap
+	if cc.dopts.binaryLogger != nil {
+		print("setting client side specific binary logger")
+		cs.csBinLog = cc.dopts.binaryLogger.GetMethodLogger(method)
+	}
 
 	// Pick the transport to use and create a new stream on the transport.
 	// Assign cs.attempt upon success.
@@ -322,7 +326,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 		return nil, err
 	}
 
-	if cs.binlog != nil {
+	if cs.binlog != nil || cs.csBinLog != nil {
 		md, _ := metadata.FromOutgoingContext(ctx)
 		logEntry := &binarylog.ClientHeader{
 			OnClientSide: true,
@@ -336,7 +340,12 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 				logEntry.Timeout = 0
 			}
 		}
-		cs.binlog.Log(logEntry)
+		if cs.binlog != nil {
+			cs.binlog.Log(logEntry)
+		}
+		if cs.csBinLog != nil {
+			cs.csBinLog.Log(logEntry)
+		}
 	}
 
 	if desc != unaryStreamDesc {
@@ -481,6 +490,7 @@ type clientStream struct {
 	retryThrottler *retryThrottler // The throttler active when the RPC began.
 
 	binlog binarylog.MethodLogger // Binary logger, can be nil.
+	csBinLog binarylog.MethodLogger // Client Side Specific Binary Logger, can be nil.
 	// serverHeaderBinlogged is a boolean for whether server header has been
 	// logged. Server header will be logged when the first time one of those
 	// happens: stream.Header(), stream.Recv().
@@ -744,7 +754,7 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 		cs.finish(err)
 		return nil, err
 	}
-	if cs.binlog != nil && !cs.serverHeaderBinlogged {
+	if (cs.binlog != nil || cs.csBinLog != nil) && !cs.serverHeaderBinlogged {
 		// Only log if binary log is on and header has not been logged.
 		logEntry := &binarylog.ServerHeader{
 			OnClientSide: true,
@@ -754,8 +764,13 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 		if peer, ok := peer.FromContext(cs.Context()); ok {
 			logEntry.PeerAddr = peer.Addr
 		}
-		cs.binlog.Log(logEntry)
 		cs.serverHeaderBinlogged = true
+		if cs.binlog != nil {
+			cs.binlog.Log(logEntry)
+		}
+		if cs.csBinLog != nil {
+			cs.csBinLog.Log(logEntry)
+		}
 	}
 	return m, nil
 }
@@ -829,38 +844,50 @@ func (cs *clientStream) SendMsg(m interface{}) (err error) {
 		return a.sendMsg(m, hdr, payload, data)
 	}
 	err = cs.withRetry(op, func() { cs.bufferForRetryLocked(len(hdr)+len(payload), op) })
-	if cs.binlog != nil && err == nil {
-		cs.binlog.Log(&binarylog.ClientMessage{
+	if (cs.binlog != nil || cs.csBinLog != nil) && err == nil {
+		cm := &binarylog.ClientMessage{
 			OnClientSide: true,
 			Message:      data,
-		})
+		}
+		if cs.binlog != nil {
+			cs.binlog.Log(cm)
+		}
+		if cs.csBinLog != nil {
+			cs.csBinLog.Log(cm)
+		}
 	}
 	return err
 }
 
 func (cs *clientStream) RecvMsg(m interface{}) error {
-	if cs.binlog != nil && !cs.serverHeaderBinlogged {
+	if (cs.binlog != nil || cs.csBinLog != nil) && !cs.serverHeaderBinlogged {
 		// Call Header() to binary log header if it's not already logged.
 		cs.Header()
 	}
 	var recvInfo *payloadInfo
-	if cs.binlog != nil {
+	if cs.binlog != nil || cs.csBinLog != nil {
 		recvInfo = &payloadInfo{}
 	}
 	err := cs.withRetry(func(a *csAttempt) error {
 		return a.recvMsg(m, recvInfo)
 	}, cs.commitAttemptLocked)
-	if cs.binlog != nil && err == nil {
-		cs.binlog.Log(&binarylog.ServerMessage{
+	if (cs.binlog != nil || cs.csBinLog != nil) && err == nil {
+		sm := &binarylog.ServerMessage{
 			OnClientSide: true,
 			Message:      recvInfo.uncompressedBytes,
-		})
+		}
+		if cs.binlog != nil {
+			cs.binlog.Log(sm)
+		}
+		if cs.csBinLog != nil {
+			cs.csBinLog.Log(sm)
+		}
 	}
 	if err != nil || !cs.desc.ServerStreams {
 		// err != nil or non-server-streaming indicates end of stream.
 		cs.finish(err)
 
-		if cs.binlog != nil {
+		if cs.binlog != nil || cs.csBinLog != nil {
 			// finish will not log Trailer. Log Trailer here.
 			logEntry := &binarylog.ServerTrailer{
 				OnClientSide: true,
@@ -873,7 +900,12 @@ func (cs *clientStream) RecvMsg(m interface{}) error {
 			if peer, ok := peer.FromContext(cs.Context()); ok {
 				logEntry.PeerAddr = peer.Addr
 			}
-			cs.binlog.Log(logEntry)
+			if cs.binlog != nil {
+				cs.binlog.Log(logEntry)
+			}
+			if cs.csBinLog != nil {
+				cs.csBinLog.Log(logEntry)
+			}
 		}
 	}
 	return err
@@ -894,10 +926,16 @@ func (cs *clientStream) CloseSend() error {
 		return nil
 	}
 	cs.withRetry(op, func() { cs.bufferForRetryLocked(0, op) })
-	if cs.binlog != nil {
-		cs.binlog.Log(&binarylog.ClientHalfClose{
+	if cs.binlog != nil || cs.csBinLog != nil {
+		chc := &binarylog.ClientHalfClose{
 			OnClientSide: true,
-		})
+		}
+		if cs.binlog != nil {
+			cs.binlog.Log(chc)
+		}
+		if cs.csBinLog != nil {
+			cs.csBinLog.Log(chc)
+		}
 	}
 	// We never returned an error here for reasons.
 	return nil
@@ -930,10 +968,16 @@ func (cs *clientStream) finish(err error) {
 	//
 	// Only one of cancel or trailer needs to be logged. In the cases where
 	// users don't call RecvMsg, users must have already canceled the RPC.
-	if cs.binlog != nil && status.Code(err) == codes.Canceled {
-		cs.binlog.Log(&binarylog.Cancel{
+	if (cs.binlog != nil || cs.csBinLog != nil) && status.Code(err) == codes.Canceled {
+		c := &binarylog.Cancel{
 			OnClientSide: true,
-		})
+		}
+		if cs.binlog != nil {
+			cs.binlog.Log(c)
+		}
+		if cs.csBinLog != nil {
+			cs.csBinLog.Log(c)
+		}
 	}
 	if err == nil {
 		cs.retryThrottler.successfulRPC()
@@ -1454,6 +1498,8 @@ type serverStream struct {
 	statsHandler []stats.Handler
 
 	binlog binarylog.MethodLogger
+	// binary logger specific to server side
+	ssBinLog binarylog.MethodLogger
 	// serverHeaderBinlogged indicates whether server header has been logged. It
 	// will happen when one of the following two happens: stream.SendHeader(),
 	// stream.Send().
@@ -1487,6 +1533,19 @@ func (ss *serverStream) SendHeader(md metadata.MD) error {
 	}
 
 	err = ss.t.WriteHeader(ss.s, md)
+	if (ss.binlog != nil || ss.ssBinLog != nil) && !ss.serverHeaderBinlogged {
+		h, _ := ss.s.Header()
+		sh := &binarylog.ServerHeader{
+			Header: h,
+		}
+		ss.serverHeaderBinlogged = true
+		if ss.binlog != nil {
+			ss.binlog.Log(sh)
+		}
+		if ss.ssBinLog != nil {
+			ss.ssBinLog.Log(sh)
+		}
+	}
 	if ss.binlog != nil && !ss.serverHeaderBinlogged {
 		h, _ := ss.s.Header()
 		ss.binlog.Log(&binarylog.ServerHeader{
@@ -1549,17 +1608,30 @@ func (ss *serverStream) SendMsg(m interface{}) (err error) {
 	if err := ss.t.Write(ss.s, hdr, payload, &transport.Options{Last: false}); err != nil {
 		return toRPCErr(err)
 	}
-	if ss.binlog != nil {
+	if ss.binlog != nil || ss.ssBinLog != nil {
 		if !ss.serverHeaderBinlogged {
 			h, _ := ss.s.Header()
-			ss.binlog.Log(&binarylog.ServerHeader{
+			sh := &binarylog.ServerHeader{
 				Header: h,
-			})
+			}
 			ss.serverHeaderBinlogged = true
+			if ss.binlog != nil {
+				ss.binlog.Log(sh)
+			}
+			if ss.ssBinLog != nil {
+				ss.ssBinLog.Log(sh)
+			}
 		}
-		ss.binlog.Log(&binarylog.ServerMessage{
-			Message: data,
-		})
+		if ss.binlog != nil {
+			ss.binlog.Log(&binarylog.ServerMessage{
+				Message: data,
+			})
+		}
+		if ss.ssBinLog != nil {
+			ss.ssBinLog.Log(&binarylog.ServerMessage{
+				Message: data,
+			})
+		}
 	}
 	if len(ss.statsHandler) != 0 {
 		for _, sh := range ss.statsHandler {
@@ -1598,13 +1670,16 @@ func (ss *serverStream) RecvMsg(m interface{}) (err error) {
 		}
 	}()
 	var payInfo *payloadInfo
-	if len(ss.statsHandler) != 0 || ss.binlog != nil {
+	if len(ss.statsHandler) != 0 || ss.binlog != nil || ss.ssBinLog != nil {
 		payInfo = &payloadInfo{}
 	}
 	if err := recv(ss.p, ss.codec, ss.s, ss.dc, m, ss.maxReceiveMessageSize, payInfo, ss.decomp); err != nil {
 		if err == io.EOF {
 			if ss.binlog != nil {
 				ss.binlog.Log(&binarylog.ClientHalfClose{})
+			}
+			if ss.ssBinLog != nil {
+				ss.ssBinLog.Log(&binarylog.ClientHalfClose{})
 			}
 			return err
 		}
@@ -1625,10 +1700,16 @@ func (ss *serverStream) RecvMsg(m interface{}) (err error) {
 			})
 		}
 	}
-	if ss.binlog != nil {
-		ss.binlog.Log(&binarylog.ClientMessage{
+	if ss.binlog != nil || ss.ssBinLog != nil {
+		cm := &binarylog.ClientMessage{
 			Message: payInfo.uncompressedBytes,
-		})
+		}
+		if ss.binlog != nil {
+			ss.binlog.Log(cm)
+		}
+		if ss.ssBinLog != nil {
+			ss.ssBinLog.Log(cm)
+		}
 	}
 	return nil
 }

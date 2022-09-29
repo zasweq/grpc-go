@@ -73,7 +73,7 @@ func init() {
 	internal.DrainServerTransports = func(srv *Server, addr string) {
 		srv.drainServerTransports(addr)
 	}
-	internal.AddExtraServerOptions = func(opt ...ServerOption) {
+	internal.AddExtraServerOptions = func(opt ...ServerOption) { // switch to internal.AddGlobalServerOptions
 		extraServerOptions = opt
 	}
 	internal.ClearExtraServerOptions = func() {
@@ -156,6 +156,7 @@ type serverOptions struct {
 	streamInt             StreamServerInterceptor
 	chainUnaryInts        []UnaryServerInterceptor
 	chainStreamInts       []StreamServerInterceptor
+	binaryLogger          binarylog.Logger
 	inTapHandle           tap.ServerInHandle
 	statsHandlers         []stats.Handler
 	maxConcurrentStreams  uint32
@@ -469,6 +470,14 @@ func StatsHandler(h stats.Handler) ServerOption {
 	})
 }
 
+// BinaryLogger returns a ServerOption that can set the binary logger for the server.
+func BinaryLogger(bl binarylog.Logger) ServerOption {
+	return newFuncServerOption(func(o *serverOptions) {
+		print("writing to o.binaryLogger")
+		o.binaryLogger = bl
+	})
+}
+
 // UnknownServiceHandler returns a ServerOption that allows for adding a custom
 // unknown service handler. The provided method is a bidi-streaming RPC service
 // handler that will be invoked instead of returning the "unimplemented" gRPC
@@ -591,6 +600,7 @@ func (s *Server) stopServerWorkers() {
 func NewServer(opt ...ServerOption) *Server {
 	opts := defaultServerOptions
 	for _, o := range extraServerOptions {
+		print("iteration through extraServerOptions")
 		o.apply(&opts)
 	}
 	for _, o := range opt {
@@ -1218,7 +1228,11 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 	}
 
 	binlog := binarylog.GetMethodLogger(stream.Method())
-	if binlog != nil {
+	var ssBinLog binarylog.MethodLogger
+	if s.opts.binaryLogger != nil {
+		ssBinLog = s.opts.binaryLogger.GetMethodLogger(stream.Method())
+	}
+	if binlog != nil || ssBinLog != nil {
 		ctx := stream.Context()
 		md, _ := metadata.FromIncomingContext(ctx)
 		logEntry := &binarylog.ClientHeader{
@@ -1238,7 +1252,12 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 		if peer, ok := peer.FromContext(ctx); ok {
 			logEntry.PeerAddr = peer.Addr
 		}
-		binlog.Log(logEntry)
+		if binlog != nil {
+			binlog.Log(logEntry)
+		}
+		if ssBinLog != nil {
+			ssBinLog.Log(logEntry)
+		}
 	}
 
 	// comp and cp are used for compression.  decomp and dc are used for
@@ -1278,7 +1297,7 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 	}
 
 	var payInfo *payloadInfo
-	if len(shs) != 0 || binlog != nil {
+	if len(shs) != 0 || (binlog != nil || ssBinLog != nil) {
 		payInfo = &payloadInfo{}
 	}
 	d, err := recvAndDecompress(&parser{r: stream}, stream, dc, s.opts.maxReceiveMessageSize, payInfo, decomp)
@@ -1304,10 +1323,16 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 				Length:     len(d),
 			})
 		}
-		if binlog != nil {
-			binlog.Log(&binarylog.ClientMessage{
+		if binlog != nil || ssBinLog != nil {
+			cm := &binarylog.ClientMessage{
 				Message: d,
-			})
+			}
+			if binlog != nil {
+				binlog.Log(cm)
+			}
+			if ssBinLog != nil {
+				ssBinLog.Log(cm)
+			}
 		}
 		if trInfo != nil {
 			trInfo.tr.LazyLog(&payload{sent: false, msg: v}, true)
@@ -1331,18 +1356,30 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 		if e := t.WriteStatus(stream, appStatus); e != nil {
 			channelz.Warningf(logger, s.channelzID, "grpc: Server.processUnaryRPC failed to write status: %v", e)
 		}
-		if binlog != nil {
+		if binlog != nil || ssBinLog != nil {
 			if h, _ := stream.Header(); h.Len() > 0 {
 				// Only log serverHeader if there was header. Otherwise it can
 				// be trailer only.
-				binlog.Log(&binarylog.ServerHeader{
+				sh := &binarylog.ServerHeader{
 					Header: h,
-				})
+				}
+				if binlog != nil {
+					binlog.Log(sh)
+				}
+				if ssBinLog != nil {
+					ssBinLog.Log(sh)
+				}
 			}
-			binlog.Log(&binarylog.ServerTrailer{
+			st := &binarylog.ServerTrailer{
 				Trailer: stream.Trailer(),
 				Err:     appErr,
-			})
+			}
+			if binlog != nil {
+				binlog.Log(st)
+			}
+			if ssBinLog != nil {
+				ssBinLog.Log(st)
+			}
 		}
 		return appErr
 	}
@@ -1368,26 +1405,42 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 				panic(fmt.Sprintf("grpc: Unexpected error (%T) from sendResponse: %v", st, st))
 			}
 		}
-		if binlog != nil {
+		if binlog != nil || ssBinLog != nil {
 			h, _ := stream.Header()
-			binlog.Log(&binarylog.ServerHeader{
+			sh := &binarylog.ServerHeader{
 				Header: h,
-			})
-			binlog.Log(&binarylog.ServerTrailer{
+			}
+			st := &binarylog.ServerTrailer{
 				Trailer: stream.Trailer(),
 				Err:     appErr,
-			})
+			}
+			if binlog != nil {
+				binlog.Log(sh)
+				binlog.Log(st)
+			}
+			if ssBinLog != nil {
+				ssBinLog.Log(sh)
+				ssBinLog.Log(st)
+			}
 		}
 		return err
 	}
-	if binlog != nil {
+	if binlog != nil || ssBinLog != nil {
 		h, _ := stream.Header()
-		binlog.Log(&binarylog.ServerHeader{
+		sh := &binarylog.ServerHeader{
 			Header: h,
-		})
-		binlog.Log(&binarylog.ServerMessage{
+		}
+		sm := &binarylog.ServerMessage{
 			Message: reply,
-		})
+		}
+		if binlog != nil {
+			binlog.Log(sh)
+			binlog.Log(sm)
+		}
+		if ssBinLog != nil {
+			ssBinLog.Log(sh)
+			ssBinLog.Log(sm)
+		}
 	}
 	if channelz.IsOn() {
 		t.IncrMsgSent()
@@ -1399,11 +1452,17 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 	// Should the logging be in WriteStatus?  Should we ignore the WriteStatus
 	// error or allow the stats handler to see it?
 	err = t.WriteStatus(stream, statusOK)
-	if binlog != nil {
-		binlog.Log(&binarylog.ServerTrailer{
+	if binlog != nil || ssBinLog != nil {
+		st := &binarylog.ServerTrailer{
 			Trailer: stream.Trailer(),
 			Err:     appErr,
-		})
+		}
+		if binlog != nil {
+			binlog.Log(st)
+		}
+		if ssBinLog != nil {
+			ssBinLog.Log(st)
+		}
 	}
 	return err
 }
@@ -1516,8 +1575,14 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		}()
 	}
 
+	// if set? I guess GetMethodLogger has that check/guard for presence
 	ss.binlog = binarylog.GetMethodLogger(stream.Method())
-	if ss.binlog != nil {
+	print("about to check if s.opts.binaryLogger != nil")
+	if s.opts.binaryLogger != nil {
+		print("setting ss bin log")
+		ss.ssBinLog = s.opts.binaryLogger.GetMethodLogger(stream.Method())
+	}
+	if ss.binlog != nil || ss.ssBinLog != nil {
 		md, _ := metadata.FromIncomingContext(ctx)
 		logEntry := &binarylog.ClientHeader{
 			Header:     md,
@@ -1536,7 +1601,12 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		if peer, ok := peer.FromContext(ss.Context()); ok {
 			logEntry.PeerAddr = peer.Addr
 		}
-		ss.binlog.Log(logEntry)
+		if ss.binlog != nil {
+			ss.binlog.Log(logEntry)
+		}
+		if ss.ssBinLog != nil {
+			ss.ssBinLog.Log(logEntry)
+		}
 	}
 
 	// If dc is set and matches the stream's compression, use it.  Otherwise, try
@@ -1602,11 +1672,17 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 			ss.mu.Unlock()
 		}
 		t.WriteStatus(ss.s, appStatus)
-		if ss.binlog != nil {
-			ss.binlog.Log(&binarylog.ServerTrailer{
+		if ss.binlog != nil || ss.ssBinLog != nil {
+			st := &binarylog.ServerTrailer{
 				Trailer: ss.s.Trailer(),
 				Err:     appErr,
-			})
+			}
+			if ss.binlog != nil {
+				ss.binlog.Log(st)
+			}
+			if ss.ssBinLog != nil {
+				ss.ssBinLog.Log(st)
+			}
 		}
 		// TODO: Should we log an error from WriteStatus here and below?
 		return appErr
@@ -1617,11 +1693,17 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 		ss.mu.Unlock()
 	}
 	err = t.WriteStatus(ss.s, statusOK)
-	if ss.binlog != nil {
-		ss.binlog.Log(&binarylog.ServerTrailer{
+	if ss.binlog != nil || ss.ssBinLog != nil {
+		st := &binarylog.ServerTrailer{
 			Trailer: ss.s.Trailer(),
 			Err:     appErr,
-		})
+		}
+		if ss.binlog != nil {
+			ss.binlog.Log(st)
+		}
+		if ss.ssBinLog != nil {
+			ss.ssBinLog.Log(st)
+		}
 	}
 	return err
 }
