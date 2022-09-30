@@ -52,7 +52,7 @@ type MethodLogger interface {
 	Log(LogEntryConfig)
 }
 
-type methodLogger struct {
+type MethodLoggerImp struct { // change this, or moveMethod Logger and switch that
 	headerMaxLen, messageMaxLen uint64
 
 	callID          uint64
@@ -61,22 +61,46 @@ type methodLogger struct {
 	sink Sink // TODO(blog): make this plugable.
 }
 
-func newMethodLogger(h, m uint64) *methodLogger {
-	return &methodLogger{
+// So, generally, define interfaces at the consumer and return concrete types in your public API!
+
+// The interface defined at cpnsumer can be lean, because only functions being
+// used need to be defined in interface - I guess put only what functions you
+// need in the interface, define new methods as needed
+
+// Define MethodLoggerBuilder interface {Build()} at callsite
+// or just typecast directly into the defined lean interface
+
+// All we care about at callsite is this Build(c LogEntryConfig) *pb.GrpcLogEntry
+
+// return an interface, or return a type, leaking internal only symbols in your
+// API, typically better to return a type rather than an interface, return a
+// struct type (that is Exported), // don't construct something of this type
+// that isn't used, declare an interface at call site, bad user experience to
+// not have exported type in public facing API
+
+// func NewMethodLoggerImp(h, m uint64) *MethodLogger, rename and export type
+func NewMethodLoggerImp(h, m uint64) *MethodLoggerImp {
+	return &MethodLoggerImp{
 		headerMaxLen:  h,
 		messageMaxLen: m,
 
-		callID:          idGen.next(),
+		callID:          idGen.next(), // this gets ignored, we use uuid geneator in o11y module
 		idWithinCallGen: &callIDGenerator{},
 
 		sink: DefaultSink, // TODO(blog): make it plugable.
 	}
 }
 
+// reuse logEntryConfig -> pb.GrpcLogEntry conversion,
+// and also the truncate header/message logic
+
+// previously you export the method only, typecast it to an interface (define methods at usage site)
+// and call the typecasted interface
+
 // Build is an internal only method for building the proto message out of the
 // input event. It's made public to enable other library to reuse as much logic
-// in methodLogger as possible.
-func (ml *methodLogger) Build(c LogEntryConfig) *pb.GrpcLogEntry {
+// in MethodLoggerImp as possible.
+func (ml *MethodLoggerImp) Build(c LogEntryConfig) *pb.GrpcLogEntry {
 	m := c.toProto()
 	timestamp, _ := ptypes.TimestampProto(time.Now())
 	m.Timestamp = timestamp
@@ -95,11 +119,11 @@ func (ml *methodLogger) Build(c LogEntryConfig) *pb.GrpcLogEntry {
 }
 
 // Log creates a proto binary log entry, and logs it to the sink.
-func (ml *methodLogger) Log(c LogEntryConfig) {
+func (ml *MethodLoggerImp) Log(c LogEntryConfig) {
 	ml.sink.Write(ml.Build(c))
 }
 
-func (ml *methodLogger) truncateMetadata(mdPb *pb.Metadata) (truncated bool) {
+func (ml *MethodLoggerImp) truncateMetadata(mdPb *pb.Metadata) (truncated bool) {
 	if ml.headerMaxLen == maxUInt {
 		return false
 	}
@@ -129,7 +153,7 @@ func (ml *methodLogger) truncateMetadata(mdPb *pb.Metadata) (truncated bool) {
 	return truncated
 }
 
-func (ml *methodLogger) truncateMessage(msgPb *pb.Message) (truncated bool) {
+func (ml *MethodLoggerImp) truncateMessage(msgPb *pb.Message) (truncated bool) {
 	if ml.messageMaxLen == maxUInt {
 		return false
 	}

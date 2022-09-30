@@ -37,17 +37,17 @@ var (
 	defaultMetricsReportingInterval = time.Second * 30
 )
 
-func tagsToMonitoringLabels(tags map[string]string) *stackdriver.Labels {
-	labels := &stackdriver.Labels{}
-	for k, v := range tags {
-		labels.Set(k, v, "")
+func labelsToMonitoringLabels(labels map[string]string) *stackdriver.Labels {
+	sdLabels := &stackdriver.Labels{}
+	for k, v := range labels {
+		sdLabels.Set(k, v, "")
 	}
-	return labels
+	return sdLabels
 }
 
-func tagsToTraceAttributes(tags map[string]string) map[string]interface{} {
-	ta := make(map[string]interface{}, len(tags))
-	for k, v := range tags {
+func labelsToTraceAttributes(labels map[string]string) map[string]interface{} {
+	ta := make(map[string]interface{}, len(labels))
+	for k, v := range labels {
 		ta[k] = v
 	}
 	return ta
@@ -71,10 +71,10 @@ func newStackdriverExporter(config *config) (tracingMetricsExporter, error) {
 	logger.Infof("Detected MonitoredResource:: %+v", mr)
 	var err error
 	exporter, err := stackdriver.NewExporter(stackdriver.Options{
-		ProjectID:               config.DestinationProjectID,
+		ProjectID:               config.ProjectID,
 		MonitoredResource:       mr,
-		DefaultMonitoringLabels: tagsToMonitoringLabels(config.CustomTags),
-		DefaultTraceAttributes:  tagsToTraceAttributes(config.CustomTags),
+		DefaultMonitoringLabels: labelsToMonitoringLabels(config.Labels),
+		DefaultTraceAttributes:  labelsToTraceAttributes(config.Labels),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Stackdriver exporter: %v", err)
@@ -87,7 +87,7 @@ func newStackdriverExporter(config *config) (tracingMetricsExporter, error) {
 func startOpenCensus(config *config) error {
 	// If both tracing and metrics are disabled, there's no point inject default
 	// StatsHandler.
-	if config == nil || (!config.EnableCloudTrace && !config.EnableCloudMonitoring) {
+	if config == nil || (config.CloudTrace == nil && config.CloudMonitoring == nil) {
 		return nil
 	}
 
@@ -98,13 +98,14 @@ func startOpenCensus(config *config) error {
 	}
 
 	var so trace.StartOptions
-	if config.EnableCloudTrace {
-		so.Sampler = trace.ProbabilitySampler(config.GlobalTraceSamplingRate)
+	if config.CloudTrace != nil {
+		so.Sampler = trace.ProbabilitySampler(config.CloudTrace.SamplingRate)
 		trace.RegisterExporter(exporter.(trace.Exporter))
-		logger.Infof("Start collecting and exporting trace spans with global_trace_sampling_rate=%.2f", config.GlobalTraceSamplingRate)
+		logger.Infof("Start collecting and exporting trace spans with global_trace_sampling_rate=%.2f", config.CloudTrace.SamplingRate)
 	}
 
-	if config.EnableCloudMonitoring {
+	if config.CloudMonitoring != nil {
+		// Need to switch these views to stuff we actually want - maybe do this in this PR or separate?
 		if err := view.Register(ocgrpc.DefaultClientViews...); err != nil {
 			return fmt.Errorf("failed to register default client views: %v", err)
 		}

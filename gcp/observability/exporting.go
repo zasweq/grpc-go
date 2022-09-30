@@ -45,16 +45,16 @@ type cloudLoggingExporter struct {
 }
 
 func newCloudLoggingExporter(ctx context.Context, config *config) (*cloudLoggingExporter, error) {
-	c, err := gcplogging.NewClient(ctx, fmt.Sprintf("projects/%v", config.DestinationProjectID))
+	c, err := gcplogging.NewClient(ctx, fmt.Sprintf("projects/%v", config.ProjectID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cloudLoggingExporter: %v", err)
 	}
 	defer logger.Infof("Successfully created cloudLoggingExporter")
-	if len(config.CustomTags) != 0 {
-		logger.Infof("Adding custom tags: %+v", config.CustomTags)
+	if len(config.Labels) != 0 {
+		logger.Infof("Adding labels: %+v", config.Labels)
 	}
 	return &cloudLoggingExporter{
-		projectID: config.DestinationProjectID,
+		projectID: config.ProjectID,
 		client:    c,
 		logger:    c.Logger("microservices.googleapis.com/observability/grpc", gcplogging.CommonLabels(config.CustomTags)),
 	}, nil
@@ -79,6 +79,7 @@ var protoToJSONOptions = &protojson.MarshalOptions{
 }
 
 func (cle *cloudLoggingExporter) EmitGrpcLogRecord(l *grpclogrecordpb.GrpcLogRecord) {
+
 	// Converts the log record content to a more readable format via protojson.
 	jsonBytes, err := protoToJSONOptions.Marshal(l)
 	if err != nil {
@@ -91,11 +92,20 @@ func (cle *cloudLoggingExporter) EmitGrpcLogRecord(l *grpclogrecordpb.GrpcLogRec
 		logger.Infof("Unable to unmarshal bytes to JSON: %v", jsonBytes)
 		return
 	}
+
 	entry := gcplogging.Entry{
 		Timestamp: l.Timestamp.AsTime(),
-		Severity:  logLevelToSeverity[l.LogLevel],
+		Severity:  logLevelToSeverity[l.LogLevel], // hardcoded,
 		Payload:   payload,
 	}
+	cle.logger.Log(entry)
+	if logger.V(2) {
+		logger.Infof("Uploading event to CloudLogging: %+v", entry)
+	}
+}
+
+func (cle *cloudLoggingExporter) EmitGrpcLogRecordd(entry gcplogging.Entry) {
+	// This is what Doug was talking about - doesn't miss out on much here, just calling logger
 	cle.logger.Log(entry)
 	if logger.V(2) {
 		logger.Infof("Uploading event to CloudLogging: %+v", entry)

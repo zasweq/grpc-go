@@ -80,5 +80,6 @@ func Start(ctx context.Context) error {
 // Note: this method should only be invoked once.
 func End() {
 	defaultLogger.Close()
+	stopLogging()
 	stopOpenCensus()
 }
