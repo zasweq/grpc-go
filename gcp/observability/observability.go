@@ -34,10 +34,6 @@ import (
 
 var logger = grpclog.Component("observability")
 
-func init() {
-	prepareLogging()
-}
-
 // Start is the opt-in API for gRPC Observability plugin. This function should
 // be invoked in the main function, and before creating any gRPC clients or
 // servers, otherwise, they might not be instrumented. At high-level, this
@@ -69,7 +65,7 @@ func Start(ctx context.Context) error {
 	}
 
 	// Logging is controlled by the config at methods level.
-	return defaultLogger.Start(ctx, config)
+	return startLogging(ctx, config)
 }
 
 // End is the clean-up API for gRPC Observability plugin. It is expected to be
@@ -79,7 +75,6 @@ func Start(ctx context.Context) error {
 //
 // Note: this method should only be invoked once.
 func End() {
-	defaultLogger.Close()
 	stopLogging()
 	stopOpenCensus()
 }

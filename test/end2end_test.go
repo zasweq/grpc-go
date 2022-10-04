@@ -8227,7 +8227,7 @@ func (s) TestGlobalBinaryLoggingOptions(t *testing.T) {
 		UnaryCallF: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
 			return &testpb.SimpleResponse{}, nil
 		},
-		FullDuplexCallF: func(stream testpb.TestService_FullDuplexCallServer) error {
+		FullDuplexCallF: func(stream testpb.TestService_FullDuplexCallServer) error { // Another dependency - he has some comment about making this cleaner
 			for {
 				_, err := stream.Recv()
 				if err == io.EOF {
@@ -8277,7 +8277,7 @@ func (s) TestGlobalBinaryLoggingOptions(t *testing.T) {
 	if csbl.mml.events != 9 {
 		t.Fatalf("want 9 client side binary logging events, got %v", csbl.mml.events)
 	}
-	if ssbl.mml.events != 8 {
+	if ssbl.mml.events != 8 { // why is this different? Also he doesn't like my test so rewrite lol
 		t.Fatalf("want 8 server side binary logging events, got %v", ssbl.mml.events)
 	}
 }

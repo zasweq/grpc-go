@@ -108,7 +108,7 @@ func (ss *StubServer) StartServer(sopts ...grpc.ServerOption) error {
 
 	s := grpc.NewServer(sopts...)
 	testpb.RegisterTestServiceServer(s, ss)
-	go s.Serve(lis)
+	go s.Serve(lis) // there's the fork of the goroutine to not have it parallel
 	ss.cleanups = append(ss.cleanups, s.Stop)
 	ss.S = s
 	return nil

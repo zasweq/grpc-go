@@ -53,17 +53,19 @@ func labelsToTraceAttributes(labels map[string]string) map[string]interface{} {
 	return ta
 }
 
-type tracingMetricsExporter interface {
+type tracingMetricsExporter interface { // define only what I need
 	trace.Exporter
 	view.Exporter
 	Flush()
 	Close() error
 }
 
+// You need both of these as globals for my tests too.
 var exporter tracingMetricsExporter
 
 // global to stub out in tests
 var newExporter = newStackdriverExporter
+
 
 func newStackdriverExporter(config *config) (tracingMetricsExporter, error) {
 	// Create the Stackdriver exporter, which is shared between tracing and stats
@@ -92,7 +94,7 @@ func startOpenCensus(config *config) error {
 	}
 
 	var err error
-	exporter, err = newExporter(config)
+	exporter, err = newExporter(config) // global exporter you can Close on a global close,
 	if err != nil {
 		return err
 	}
@@ -128,7 +130,7 @@ func startOpenCensus(config *config) error {
 // stopOpenCensus flushes the exporter's and cleans up globals across all
 // packages if exporter was created.
 func stopOpenCensus() {
-	if exporter != nil {
+	if exporter != nil { // gate it with this...
 		internal.ClearGlobalDialOptions()
 		internal.ClearGlobalServerOptions()
 
