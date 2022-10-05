@@ -22,19 +22,15 @@ import (
 	gcplogging "cloud.google.com/go/logging"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/internal/grpcutil"
 	"strings"
-	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/google/uuid"
 	binlogpb "google.golang.org/grpc/binarylog/grpc_binarylog_v1"
-	grpclogrecordpb "google.golang.org/grpc/gcp/observability/internal/logging"
 	iblog "google.golang.org/grpc/internal/binarylog"
 )
 
@@ -62,6 +58,7 @@ func translateMetadata(m *binlogpb.Metadata) map[string]string {
 		}
 		metadata[entryKey] = oldVal + "," + newVal
 	}
+	return metadata
 }
 
 func setPeerIfPresent(binlogEntry *binlogpb.GrpcLogEntry, grpcLogEntry *grpcLogEntry) {
@@ -294,7 +291,7 @@ type binaryLogger struct {
 }
 
 func (bl *binaryLogger) GetMethodLogger(methodName string) iblog.MethodLogger {
-	s, m, err := grpcutil.ParseMethod(methodName)
+	s, _, err := grpcutil.ParseMethod(methodName)
 	if err != nil {
 		logger.Infof("binarylogging: failed to parse %q: %v", methodName, err)
 		return nil
@@ -399,7 +396,8 @@ func startLogging(ctx context.Context, config *config) error {
 
 	cl := config.CloudLogging
 	registerClientRPCEvents(cl.ClientRPCEvents, lExporter) // one exporter for client and server
-	registerServerRPCEvents(cl.ServerRPCEvents, lExporter)
+	registerServerRPCEvents(cl.ServerRPCEvents, lExporter) // these don't return errors
+	return nil
 }
 
 func stopLogging() {
