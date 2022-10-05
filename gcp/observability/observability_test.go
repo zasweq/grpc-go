@@ -163,12 +163,18 @@ func (fle *fakeLoggingExporter) Close() error {
 func (fle *fakeLoggingExporter) EmitGcpLoggingEntry(entry gcplogging.Entry) { // this gets called on any stream operation, no guarantee there
 	fle.mu.Lock()
 	defer fle.mu.Unlock()
-	entry.Timestamp // important to verify
+	print(entry.Timestamp) // important to verify - within a range in tests?
 
-	entry.Severity // hardcoded, could verify on each call but seems like overkill
+
+	print(entry.Severity) // hardcoded, could verify on each call but seems like overkill
+
+	// the entry.Payload is what you compare to the expected and define the atoms
+	// and expectations of log entries
+
+
 
 	// other stuff is hardcoded or populated by exporter...
-	entry.Payload // interface{} - this is where everything interesting comes from - populated with internal struct grpcLogRecord
+	// entry.Payload // interface{} - this is where everything interesting comes from - populated with internal struct grpcLogRecord
 	// typecast this entry.Payload to the correct type, can verify there.
 	grpcLogEntry, ok := entry.Payload.(*grpcLogEntry)
 	if !ok { // Shouldn't happen, we pass it in/populate
@@ -177,7 +183,7 @@ func (fle *fakeLoggingExporter) EmitGcpLoggingEntry(entry gcplogging.Entry) { //
 	// could persist the []Payload
 	fle.entries = append(fle.entries, grpcLogEntry)
 	// This is good for validation - when I add my own test it should work
-	grpcLogEntry.ServiceName // could probably mess around with the verification of these per call
+	/*grpcLogEntry.ServiceName // could probably mess around with the verification of these per call
 	// The same for the whole Test body ^^^
 	grpcLogEntry.MethodName
 	// Seperate for each call ^^^
@@ -192,7 +198,7 @@ func (fle *fakeLoggingExporter) EmitGcpLoggingEntry(entry gcplogging.Entry) { //
 
 	grpcLogEntry.Payload.Metadata // map[string]string - this let's you test the metadata call as this is what headers (reg and bin) get converted to - although if I want bin headers I'll need to specify. Perhaps using call options?
 
-	grpcLogEntry.Payload.
+	grpcLogEntry.Payload.*/
 
 	// These fields all encompass every single event, not guaranteed to all be set for certain events.
 	// Thus, are we testing the aggregate or are we testing each individual event
@@ -212,6 +218,7 @@ func (fle *fakeLoggingExporter) EmitGcpLoggingEntry(entry gcplogging.Entry) { //
 
 // ^^^ interface called as part of being hooked into o11y system
 
+/*
 func (fle *fakeLoggingExporter) VerifySomething() error {
 	// the overall metrics stuff we were talking about
 	// or we can do what Lidi did and write wants for specific emitted events...
@@ -243,8 +250,7 @@ func (fle *fakeLoggingExporter) VerifySomething() error {
 	fle.t.Fatalf() // or return error
 	// Ask Doug if I really need to even make any of these verifications
 }
-
-
+*/
 
 // single event for client rpc event - log * -> global verification of sink
 
@@ -507,6 +513,107 @@ func (s) TestNewLoggingConfigBaseline(t *testing.T) {
 // Another thing I could do orthogonal to this test is to
 // fix all the metrics/tracing tests
 
+
+// entry test
+func (s) TestNewLoggingConfigBaselineee(t *testing.T) {
+
+	// clientRPCEvents configured for this, equivalent to the 5 client side
+	// events configured later.
+
+
+	// we're taking grpcLogEntry as a struct and making validations on that
+
+	// this gets marshaled into exporter. Cloud Logging Exporter calls marshalJSON(),
+	// we just validate, so this honestly doesn't block this test.
+
+	// rather than write the expectations inline, get the system setup to the point
+	// where you actually get these logEntries emitted from the system
+
+	// Then write the discrete things that are being emitted (from my own e2e
+	// flow with the way I set up the RPC's to be called. This is different to
+	// Lidi's so specifics will be different but overall will be somewaht
+	// similar). And also, from this, can see which fields I cannnnn make
+	// validations on and which ones I can't. Like literally print...***
+
+	// Goal is printed emitted grpcLogEntry
+
+	fle := &fakeLoggingExporter{
+		t: t,
+
+	}
+
+	defer func(ne func(ctx context.Context, config *config) (loggingExporter, error)) {
+		newLoggingExporter = ne
+	}(newLoggingExporter)
+
+	newLoggingExporter = func(ctx context.Context, config *config) (loggingExporter, error) {
+		return fle, nil
+	}
+
+	validConfig := &config{
+		ProjectID: "fake",
+		CloudLogging: &cloudLogging{
+			ClientRPCEvents: []clientRPCEvents{
+				{
+					Method: []string{"*"},
+					// Default is zero.
+					MaxMetadataBytes: 30, // test this by plumbing in? and seeing how many bytes get emitted? Orthogonal to number of events emitted and you can further test the bytes by looking at specific payload
+					// Default is zero.
+					MaxMessageBytes: 30,
+				},
+			},
+			/*ServerRPCEvents: []serverRPCEvents{
+				{
+					Method: []string{"*"},
+					MaxMetadataBytes: 30,
+					MaxMessageBytes: 30,
+				},
+			},*/ // this maps to the server side RPC events
+		},
+
+		// no cloud monitoring
+		// no cloud trace
+	}
+	// If they get mad, say it's cleaner this way and tests JSON tags?
+	validConfigJSON, err := json.Marshal(validConfig)
+	if err != nil {
+		t.Fatalf("failed to convert config to JSON: %v", err)
+	}
+	os.Setenv(envObservabilityConfig, string(validConfigJSON))
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	err = Start(ctx)
+	if err != nil {
+		t.Fatalf("error in Start: %v", err)
+	}
+	defer End()
+
+	ss := &stubserver.StubServer{
+		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
+			return &grpc_testing.SimpleResponse{}, nil
+		},
+	}
+	if err := ss.Start(nil); err != nil {
+		t.Fatalf("Error starting endpoint server: %v", err)
+	}
+	defer ss.Stop()
+
+	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{}); err != nil {
+		t.Fatalf("Unexpected error from UnaryCall: %v", err)
+	}
+	// Downstream effects of this UnaryCall
+	// log the actual events happening,
+
+	for i, gle := range fle.entries {
+		print("entry index: %v", i)
+		print("entry type: %v", gle.Type)
+	}
+}
+
+// Draft PR for implementation work, and not for testing, Doug and Easwar can
+// iterate there.
+
+// Code gets in, releases happen, blog post happens
 
 
 
@@ -824,6 +931,8 @@ func (s) TestLoggingForOkCall(t *testing.T) {
 	if len(te.fle.serverEvents) != 5 {
 		t.Fatalf("expects 5 server events, got %d", len(te.fle.serverEvents))
 	}
+
+
 	// Client events
 	checkEventRequestHeader(te.t, te.fle.clientEvents[0], &grpclogrecordpb.GrpcLogRecord{
 		EventLogger: grpclogrecordpb.GrpcLogRecord_LOGGER_CLIENT,
@@ -831,6 +940,54 @@ func (s) TestLoggingForOkCall(t *testing.T) {
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
 	})
+	// either check
+	// fuck, but the way I'm doing it is with a stub server so won't exactly be same...
+	// but event type, heuristically wrt fields it should be similar, and also the granularity of verifications
+	// of what we cannnn expect
+	/*
+	type grpcLogEntry struct {
+	    CallId           string    `json:"callId,omitempty"`
+	    SequenceID       uint64    `json:"sequenceId,omitempty"`
+	    Type             EventType `json:"type,omitempty"`
+	    Logger           Logger    `json:"logger,omitempty"`
+	    Payload          Payload   `json:"payload,omitempty"`
+	    PayloadTruncated bool      `json:"payloadTruncated,omitempty"`
+	    Peer             Address   `json:"peer,omitempty"`
+	    Authority        string    `json:"authority,omitempty"`
+	    ServiceName      string    `json:"serviceName,omitempty"`
+	    MethodName       string    `json:"methodName,omitempty"`
+	}
+	*/
+	grpcLogEntryEquv := &grpcLogEntry{
+		MethodName: "UnaryCall", // these are going to change
+		ServiceName: "grpc.testing.TestService",
+		Authority: te.srvAddr,
+	}
+
+
+
+	// we're taking grpcLogEntry as a struct and making validations on that
+
+	// this gets marshaled into exporter. Cloud Logging Exporter calls marshalJSON(),
+	// we just validate, so this honestly doesn't block this test.
+
+	// rather than write the expectations inline, get the system setup to the point
+	// where you actually get these logEntries emitted from the system
+
+	// Then write the discrete things that are being emitted (from my own e2e
+	// flow with the way I set up the RPC's to be called. This is different to
+	// Lidi's so specifics will be different but overall will be somewaht
+	// similar). And also, from this, can see which fields I cannnnn make
+	// validations on and which ones I can't. Like literally print...***
+
+
+
+
+
+	// testing the fields emitted only that you're required and are guarnateed,
+	// cmp.Diff with ignore or like Lidi's and define your own comparison
+	// function
+
 	checkEventRequestMessage(te.t, te.fle.clientEvents[1], &grpclogrecordpb.GrpcLogRecord{
 		EventLogger: grpclogrecordpb.GrpcLogRecord_LOGGER_CLIENT,
 	}, testOkPayload)
@@ -844,6 +1001,23 @@ func (s) TestLoggingForOkCall(t *testing.T) {
 		EventLogger: grpclogrecordpb.GrpcLogRecord_LOGGER_CLIENT,
 		StatusCode:  0,
 	})
+	// equivalent in
+
+
+	// client stream ^^^ or server stream vvv is logically equivalent to
+	// grpc.Dial and grpc.NewServer
+
+	// This is equivalent to []client RPC events with * for method
+
+	// and vvv []server RPC events with * for method
+
+	// could test it in one, but uses same exporter in my codepath,
+	// would need to rewrite my code to use a different exporter for client/server
+
+	// convert this to what the new schema looks like for exact expectations
+
+
+
 	// Server events
 	checkEventRequestHeader(te.t, te.fle.serverEvents[0], &grpclogrecordpb.GrpcLogRecord{
 		EventLogger: grpclogrecordpb.GrpcLogRecord_LOGGER_SERVER,

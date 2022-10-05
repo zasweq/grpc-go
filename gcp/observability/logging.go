@@ -168,7 +168,8 @@ func (gle *grpcLogEntry) MarshalJSON() ([]byte, error) {
 
 	// Ends up as "{with the full config filled out}" not invalid like {5] this is the end result find something in the codebase that can give you an example of this.
 	// anyway, just pass in your struct into Payload and make sure your struct has a MarshalJSON method on it and you're good!
-	json.Marshal()
+	// json.Marshal()
+	return nil, nil
 }
 
 // Just the functionality I need
