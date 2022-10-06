@@ -19,9 +19,11 @@
 package observability
 
 import (
+	"bytes"
 	gcplogging "cloud.google.com/go/logging"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/internal"
@@ -63,7 +65,7 @@ func translateMetadata(m *binlogpb.Metadata) map[string]string {
 
 func setPeerIfPresent(binlogEntry *binlogpb.GrpcLogEntry, grpcLogEntry *grpcLogEntry) {
 	if binlogEntry.GetPeer() != nil {
-		grpcLogEntry.Peer.Type = binlogEntry.GetPeer().GetType()
+		grpcLogEntry.Peer.Type = Type(binlogEntry.GetPeer().GetType())
 		grpcLogEntry.Peer.Address = binlogEntry.GetPeer().GetAddress()
 		grpcLogEntry.Peer.IpPort = binlogEntry.GetPeer().GetIpPort()
 	}
@@ -100,6 +102,34 @@ const ( // these need to marshal, so I think you need to export type? What is le
 	Cancel
 )
 
+func (t EventType) MarshalJSON() ([]byte, error) {
+	// This gets called every logging call, this is slow? want it string.Builder? ugh
+	buffer := bytes.NewBufferString(`"`)
+	switch t {
+	case EventTypeUnknown:
+		buffer.WriteString("") // fill out once Eric responds
+	case ClientHeader:
+		buffer.WriteString("")
+	case ServerHeader:
+		buffer.WriteString("")
+	case ClientMessage:
+		buffer.WriteString("")
+	case ServerMessage:
+		buffer.WriteString("")
+	case ClientHalfClose:
+		buffer.WriteString("")
+	case ServerTrailer:
+		buffer.WriteString("")
+	case Cancel:
+		buffer.WriteString("")
+	}
+	buffer.WriteString(`"`)
+	return buffer.Bytes(), nil
+}
+
+// I don't think you need UnmarshalJSON for anything? Cloud Logging should just
+// take it into a json string, it doesn't need the type passed in.
+
 type Logger int
 
 const (
@@ -108,11 +138,26 @@ const (
 	Server
 )
 
+func (t Logger) MarshalJSON() ([]byte, error) {
+	// This gets called every logging call, this is slow? want it string.Builder? ugh
+	buffer := bytes.NewBufferString(`"`)
+	switch t {
+	case LoggerUnknown:
+		buffer.WriteString("") // fill out once Eric responds
+	case Client:
+		buffer.WriteString("")
+	case Server:
+		buffer.WriteString("")
+	}
+	buffer.WriteString(`"`)
+	return buffer.Bytes(), nil
+}
+
 type Payload struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 	// I've heard so much shit about Duration, and how complicated it is
 	// is this the correct one?
-	Timeout time.Duration `json:"timeout,omitempty"`
+	Timeout time.Duration `json:"timeout,omitempty"` // seems like only place where you might need special logic for MarshalJSON here, time.Duration...
 	StatusCode uint32 `json:"statusCode,omitempty"`
 	StatusMessage string `json:"statusMessage,omitempty"`
 	StatusDetails []byte `json:"statusMessage,omitempty"` // bytes in proto, is this the go type this corresponds to?, I've seen/done this conversion before
@@ -128,6 +173,23 @@ const (
 	IPV6 // `json:"TYPE_IPV6"`
 	UNIX // `json:"TYPE_UNIX"`
 )
+
+func (t Type) MarshalJSON() ([]byte, error) {
+	// This gets called every logging call, this is slow? want it string.Builder? ugh
+	buffer := bytes.NewBufferString(`"`)
+	switch t {
+	case TypeUnknown:
+		buffer.WriteString("") // fill out once Eric responds, what to do for unknowns
+	case IPV4:
+		buffer.WriteString("TYPE_IPV4")
+	case IPV6:
+		buffer.WriteString("TYPE_IPV6")
+	case UNIX:
+		buffer.WriteString("TYPE_UNIX")
+	}
+	buffer.WriteString(`"`)
+	return buffer.Bytes(), nil
+}
 
 type Address struct {
 	Type Type `json:"type,omitempty"`
@@ -154,6 +216,11 @@ type grpcLogEntry struct { // exported or unexported? I think the fields do, wb 
 // right, because you just pass in this struct into cloud logging and they
 // handle calling this which emits raw json
 func (gle *grpcLogEntry) MarshalJSON() ([]byte, error) {
+	// A thought I just thought of: the enums, which are ints, need to have MarshalJSON defined on them,
+	// similarly to DiscoveryMechanismType
+
+
+
 	/*
 	or something that marshals via the encoding/json package to a JSON object
 	(and not any other type of JSON value).
@@ -166,7 +233,8 @@ func (gle *grpcLogEntry) MarshalJSON() ([]byte, error) {
 	// Ends up as "{with the full config filled out}" not invalid like {5] this is the end result find something in the codebase that can give you an example of this.
 	// anyway, just pass in your struct into Payload and make sure your struct has a MarshalJSON method on it and you're good!
 	// json.Marshal()
-	return nil, nil
+	// return []byte(fmt.Sprintf(`[{%q: %s}]`, bc.Name, c)), nil
+	return json.Marshal(gle) // no special logic here right, do I even need this? I think I'm done with MarshalJSON
 }
 
 // Just the functionality I need
