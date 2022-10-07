@@ -108,14 +108,35 @@ func startOpenCensus(config *config) error {
 
 	if config.CloudMonitoring != nil {
 		// Need to switch these views to stuff we actually want - maybe do this in this PR or separate?
-		if err := view.Register(ocgrpc.DefaultClientViews...); err != nil {
+		/*
+		Shall we disable the sent/received bytes and latency metrics data
+		generation from the producer side? We need a decision for this problem.
+
+		in the approved go/grpc-current-metrics, started_rpcs and completed_rpcs
+		are the only metrics we can leverage on,
+
+		// keep only ...started_rpcs "the total number of client rpcs ever
+		// opened, including those that have not completed. Will be tagged with
+		// grpc_method.
+
+		//           ...completed_rpcs
+
+		*/
+		// switched from ClientSentBytesPerRPCView, ClientReceivedBytesPerRPCView,
+		// ClientRoundtripLatencyView, ClientCompletedRPCsView
+
+		// to ClientCompletedRPCsView
+
+		// same scaling down of views on server side
+
+		if err := view.Register(ocgrpc.ClientCompletedRPCsView); err != nil {
 			return fmt.Errorf("failed to register default client views: %v", err)
 		}
-		if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
+		if err := view.Register(ocgrpc.ServerCompletedRPCsView); err != nil {
 			return fmt.Errorf("failed to register default server views: %v", err)
 		}
 		view.SetReportingPeriod(defaultMetricsReportingInterval)
-		view.RegisterExporter(exporter.(view.Exporter))
+		view.RegisterExporter(exporter.(view.Exporter)) // Collected data will be reported via all the registered exporters.
 		logger.Infof("Start collecting and exporting metrics")
 	}
 

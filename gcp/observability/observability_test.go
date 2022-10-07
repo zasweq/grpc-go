@@ -84,7 +84,11 @@ type fakeOpenCensusExporter struct {
 	mu sync.RWMutex
 }
 
-func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) {
+func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) { // How do the 4 default views registered plumb into/relate to view.Data?
+	// Now this only exports the metric of completed RPCs (which seems to be
+	// what Lidi is testing) vs. ClientSentBytesPerRPCView,
+	// ClientReceivedBytesPerRPCView, ClientRoundtripLatencyView,
+	// ClientCompletedRPCsView
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
 	for _, row := range vd.Rows {
@@ -109,10 +113,10 @@ func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) {
 	fe.t.Logf("Span[%v]", vd.Name)
 }
 
-func (fe *fakeOpenCensusExporter) Flush() {}
+func (fe *fakeOpenCensusExporter) Flush() {} // can this be a sync point for all the RPCs writing to it?
 
 func (fe *fakeOpenCensusExporter) Close() error {
-	return nil
+	return nil // nothing beautiful, so doesn't clear out seen state...
 }
 
 func (s) TestRefuseStartWithInvalidPatterns(t *testing.T) {
@@ -347,17 +351,27 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	// te.srv.GracefulStop()
 	// flush the buffer for opencensus metrics and tracing? do I need to test the logging flow as well?
 	cleanup() // sync point for flushing buffer, but does this clear exporters memory too?
+	/*
+	// Wait for the gRPC transport to gracefully close to ensure no lost event.
+	te.cc.Close()
+	te.srv.GracefulStop()
+	*/ // - how does this guarantee all the seen views are correctly written to exporter?
 
-	
+	// this isn't plugged into stream operations? So you don't have a happens before relationship?
 
+	// After you switch views to the correct default client/server views,
+	// you can change this expectation as well
 
-
+	// what the fuck do I want emitted here?, the view count which is a number which counts
+	// how many completed RPCs there are
 	var errs []error
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	for ctx.Err() == nil {
 		errs = nil
 		fe.mu.RLock()
+		// Two things need to happen here: sync point higher up, and also make sure this SeenViews is the same string,b ut it should be
+		// This is exactly what I want/care about, the completed rpcs
 		if value := fe.SeenViews["grpc.io/client/completed_rpcs"]; value != TypeOpenCensusViewCount {
 			errs = append(errs, fmt.Errorf("unexpected type for grpc.io/client/completed_rpcs: %s != %s", value, TypeOpenCensusViewCount))
 		}
@@ -421,4 +435,36 @@ func (s) TestCustomTagsTracingMetrics(t *testing.T) {
 	}
 } // get this and env var precedence tests to both actually work with the config
 
+// Default view changes, *Done
+// opencensus test (still need to do)
+
 // Doug's e2e test case here he brought up in documents
+func (s) TestStartErrorsThenEnd(t *testing.T) {
+	// bad config that plumbs back error
+	invalidConfig := &config{
+		ProjectID: "fake",
+		CloudLogging: &cloudLogging{
+			ClientRPCEvents: []clientRPCEvents{
+				{
+					Method: []string{":-)"},
+					MaxMetadataBytes: 30,
+					MaxMessageBytes: 30,
+				},
+			},
+		},
+	}
+	invalidConfigJSON, err := json.Marshal(invalidConfig)
+	if err != nil {
+		t.Fatalf("failed to convert config to JSON: %v", err)
+	}
+	os.Setenv(envObservabilityConfigJSON, "") // I feel like I need to clear some of these os.SetEnv calls
+	os.Setenv(envObservabilityConfig, string(invalidConfigJSON))
+	// If there is at least one invalid pattern, which should not be silently tolerated.
+	if err := Start(context.Background()); err == nil {
+		t.Fatalf("Invalid patterns not triggering error")
+	}
+	// call End even after Start, see if anything bad happens
+	End()
+}
+
+// cleanup, then done :)))))))) (when I go back to my desk go ahead and clean this up)
