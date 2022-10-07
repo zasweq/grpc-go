@@ -23,7 +23,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/leakcheck"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/test/grpc_testing"
@@ -31,16 +30,7 @@ import (
 	"os"
 	"sync"
 	"testing"
-	"time"
 )
-
-type s struct {
-	grpctest.Tester
-}
-
-func Test(t *testing.T) {
-	grpctest.RunSubTests(t, s{})
-}
 
 func init() {
 	// OpenCensus, once included in binary, will spawn a global goroutine
@@ -51,10 +41,6 @@ func init() {
 	// https://github.com/googleapis/google-cloud-go/issues/1183
 	leakcheck.RegisterIgnoreGoroutine("internal/poll.runtime_pollWait")
 }
-
-var (
-	defaultTestTimeout        = 10 * time.Second
-)
 
 type fakeLoggingExporter struct {
 	t            *testing.T

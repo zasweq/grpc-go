@@ -78,7 +78,7 @@ func validateMethods(methods []string, exclude bool) error {
 }
 
 func validateFilters(config *config) error {
-	if config.CloudLogging != nil {
+	if config.CloudLogging == nil {
 		return nil
 	}
 	for _, clientRPCEvent := range config.CloudLogging.ClientRPCEvents {
