@@ -66,7 +66,6 @@ var exporter tracingMetricsExporter
 // global to stub out in tests
 var newExporter = newStackdriverExporter
 
-
 func newStackdriverExporter(config *config) (tracingMetricsExporter, error) {
 	// Create the Stackdriver exporter, which is shared between tracing and stats
 	mr := monitoredresource.Autodetect()
@@ -107,19 +106,20 @@ func startOpenCensus(config *config) error {
 	}
 
 	if config.CloudMonitoring != nil {
+		print("cloud monitoring is not nil, about to register views")
 		// Need to switch these views to stuff we actually want - maybe do this in this PR or separate?
 		/*
-		Shall we disable the sent/received bytes and latency metrics data
-		generation from the producer side? We need a decision for this problem.
+			Shall we disable the sent/received bytes and latency metrics data
+			generation from the producer side? We need a decision for this problem.
 
-		in the approved go/grpc-current-metrics, started_rpcs and completed_rpcs
-		are the only metrics we can leverage on,
+			in the approved go/grpc-current-metrics, started_rpcs and completed_rpcs
+			are the only metrics we can leverage on,
 
-		// keep only ...started_rpcs "the total number of client rpcs ever
-		// opened, including those that have not completed. Will be tagged with
-		// grpc_method.
+			// keep only ...started_rpcs "the total number of client rpcs ever
+			// opened, including those that have not completed. Will be tagged with
+			// grpc_method.
 
-		//           ...completed_rpcs
+			//           ...completed_rpcs
 
 		*/
 		// switched from ClientSentBytesPerRPCView, ClientReceivedBytesPerRPCView,
@@ -129,10 +129,10 @@ func startOpenCensus(config *config) error {
 
 		// same scaling down of views on server side
 
-		if err := view.Register(ocgrpc.ClientCompletedRPCsView); err != nil {
+		if err := view.Register(ocgrpc.DefaultClientViews.../*ocgrpc.ClientCompletedRPCsView*/); err != nil {
 			return fmt.Errorf("failed to register default client views: %v", err)
 		}
-		if err := view.Register(ocgrpc.ServerCompletedRPCsView); err != nil {
+		if err := view.Register(ocgrpc.DefaultServerViews.../*ocgrpc.ServerCompletedRPCsView*/); err != nil {
 			return fmt.Errorf("failed to register default server views: %v", err)
 		}
 		view.SetReportingPeriod(defaultMetricsReportingInterval)

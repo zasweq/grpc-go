@@ -35,7 +35,7 @@ const (
 	envObservabilityConfig     = "GRPC_CONFIG_OBSERVABILITY"
 	envObservabilityConfigJSON = "GRPC_CONFIG_OBSERVABILITY_JSON"
 	envProjectID               = "GOOGLE_CLOUD_PROJECT"
-	methodStringRegexpStr  = `^([\w./]+)/((?:\w+)|[*])$`
+	methodStringRegexpStr      = `^([\w./]+)/((?:\w+)|[*])$`
 )
 
 var methodStringRegexp = regexp.MustCompile(methodStringRegexpStr)
@@ -128,7 +128,6 @@ func parseObservabilityConfig() (*config, error) {
 	return nil, nil
 }
 
-
 func ensureProjectIDInObservabilityConfig(ctx context.Context, config *config) error {
 	if config.ProjectID == "" {
 		// Try to fetch the GCP project id
@@ -140,7 +139,6 @@ func ensureProjectIDInObservabilityConfig(ctx context.Context, config *config) e
 	}
 	return nil
 }
-
 
 type clientRPCEvents struct {
 	// Method is a list of strings which can select a group of methods. By
@@ -232,7 +230,7 @@ type cloudLogging struct {
 	ServerRPCEvents []serverRPCEvents `json:server_rpc_events,omitempty`
 }
 
-type cloudMonitoring struct {}
+type cloudMonitoring struct{}
 
 type cloudTrace struct {
 	// SamplingRate is the global setting that controls the probability of a RPC

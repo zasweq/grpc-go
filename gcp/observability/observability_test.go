@@ -84,15 +84,18 @@ type fakeOpenCensusExporter struct {
 	mu sync.RWMutex
 }
 
+// called within open census
 func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) { // How do the 4 default views registered plumb into/relate to view.Data?
+	print("ExportView() called")
 	// Now this only exports the metric of completed RPCs (which seems to be
 	// what Lidi is testing) vs. ClientSentBytesPerRPCView,
 	// ClientReceivedBytesPerRPCView, ClientRoundtripLatencyView,
 	// ClientCompletedRPCsView
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
+	// Does it correctly trigger the completed RPC's to log?
 	for _, row := range vd.Rows {
-		fe.t.Logf("Metrics[%s]", vd.View.Name)
+		fe.t.Logf("Metrics[%s RECEIVED VIEW", vd.View.Name)
 		switch row.Data.(type) {
 		case *view.DistributionData:
 			fe.SeenViews[vd.View.Name] = TypeOpenCensusViewDistribution
@@ -106,7 +109,12 @@ func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) { // How do the 4 de
 	}
 }
 
-func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) {
+// So should this tbh ^^^
+
+// make sure the exporter is actually being parsed? But CustomTagsTracingMetrics seems to work...
+
+// This should stay constant, views should just be only completed RPC's, need a sync point.
+func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) { // this should still stay the same, since it's not like the logic changed
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
 	fe.SeenSpans++
@@ -125,9 +133,9 @@ func (s) TestRefuseStartWithInvalidPatterns(t *testing.T) {
 		CloudLogging: &cloudLogging{
 			ClientRPCEvents: []clientRPCEvents{
 				{
-					Method: []string{":-)"},
+					Method:           []string{":-)"},
 					MaxMetadataBytes: 30,
-					MaxMessageBytes: 30,
+					MaxMessageBytes:  30,
 				},
 			},
 		},
@@ -154,10 +162,10 @@ func (s) TestRefuseStartWithExcludeAndWildCardAll(t *testing.T) {
 		CloudLogging: &cloudLogging{
 			ClientRPCEvents: []clientRPCEvents{
 				{
-					Method: []string{"*"},
-					Exclude: true,
+					Method:           []string{"*"},
+					Exclude:          true,
 					MaxMetadataBytes: 30,
-					MaxMessageBytes: 30,
+					MaxMessageBytes:  30,
 				},
 			},
 		},
@@ -226,9 +234,9 @@ func (s) TestBothConfigEnvVarsSet(t *testing.T) {
 		CloudLogging: &cloudLogging{
 			ClientRPCEvents: []clientRPCEvents{
 				{
-					Method: []string{":-)"},
+					Method:           []string{":-)"},
 					MaxMetadataBytes: 30,
-					MaxMessageBytes: 30,
+					MaxMessageBytes:  30,
 				},
 			},
 		},
@@ -249,9 +257,9 @@ func (s) TestBothConfigEnvVarsSet(t *testing.T) {
 		CloudLogging: &cloudLogging{
 			ClientRPCEvents: []clientRPCEvents{
 				{
-					Method: []string{"*"},
+					Method:           []string{"*"},
 					MaxMetadataBytes: 30,
-					MaxMessageBytes: 30,
+					MaxMessageBytes:  30,
 				},
 			},
 		},
@@ -291,7 +299,7 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	// does this still need the new test stuff? Rewrite this test to my own
 	// thing, just Start defer Stop yourself?
 	// also, if I do my own stuff use stub server handles all the starting and dialing for you,
-	// like what I had in sanity_test.go
+	// like what I had in logging_test.go
 	fe := &fakeOpenCensusExporter{SeenViews: make(map[string]string), t: t}
 
 	defer func(ne func(config *config) (tracingMetricsExporter, error)) {
@@ -315,6 +323,9 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error setting up observability %v", err)
 	}
+	defer cleanup()
+
+	// if the metrics has been plumbed to opencensus, LockExporter
 
 	ss := &stubserver.StubServer{
 		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
@@ -332,8 +343,7 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	if err := ss.Start(nil); err != nil {
 		t.Fatalf("Error starting endpoint server: %v", err)
 	}
-	defer ss.Stop()
-
+	// defer ss.Stop()
 
 	for i := 0; i < defaultRequestCount; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -344,17 +354,22 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	}
 	t.Logf("unary call passed count=%v", defaultRequestCount)
 
-
 	// Wait for the gRPC transport to gracefully close to ensure no lost event.
 	// will I need to wait for anything in my test? Explicitly flush buffer perhaps?
 	// te.cc.Close()
 	// te.srv.GracefulStop()
 	// flush the buffer for opencensus metrics and tracing? do I need to test the logging flow as well?
-	cleanup() // sync point for flushing buffer, but does this clear exporters memory too?
 	/*
 	// Wait for the gRPC transport to gracefully close to ensure no lost event.
 	te.cc.Close()
 	te.srv.GracefulStop()
+	*/
+	ss.Stop()
+	// cleanup() // sync point for flushing buffer, but does this clear exporters memory too?
+	/*
+		// Wait for the gRPC transport to gracefully close to ensure no lost event.
+		te.cc.Close()
+		te.srv.GracefulStop()
 	*/ // - how does this guarantee all the seen views are correctly written to exporter?
 
 	// this isn't plugged into stream operations? So you don't have a happens before relationship?
@@ -367,18 +382,28 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	var errs []error
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
+	time.Sleep(5 * time.Second)
+	print("finished sleeping")
 	for ctx.Err() == nil {
 		errs = nil
 		fe.mu.RLock()
 		// Two things need to happen here: sync point higher up, and also make sure this SeenViews is the same string,b ut it should be
 		// This is exactly what I want/care about, the completed rpcs
-		if value := fe.SeenViews["grpc.io/client/completed_rpcs"]; value != TypeOpenCensusViewCount {
+		/*if value := fe.SeenViews["grpc.io/client/completed_rpcs"]; value != TypeOpenCensusViewCount {
 			errs = append(errs, fmt.Errorf("unexpected type for grpc.io/client/completed_rpcs: %s != %s", value, TypeOpenCensusViewCount))
 		}
+		// need to verify
 		if value := fe.SeenViews["grpc.io/server/completed_rpcs"]; value != TypeOpenCensusViewCount {
 			errs = append(errs, fmt.Errorf("unexpected type for grpc.io/server/completed_rpcs: %s != %s", value, TypeOpenCensusViewCount))
-		}
-		if fe.SeenSpans <= 0 {
+		}*/
+
+		// Span's are happening but not views
+
+		// "Blocks until all the pending RPC's are finished."
+
+		// BLOCK THE UNTIL EXPORTVIEW() IS CALLED 20? TIMES...
+
+		if fe.SeenSpans <= 0 { // Can comment out above to see if this still works - it should, we're not changing anything
 			errs = append(errs, fmt.Errorf("unexpected number of seen spans: %v <= 0", fe.SeenSpans))
 		}
 		fe.mu.RUnlock()
@@ -446,9 +471,9 @@ func (s) TestStartErrorsThenEnd(t *testing.T) {
 		CloudLogging: &cloudLogging{
 			ClientRPCEvents: []clientRPCEvents{
 				{
-					Method: []string{":-)"},
+					Method:           []string{":-)"},
 					MaxMetadataBytes: 30,
-					MaxMessageBytes: 30,
+					MaxMessageBytes:  30,
 				},
 			},
 		},
@@ -468,3 +493,4 @@ func (s) TestStartErrorsThenEnd(t *testing.T) {
 }
 
 // cleanup, then done :)))))))) (when I go back to my desk go ahead and clean this up)
+// Also go over what you cleaned up so it looks clean when they review

@@ -157,21 +157,21 @@ type Payload struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 	// I've heard so much shit about Duration, and how complicated it is
 	// is this the correct one?
-	Timeout time.Duration `json:"timeout,omitempty"` // seems like only place where you might need special logic for MarshalJSON here, time.Duration...
-	StatusCode uint32 `json:"statusCode,omitempty"`
-	StatusMessage string `json:"statusMessage,omitempty"`
-	StatusDetails []byte `json:"statusMessage,omitempty"` // bytes in proto, is this the go type this corresponds to?, I've seen/done this conversion before
-	MessageLength uint32 `json:"messageLength,omitempty"`
-	Message []byte `json:"message,omitempty"`
+	Timeout       time.Duration `json:"timeout,omitempty"` // seems like only place where you might need special logic for MarshalJSON here, time.Duration...
+	StatusCode    uint32        `json:"statusCode,omitempty"`
+	StatusMessage string        `json:"statusMessage,omitempty"`
+	StatusDetails []byte        `json:"statusMessage,omitempty"` // bytes in proto, is this the go type this corresponds to?, I've seen/done this conversion before
+	MessageLength uint32        `json:"messageLength,omitempty"`
+	Message       []byte        `json:"message,omitempty"`
 }
 
 type Type int
 
 const (
 	TypeUnknown Type = iota
-	IPV4 // `json:"TYPE_IPV4"`
-	IPV6 // `json:"TYPE_IPV6"`
-	UNIX // `json:"TYPE_UNIX"`
+	IPV4             // `json:"TYPE_IPV4"`
+	IPV6             // `json:"TYPE_IPV6"`
+	UNIX             // `json:"TYPE_UNIX"`
 )
 
 func (t Type) MarshalJSON() ([]byte, error) {
@@ -192,25 +192,25 @@ func (t Type) MarshalJSON() ([]byte, error) {
 }
 
 type Address struct {
-	Type Type `json:"type,omitempty"`
+	Type    Type   `json:"type,omitempty"`
 	Address string `json:"address,omitempty"`
-	IpPort uint32 `json:"ipPort,omitempty"`
+	IpPort  uint32 `json:"ipPort,omitempty"`
 }
 
 type grpcLogEntry struct { // exported or unexported? I think the fields do, wb types?
 	// I think these need to be exported for json.Marshal to work
-	CallId string `json:"callId,omitempty"`
-	SequenceID uint64 `json:"sequenceId,omitempty"`
-	Type EventType `json:"type,omitempty"`
-	Logger Logger `json:"logger,omitempty"`
+	CallId     string    `json:"callId,omitempty"`
+	SequenceID uint64    `json:"sequenceId,omitempty"`
+	Type       EventType `json:"type,omitempty"`
+	Logger     Logger    `json:"logger,omitempty"`
 
-	Payload Payload `json:"payload,omitempty"`
-	PayloadTruncated bool `json:"payloadTruncated,omitempty"`
-	Peer Address `json:"peer,omitempty"`
+	Payload          Payload `json:"payload,omitempty"`
+	PayloadTruncated bool    `json:"payloadTruncated,omitempty"`
+	Peer             Address `json:"peer,omitempty"`
 
-	Authority string `json:"authority,omitempty"`
+	Authority   string `json:"authority,omitempty"`
 	ServiceName string `json:"serviceName,omitempty"`
-	MethodName string `json:"methodName,omitempty"`
+	MethodName  string `json:"methodName,omitempty"`
 } // json annotations
 
 // right, because you just pass in this struct into cloud logging and they
@@ -219,11 +219,9 @@ func (gle *grpcLogEntry) MarshalJSON() ([]byte, error) {
 	// A thought I just thought of: the enums, which are ints, need to have MarshalJSON defined on them,
 	// similarly to DiscoveryMechanismType
 
-
-
 	/*
-	or something that marshals via the encoding/json package to a JSON object
-	(and not any other type of JSON value).
+		or something that marshals via the encoding/json package to a JSON object
+		(and not any other type of JSON value).
 	*/
 	// json object or []byte which is what it says it returns from this function....
 
@@ -245,8 +243,8 @@ type methodLoggerBuilder interface {
 type binaryMethodLogger struct {
 	callID, serviceName, methodName string
 
-    mlb                          methodLoggerBuilder
-    exporter                       loggingExporter
+	mlb      methodLoggerBuilder
+	exporter loggingExporter
 }
 
 // Need to get metrics small PR out*
@@ -340,12 +338,12 @@ func (bml *binaryMethodLogger) Log(c iblog.LogEntryConfig) {
 
 type eventConfig struct {
 	ServiceMethod map[string]bool
-	Services map[string]bool
-	MatchAll bool
+	Services      map[string]bool
+	MatchAll      bool
 
 	// If true, won't log anything.
-	Exclude bool
-	HeaderBytes uint64
+	Exclude      bool
+	HeaderBytes  uint64
 	MessageBytes uint64
 }
 
@@ -355,7 +353,7 @@ type LoggerConfigObservability struct {
 
 type binaryLogger struct {
 	EventConfigs []eventConfig // pointer?
-	exporter loggingExporter
+	exporter     loggingExporter
 }
 
 func (bl *binaryLogger) GetMethodLogger(methodName string) iblog.MethodLogger {
@@ -372,8 +370,8 @@ func (bl *binaryLogger) GetMethodLogger(methodName string) iblog.MethodLogger {
 
 			return &binaryMethodLogger{
 				exporter: bl.exporter,
-				mlb: iblog.NewMethodLoggerImp(eventConfig.HeaderBytes, eventConfig.MessageBytes),
-				callID: uuid.NewString(),
+				mlb:      iblog.NewMethodLoggerImp(eventConfig.HeaderBytes, eventConfig.MessageBytes),
+				callID:   uuid.NewString(),
 			}
 		}
 	}
@@ -411,7 +409,7 @@ func registerClientRPCEvents(clientRPCEvents []clientRPCEvents, exporter logging
 	}
 	clientSideLogger := &binaryLogger{
 		EventConfigs: eventConfigs,
-		exporter: exporter,
+		exporter:     exporter,
 	}
 	internal.AddGlobalDialOptions.(func(opt ...grpc.DialOption))(grpc.WithBinaryLogger(clientSideLogger))
 }
@@ -447,7 +445,7 @@ func registerServerRPCEvents(serverRPCEvents []serverRPCEvents, exporter logging
 	}
 	serverSideLogger := &binaryLogger{
 		EventConfigs: eventConfigs,
-		exporter: exporter,
+		exporter:     exporter,
 	}
 	internal.AddGlobalServerOptions.(func(opt ...grpc.ServerOption))(grpc.BinaryLogger(serverSideLogger))
 }
@@ -507,7 +505,6 @@ func stopLogging() {
 
 // this is specified in JSON
 
-
 // Task list I can see:
 
 // 1. Rewrite binary logger GetMethodLogger to be exported, reuse that logic by sticking as child of MethodLogger in o11y
@@ -519,7 +516,6 @@ func stopLogging() {
 //          gcplogging.Entry <- populated with switched internal struct that defines MarshalJSON, cloudlogging library will then handle this for you
 
 // 4. Test :D!
-
 
 // Need to change his configs to new configs, new configs are tied to my test cases/overall idea of how to test this
 //
