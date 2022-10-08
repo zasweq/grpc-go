@@ -21,9 +21,11 @@ package observability
 import (
 	gcplogging "cloud.google.com/go/logging"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/internal/leakcheck"
+	"github.com/google/go-cmp/cmp"
+	binlogpb "google.golang.org/grpc/binarylog/grpc_binarylog_v1"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/test/grpc_testing"
 	"io"
@@ -32,17 +34,9 @@ import (
 	"testing"
 )
 
-// throughout this goddamn test will need to define expected log entries
 
-func init() {
-	// OpenCensus, once included in binary, will spawn a global goroutine
-	// recorder that is not controllable by application.
-	// https://github.com/census-instrumentation/opencensus-go/issues/1191
-	leakcheck.RegisterIgnoreGoroutine("go.opencensus.io/stats/view.(*worker).start")
-	// google-cloud-go leaks HTTP client. They are aware of this:
-	// https://github.com/googleapis/google-cloud-go/issues/1183
-	leakcheck.RegisterIgnoreGoroutine("internal/poll.runtime_pollWait")
-}
+// expected log entries
+// throughout this goddamn test will need to define expected log entries
 
 // In regards to sharing the []LoggingEntry
 // Unary Server/ClientSide are the same
@@ -50,6 +44,9 @@ func init() {
 // Streaming RPC Server/Client Side share the same thing expect extra server headers (stick that into []?)
 
 // Empty Call has a different []LoggingEntry - only for last test
+
+
+
 
 type fakeLoggingExporter struct {
 	t        *testing.T
@@ -182,9 +179,9 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		print("gle.Peer.Type: ", gle.Peer.Type, " ")
 		print("gle.Peer.IpPort: ", gle.Peer.IpPort, " ")
 		// the payload seems to be dependent on what type of stream operation is happening on the RPC.
-		print("gle.Payload.Type: ", gle.Payload.Message, " ")
-		print("gle.Payload.StatusCode: ", gle.Payload.StatusCode, " ")
-		print("gle.Payload.Metadata: ", gle.Payload.Metadata, " ")
+		print("gle.payload.Type: ", gle.Payload.Message, " ")
+		print("gle.payload.StatusCode: ", gle.Payload.StatusCode, " ")
+		print("gle.payload.Metadata: ", gle.Payload.Metadata, " ")
 		// payload stuff comes later
 	}
 	// Get this sanity test working in regards to the events specific to logging
@@ -212,7 +209,7 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		    SequenceID       uint64    `json:"sequenceId,omitempty"`
 		    Type             EventType `json:"type,omitempty"`
 		    Logger           Logger    `json:"logger,omitempty"`
-		    Payload          Payload   `json:"payload,omitempty"`
+		    payload          payload   `json:"payload,omitempty"`
 		    PayloadTruncated bool      `json:"payloadTruncated,omitempty"`
 		    Peer             Address   `json:"peer,omitempty"`
 		    Authority        string    `json:"authority,omitempty"`
@@ -229,8 +226,8 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 	// cmp.Diff with ignoring fields or something like Lidi's where you verify each field individually
 	grpcLogEntriesWant := make([]grpcLogEntry, 5)
 	grpcLogEntriesWant[0] = grpcLogEntry{
-		Type:        ClientHeader,
-		Logger:      Client, // these are all for client streams in the bin, should all be client stream, yeah lines up with client events in Lidi's verification
+		Type:        clientHeader,
+		Logger:      client, // these are all for client streams in the bin, should all be client stream, yeah lines up with client events in Lidi's verification
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
 		// doesn't have an address? Is this correct?
@@ -240,7 +237,7 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 	// Need a comparator for Metadata. This seems like an important thing to compare.
 	// cmp.Diff() // on the whole slice of log entries?
 	/*
-		type Payload struct {
+		type payload struct {
 		    Metadata      map[string]string `json:"metadata,omitempty"`
 		    Timeout       time.Duration     `json:"timeout,omitempty"`
 		    StatusCode    uint32            `json:"statusCode,omitempty"`
@@ -263,35 +260,35 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 	// and see the least amount of things you need to exclude.
 
 	grpcLogEntriesWant[1] = grpcLogEntry{
-		Type:        ClientMessage,
-		Logger:      Client,
+		Type:        clientMessage,
+		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
 	}
 	grpcLogEntriesWant[2] = grpcLogEntry{
-		Type:        ServerHeader,
-		Logger:      Client,
+		Type:        serverHeader,
+		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
 		// this is the only thing with address,
-		Peer: Address{
+		Peer: address{
 			Address: "127.0.0.1", // localhost :)
 			Type:    1,           // weird, IPV4, I don't think this is really fixed and something we should verify. This seems to be a variable.
 			IpPort:  50166,       // what?
 		},
 	}
 	grpcLogEntriesWant[3] = grpcLogEntry{
-		Type:        ServerMessage,
-		Logger:      Client,
+		Type:        serverMessage,
+		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
 	}
 	grpcLogEntriesWant[4] = grpcLogEntry{
-		Type:        ServerTrailer,
-		Logger:      Client,
+		Type:        serverTrailer,
+		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		Peer: Address{
+		Peer: address{
 			Address: "127.0.0.1", // localhost :)
 			Type:    1,           // weird, IPV4, I don't think this is really fixed and something we should verify. This seems to be a variable.
 			IpPort:  50166,       // what?
@@ -325,34 +322,34 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		print("gle.Peer.Type: ", gle.Peer.Type, " ")
 		print("gle.Peer.IpPort: ", gle.Peer.IpPort, " ")
 		// the payload seems to be dependent on what type of stream operation is happening on the RPC.
-		print("gle.Payload.Type: ", gle.Payload.Message, " ")
-		print("gle.Payload.StatusCode: ", gle.Payload.StatusCode, " ")
-		print("gle.Payload.Metadata: ", gle.Payload.Metadata, " ")
+		print("gle.payload.Type: ", gle.payload.Message, " ")
+		print("gle.payload.StatusCode: ", gle.payload.StatusCode, " ")
+		print("gle.payload.Metadata: ", gle.payload.Metadata, " ")
 		// payload stuff comes later*/
 	}
 
 	// entry type: 1 Client Header
 	gle := grpcLogEntry{
-		Type: ClientHeader,
+		Type: clientHeader,
 	}
 	grpcLogEntriesWant = append(grpcLogEntriesWant, gle)
 	// entry type: 5 Client Half Close
 	gle = grpcLogEntry{
-		Type: ClientHalfClose,
+		Type: clientHalfClose,
 	}
 	grpcLogEntriesWant = append(grpcLogEntriesWant, gle)
 	// ^^^^ shared atoms with server side
 
 	// entry type: 2 Server Header WRONG, logs headers if trailers only.
 	gle = grpcLogEntry{
-		Type: ServerHeader,
+		Type: serverHeader,
 	}
 
 	// vvvv shared atoms with client side
 	grpcLogEntriesWant = append(grpcLogEntriesWant, gle)
 	// entry type: 6 Server Trailer
 	gle = grpcLogEntry{
-		Type: ServerTrailer,
+		Type: serverTrailer,
 	}
 	grpcLogEntriesWant = append(grpcLogEntriesWant, gle)
 
@@ -440,9 +437,9 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 		print("gle.Peer.Type: ", gle.Peer.Type, " ")
 		print("gle.Peer.IpPort: ", gle.Peer.IpPort, " ")
 		// the payload seems to be dependent on what type of stream operation is happening on the RPC.
-		print("gle.Payload.Type: ", gle.Payload.Message, " ")
-		print("gle.Payload.StatusCode: ", gle.Payload.StatusCode, " ")
-		print("gle.Payload.Metadata: ", gle.Payload.Metadata, " ")*/
+		print("gle.payload.Type: ", gle.payload.Message, " ")
+		print("gle.payload.StatusCode: ", gle.payload.StatusCode, " ")
+		print("gle.payload.Metadata: ", gle.payload.Metadata, " ")*/
 		// payload stuff comes later
 	}
 
@@ -689,4 +686,109 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 
 	// declare a [] that tests the logic of new bytes (metadata length)
 
+}
+
+// oh also need to test bin headers fuck, unit test (see examples in codebase for this)
+func (s) TestTranslateMetadata(t *testing.T) {
+	// translateMetadata(m *binlogpb.Metadata) map[string]string
+	concatBinLogValue := base64.StdEncoding.EncodeToString([]byte("value1")) + "," + base64.StdEncoding.EncodeToString([]byte("value2"))
+	tests := []struct {
+		name string
+		binLogMD *binlogpb.Metadata
+		wantMD map[string]string
+	}{
+		{
+			name: "two-entries-different-key",
+			binLogMD: &binlogpb.Metadata{
+				Entry: []*binlogpb.MetadataEntry{
+					{
+						Key: "header1",
+						Value: []byte("value1"),
+					},
+					{
+						Key: "header2",
+						Value: []byte("value2"),
+					},
+				},
+			},
+			wantMD: map[string]string{
+				"header1": "value1",
+				"header2": "value2",
+			},
+		},
+		{
+			name: "two-entries-same-key",
+			binLogMD: &binlogpb.Metadata{
+				Entry: []*binlogpb.MetadataEntry{
+					{
+						Key: "header1",
+						Value: []byte("value1"),
+					},
+					{
+						Key: "header1",
+						Value: []byte("value2"),
+					},
+				},
+			},
+			wantMD: map[string]string{
+				"header1": "value1,value2",
+			},
+		},
+		{
+			// two kvs with same key and key is a bin header -> k: "base64 encoded", "base64 encoded"
+			name: "two-entries-same-key-bin-header",
+			binLogMD: &binlogpb.Metadata{
+				Entry: []*binlogpb.MetadataEntry{
+					{
+						Key: "header1-bin",
+						Value: []byte("value1"),
+					},
+					{
+						Key: "header1-bin",
+						Value: []byte("value2"),
+					},
+				},
+			},
+			wantMD: map[string]string{
+				"header1-bin": concatBinLogValue,
+			},
+		},
+		// both of them combined - tests the interleaving of these two
+		{
+			name: "four-entries-two-keys",
+			binLogMD: &binlogpb.Metadata{
+				Entry: []*binlogpb.MetadataEntry{
+					{
+						Key: "header1",
+						Value: []byte("value1"),
+					},
+					{
+						Key: "header1",
+						Value: []byte("value2"),
+					},
+					{
+						Key: "header1-bin",
+						Value: []byte("value1"),
+					},
+					{
+						Key: "header1-bin",
+						Value: []byte("value2"),
+					},
+				},
+			},
+			wantMD: map[string]string{
+				"header1": "value1,value2",
+				"header1-bin": concatBinLogValue,
+			},
+		},
+	}
+
+	// How to compare maps? Map ordering isn't guaranteed.
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if gotMD := translateMetadata(test.binLogMD); !cmp.Equal(gotMD, test.wantMD) {
+				t.Fatalf("translateMetadata(%v) = %v, want %v", test.binLogMD, gotMD, test.wantMD)
+			}
+		})
+	}
 }

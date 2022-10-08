@@ -20,21 +20,23 @@ package observability
 
 import (
 	"bytes"
-	gcplogging "cloud.google.com/go/logging"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/internal"
-	"google.golang.org/grpc/internal/grpcutil"
 	"strings"
 	"time"
 
+	gcplogging "cloud.google.com/go/logging"
 	"github.com/google/uuid"
+
+	"google.golang.org/grpc"
 	binlogpb "google.golang.org/grpc/binarylog/grpc_binarylog_v1"
+	"google.golang.org/grpc/internal"
 	iblog "google.golang.org/grpc/internal/binarylog"
+	"google.golang.org/grpc/internal/grpcutil"
 )
+
 
 var lExporter loggingExporter
 
@@ -42,13 +44,13 @@ var newLoggingExporter = newCloudLoggingExporter
 
 // translateMetadata translates the metadata from Binary Logging format to
 // its GrpcLogEntry equivalent.
-func translateMetadata(m *binlogpb.Metadata) map[string]string {
+func translateMetadata(m *binlogpb.Metadata) map[string]string { // unit test of translateMetadata()?
 	metadata := make(map[string]string)
 	for _, entry := range m.GetEntry() {
 		entryKey := entry.GetKey()
 		var newVal string
 		if strings.HasSuffix(entryKey, "-bin") { // bin header
-			base64.StdEncoding.EncodeToString(entry.GetValue()) // I don't need to decode anything right?
+			base64.StdEncoding.EncodeToString(entry.GetValue())
 		} else { // normal header
 			newVal = string(entry.GetValue())
 		}
@@ -65,248 +67,243 @@ func translateMetadata(m *binlogpb.Metadata) map[string]string {
 
 func setPeerIfPresent(binlogEntry *binlogpb.GrpcLogEntry, grpcLogEntry *grpcLogEntry) {
 	if binlogEntry.GetPeer() != nil {
-		grpcLogEntry.Peer.Type = Type(binlogEntry.GetPeer().GetType())
+		grpcLogEntry.Peer.Type = addrType(binlogEntry.GetPeer().GetType())
 		grpcLogEntry.Peer.Address = binlogEntry.GetPeer().GetAddress()
 		grpcLogEntry.Peer.IpPort = binlogEntry.GetPeer().GetIpPort()
 	}
 }
 
-var loggerTypeToEventLogger = map[binlogpb.GrpcLogEntry_Logger]Logger{
-	binlogpb.GrpcLogEntry_LOGGER_UNKNOWN: LoggerUnknown,
-	binlogpb.GrpcLogEntry_LOGGER_CLIENT:  Client,
-	binlogpb.GrpcLogEntry_LOGGER_SERVER:  Server,
+var loggerTypeToEventLogger = map[binlogpb.GrpcLogEntry_Logger]loggerType{
+	binlogpb.GrpcLogEntry_LOGGER_UNKNOWN: loggerUnknown,
+	binlogpb.GrpcLogEntry_LOGGER_CLIENT:  client,
+	binlogpb.GrpcLogEntry_LOGGER_SERVER:  server,
 }
 
-// figuring out what types are exported and what aren't -> determines what comments to write,
-// so write comments at the end?
-
-// all these enums and types - pull off Lidi's comments
-// ClusterType is the type of cluster from a received CDS response.
-type EventType int
-
-const ( // these need to marshal, so I think you need to export type? What is least amount of exported things to make json.Marshal work
-	// ClusterTypeEDS represents the EDS cluster type, which will delegate endpoint
-	// discovery to the management server.
-	EventTypeUnknown EventType = iota
-	// ClusterTypeLogicalDNS represents the Logical DNS cluster type, which essentially
-	// maps to the gRPC behavior of using the DNS resolver with pick_first LB policy.
-	ClientHeader
-	// ClusterTypeAggregate represents the Aggregate Cluster type, which provides a
-	// prioritized list of clusters to use. It is used for failover between clusters
-	// with a different configuration.
-	ServerHeader
-	ClientMessage
-	ServerMessage
-	ClientHalfClose
-	ServerTrailer
-	Cancel
-)
-
-func (t EventType) MarshalJSON() ([]byte, error) {
-	// This gets called every logging call, this is slow? want it string.Builder? ugh
-	buffer := bytes.NewBufferString(`"`)
-	switch t {
-	case EventTypeUnknown:
-		buffer.WriteString("") // fill out once Eric responds
-	case ClientHeader:
-		buffer.WriteString("")
-	case ServerHeader:
-		buffer.WriteString("")
-	case ClientMessage:
-		buffer.WriteString("")
-	case ServerMessage:
-		buffer.WriteString("")
-	case ClientHalfClose:
-		buffer.WriteString("")
-	case ServerTrailer:
-		buffer.WriteString("")
-	case Cancel:
-		buffer.WriteString("")
-	}
-	buffer.WriteString(`"`)
-	return buffer.Bytes(), nil
-}
-
-// I don't think you need UnmarshalJSON for anything? Cloud Logging should just
-// take it into a json string, it doesn't need the type passed in.
-
-type Logger int
+type eventType int
 
 const (
-	LoggerUnknown Logger = iota
-	Client
-	Server
+	// eventTypeUnknown is an unknown event type.
+	eventTypeUnknown eventType = iota
+	// clientHeader is a header sent from client to server.
+	clientHeader
+	// serverHeader is a header sent from server to client.
+	serverHeader
+	// clientMessage is a message sent from client to server.
+	clientMessage
+	// serverMessage is a message sent from server to client.
+	serverMessage
+	// clientHalfClose is a signal that the client is done sending.
+	clientHalfClose
+	// serverTrailer indicated the end of a gRPC call.
+	serverTrailer
+	// cancel is a signal that the rpc is canceled.
+	cancel
 )
 
-func (t Logger) MarshalJSON() ([]byte, error) {
-	// This gets called every logging call, this is slow? want it string.Builder? ugh
+func (t eventType) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString(`"`)
 	switch t {
-	case LoggerUnknown:
-		buffer.WriteString("") // fill out once Eric responds
-	case Client:
-		buffer.WriteString("")
-	case Server:
-		buffer.WriteString("")
+	case eventTypeUnknown:
+		buffer.WriteString("EVENT_TYPE_UNKNOWN")
+	case clientHeader:
+		buffer.WriteString("CLIENT_HEADER")
+	case serverHeader:
+		buffer.WriteString("SERVER_HEADER")
+	case clientMessage:
+		buffer.WriteString("CLIENT_MESSAGE")
+	case serverMessage:
+		buffer.WriteString("SERVER_MESSAGE")
+	case clientHalfClose:
+		buffer.WriteString("CLIENT_HALF_CLOSE")
+	case serverTrailer:
+		buffer.WriteString("SERVER_TRAILER")
+	case cancel:
+		buffer.WriteString("CANCEL")
 	}
 	buffer.WriteString(`"`)
 	return buffer.Bytes(), nil
 }
 
-type Payload struct {
+type loggerType int
+
+const (
+	loggerUnknown loggerType = iota
+	client
+	server
+)
+
+func (t loggerType) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString(`"`)
+	switch t {
+	case loggerUnknown:
+		buffer.WriteString("LOGGER_UNKNOWN")
+	case client:
+		buffer.WriteString("CLIENT")
+	case server:
+		buffer.WriteString("SERVER")
+	}
+	buffer.WriteString(`"`)
+	return buffer.Bytes(), nil
+}
+
+type payload struct {
+	// Metadata ( go into manual bin encoding)
 	Metadata map[string]string `json:"metadata,omitempty"`
-	// I've heard so much shit about Duration, and how complicated it is
-	// is this the correct one?
-	Timeout       time.Duration `json:"timeout,omitempty"` // seems like only place where you might need special logic for MarshalJSON here, time.Duration...
+	// Timeout is the RPC timeout value.
+	Timeout       time.Duration `json:"timeout,omitempty"` // does this need special handling for JSON marshaling? Can verify in my test.
+	// StatusCode is the gRPC status code.
 	StatusCode    uint32        `json:"statusCode,omitempty"`
+	// StatusMessage is the gRPC status message.
 	StatusMessage string        `json:"statusMessage,omitempty"`
-	StatusDetails []byte        `json:"statusMessage,omitempty"` // bytes in proto, is this the go type this corresponds to?, I've seen/done this conversion before
-	MessageLength uint32        `json:"messageLength,omitempty"`
+	// StatusDetails is the value of the grpc-status-details-bin metadata key,
+	// if any. This is always an encoded google.rpc.Status message.
+	StatusDetails []byte        `json:"statusMessage,omitempty"`
+	// MessageLength is the length of the message.
+	MessageLength uint32        `json:"messageLength,omitempty"` // can use this for the logic I want in my test, clear int (but would need to put stuff in payload to trigger)
+	// Message is the message of this entry. This is populated in the case of a
+	// message event.
 	Message       []byte        `json:"message,omitempty"`
 }
 
-type Type int
+type addrType int
 
 const (
-	TypeUnknown Type = iota
-	IPV4             // `json:"TYPE_IPV4"`
-	IPV6             // `json:"TYPE_IPV6"`
-	UNIX             // `json:"TYPE_UNIX"`
+	typeUnknown addrType = iota    // `json:"TYPE_UNKNOWN"`
+	ipv4                           // `json:"TYPE_IPV4"`
+	ipv6                           // `json:"TYPE_IPV6"`
+	unix                           // `json:"TYPE_UNIX"`
 )
 
-func (t Type) MarshalJSON() ([]byte, error) {
-	// This gets called every logging call, this is slow? want it string.Builder? ugh
+func (at addrType) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString(`"`)
-	switch t {
-	case TypeUnknown:
-		buffer.WriteString("") // fill out once Eric responds, what to do for unknowns
-	case IPV4:
+	switch at {
+	case typeUnknown:
+		buffer.WriteString("TYPE_UNKNOWN")
+	case ipv4:
 		buffer.WriteString("TYPE_IPV4")
-	case IPV6:
+	case ipv6:
 		buffer.WriteString("TYPE_IPV6")
-	case UNIX:
+	case unix:
 		buffer.WriteString("TYPE_UNIX")
 	}
 	buffer.WriteString(`"`)
 	return buffer.Bytes(), nil
 }
 
-type Address struct {
-	Type    Type   `json:"type,omitempty"`
+type address struct {
+	// Type is the address type of the address of the peer of the RPC.
+	Type    addrType   `json:"type,omitempty"`
+	// Address is the address of the peer of the RPC.
 	Address string `json:"address,omitempty"`
+	// IpPort is the ip and port in string form. It is used only for addrType
+	// ipv4 and ipv6.
 	IpPort  uint32 `json:"ipPort,omitempty"`
 }
 
-type grpcLogEntry struct { // exported or unexported? I think the fields do, wb types?
-	// I think these need to be exported for json.Marshal to work
+type grpcLogEntry struct {
+	// CallId is a uuid which uniquely identifies a call. Each call may have
+	// several log entries. They will all have the same CallId. Nothing is
+	// guaranteed about their value other than they are unique across different
+	// RPCs in the same gRPC process.
 	CallId     string    `json:"callId,omitempty"`
+	// SequenceID is the entry sequence ID for this call. The first message has
+	// a value of 1, to disambiguate from an unset value. The purpose of this
+	// field is to detect missing entries in environments where durability or
+	// ordering is not guaranteed.
 	SequenceID uint64    `json:"sequenceId,omitempty"`
-	Type       EventType `json:"type,omitempty"`
-	Logger     Logger    `json:"logger,omitempty"`
+	// Type is the type of binary logging event being logged.
+	Type       eventType `json:"type,omitempty"`
+	// Logger is the entity that generates the log entry.
+	Logger     loggerType    `json:"logger,omitempty"`
 
-	Payload          Payload `json:"payload,omitempty"`
+	// Payload is the payload of this log entry.
+	Payload          payload `json:"payload,omitempty"`
+	// PayloadTruncated is whether the message or metadata field is either
+	// truncated or emitted due to options specified in the configuration.
 	PayloadTruncated bool    `json:"payloadTruncated,omitempty"`
-	Peer             Address `json:"peer,omitempty"`
+	// Peer is information about the Peer of the RPC.
+	Peer             address `json:"peer,omitempty"`
 
+	// A single process may be used to run multiple virtual servers with
+	// different identities.
+	// Authority is the name of such a server identify. It is typically a
+	// portion of the URI in the form of <host> or <host>:<port>.
 	Authority   string `json:"authority,omitempty"`
+	// ServiceName is the name of the service.
 	ServiceName string `json:"serviceName,omitempty"`
+	// MethodName is the name of the RPC method.
 	MethodName  string `json:"methodName,omitempty"`
-} // json annotations
-
-// right, because you just pass in this struct into cloud logging and they
-// handle calling this which emits raw json
-func (gle *grpcLogEntry) MarshalJSON() ([]byte, error) {
-	// A thought I just thought of: the enums, which are ints, need to have MarshalJSON defined on them,
-	// similarly to DiscoveryMechanismType
-
-	/*
-		or something that marshals via the encoding/json package to a JSON object
-		(and not any other type of JSON value).
-	*/
-	// json object or []byte which is what it says it returns from this function....
-
-	// ex: For discovery mechanism type, makes a new buffer string and returns the bytes of that "EDS" -> bytes
-	// Seems like major complication here is going to be when/how do I call enums wrt their JSON values?
-
-	// Ends up as "{with the full config filled out}" not invalid like {5] this is the end result find something in the codebase that can give you an example of this.
-	// anyway, just pass in your struct into Payload and make sure your struct has a MarshalJSON method on it and you're good!
-	// json.Marshal()
-	// return []byte(fmt.Sprintf(`[{%q: %s}]`, bc.Name, c)), nil
-	return json.Marshal(gle) // no special logic here right, do I even need this? I think I'm done with MarshalJSON
 }
 
-// Just the functionality I need
+func (gle *grpcLogEntry) MarshalJSON() ([]byte, error) {
+	return json.Marshal(gle)
+}
+
 type methodLoggerBuilder interface {
-	Build(iblog.LogEntryConfig) *binlogpb.GrpcLogEntry // keep it lean, only define what you need
+	Build(iblog.LogEntryConfig) *binlogpb.GrpcLogEntry
 }
 
 type binaryMethodLogger struct {
-	callID, serviceName, methodName string
+	callID, serviceName, methodName, authority string
 
 	mlb      methodLoggerBuilder
 	exporter loggingExporter
 }
 
-// Need to get metrics small PR out*
-
 func (bml *binaryMethodLogger) Log(c iblog.LogEntryConfig) {
-	// it'll always have if present, no need to check for nil
 	binLogEntry := bml.mlb.Build(c)
 
 	grpcLogEntry := &grpcLogEntry{
 		CallId:     bml.callID,
 		SequenceID: binLogEntry.GetSequenceIdWithinCall(),
-		Logger:     loggerTypeToEventLogger[binLogEntry.Logger], // convert to right type wrt map with new struct as schema, do I really need this map
-		// LogLevel is hardcoded and deleted, just hardcode it in cloud logging???
+		Logger:     loggerTypeToEventLogger[binLogEntry.Logger],
 	}
 
-	switch binLogEntry.GetType() { // this binary log pb mechanism is going to be kept regardless
-	// the specific stream operations
-	// I might have to do more logic here vs. Lidi's logic - do a pass on this to triage
+	switch binLogEntry.GetType() {
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_UNKNOWN:
-		grpcLogEntry.Type = EventTypeUnknown
+		grpcLogEntry.Type = eventTypeUnknown
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_HEADER:
-		grpcLogEntry.Type = ClientHeader
+		grpcLogEntry.Type = clientHeader
 		if binLogEntry.GetClientHeader() != nil {
 			methodName := binLogEntry.GetClientHeader().MethodName
 			// Example method name: /grpc.testing.TestService/UnaryCall
 			if strings.Contains(methodName, "/") {
 				tokens := strings.Split(methodName, "/")
-				if len(tokens) == 3 { // the first token is an empty string lol
-					// Record service name and method name for all events. I think this still stays the same
+				if len(tokens) == 3 {
+					// Record service name and method name for all events.
 					bml.serviceName = tokens[1]
 					bml.methodName = tokens[2]
 				} else {
 					logger.Infof("Malformed method name: %v", methodName)
 				}
 			}
-			grpcLogEntry.Payload.Timeout = binLogEntry.GetClientHeader().GetTimeout().AsDuration() // is this the right way to go?
-			grpcLogEntry.Authority = binLogEntry.GetClientHeader().Authority
+			bml.authority = binLogEntry.GetClientHeader().GetAuthority()
+			grpcLogEntry.Payload.Timeout = binLogEntry.GetClientHeader().GetTimeout().AsDuration()
 			grpcLogEntry.Payload.Metadata = translateMetadata(binLogEntry.GetClientHeader().GetMetadata())
 		}
 		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
 		setPeerIfPresent(binLogEntry, grpcLogEntry)
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_HEADER:
-		grpcLogEntry.Type = ServerHeader
+		grpcLogEntry.Type = serverHeader
 		if binLogEntry.GetServerHeader() != nil {
 			grpcLogEntry.Payload.Metadata = translateMetadata(binLogEntry.GetServerHeader().GetMetadata())
 		}
 		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
 		setPeerIfPresent(binLogEntry, grpcLogEntry)
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_MESSAGE:
-		grpcLogEntry.Type = ClientMessage
+		grpcLogEntry.Type = clientMessage
 		grpcLogEntry.Payload.Message = binLogEntry.GetMessage().GetData()
 		grpcLogEntry.Payload.MessageLength = binLogEntry.GetMessage().GetLength()
 		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_MESSAGE:
-		grpcLogEntry.Type = ServerMessage
+		grpcLogEntry.Type = serverMessage
 		grpcLogEntry.Payload.Message = binLogEntry.GetMessage().GetData()
 		grpcLogEntry.Payload.MessageLength = binLogEntry.GetMessage().GetLength()
 		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_HALF_CLOSE:
-		grpcLogEntry.Type = ClientHalfClose
+		grpcLogEntry.Type = clientHalfClose
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_TRAILER:
-		grpcLogEntry.Type = ServerTrailer
+		grpcLogEntry.Type = serverTrailer
 		grpcLogEntry.Payload.Metadata = translateMetadata(binLogEntry.GetTrailer().Metadata)
 		grpcLogEntry.Payload.StatusCode = binLogEntry.GetTrailer().GetStatusCode()
 		grpcLogEntry.Payload.StatusMessage = binLogEntry.GetTrailer().GetStatusMessage()
@@ -314,26 +311,22 @@ func (bml *binaryMethodLogger) Log(c iblog.LogEntryConfig) {
 		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
 		setPeerIfPresent(binLogEntry, grpcLogEntry)
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_CANCEL:
-		grpcLogEntry.Type = Cancel
+		grpcLogEntry.Type = cancel
 	default:
 		logger.Infof("Unknown event type: %v", binLogEntry.Type)
 		return
 	}
-	// changes from binary logging entry
-	// 1. Repeat method and authority on each log entry; for routing? this doesn't seem to be a part of Lidi's ***
-
-	// 2. Separate method and service into independent fields; for easier routing (done)
 	grpcLogEntry.ServiceName = bml.serviceName
 	grpcLogEntry.MethodName = bml.methodName
+	grpcLogEntry.Authority = bml.authority
 
 	gcploggingEntry := gcplogging.Entry{
 		Timestamp: binLogEntry.GetTimestamp().AsTime(),
 		Severity:  100,
-		Payload:   grpcLogEntry, // internal struct that marshals to a json object
-		// Does anything else need to be stuck here? Eric said he'll explicitly define this
+		Payload:   grpcLogEntry,
 	}
 
-	bml.exporter.EmitGcpLoggingEntry(gcploggingEntry) // test this layer
+	bml.exporter.EmitGcpLoggingEntry(gcploggingEntry)
 }
 
 type eventConfig struct {
@@ -352,7 +345,7 @@ type LoggerConfigObservability struct {
 }
 
 type binaryLogger struct {
-	EventConfigs []eventConfig // pointer?
+	EventConfigs []eventConfig
 	exporter     loggingExporter
 }
 
@@ -384,7 +377,7 @@ func registerClientRPCEvents(clientRPCEvents []clientRPCEvents, exporter logging
 	}
 	var eventConfigs []eventConfig
 	for _, clientRPCEvent := range clientRPCEvents {
-		eventConfig := eventConfig{} // do I want to make this a pointer?
+		eventConfig := eventConfig{}
 		eventConfig.Exclude = clientRPCEvent.Exclude
 		eventConfig.HeaderBytes = uint64(clientRPCEvent.MaxMetadataBytes)
 		eventConfig.MessageBytes = uint64(clientRPCEvent.MaxMessageBytes)
@@ -396,7 +389,7 @@ func registerClientRPCEvents(clientRPCEvents []clientRPCEvents, exporter logging
 				continue
 			}
 			s, m, err := grpcutil.ParseMethod(method)
-			if err != nil { // Shouldn't happen, already validated at this point.
+			if err != nil {
 				continue
 			}
 			if m == "*" {
@@ -420,7 +413,7 @@ func registerServerRPCEvents(serverRPCEvents []serverRPCEvents, exporter logging
 	}
 	var eventConfigs []eventConfig
 	for _, serverRPCEvent := range serverRPCEvents {
-		eventConfig := eventConfig{} // do I want to make this a pointer?
+		eventConfig := eventConfig{}
 		eventConfig.Exclude = serverRPCEvent.Exclude
 		eventConfig.HeaderBytes = uint64(serverRPCEvent.MaxMetadataBytes)
 		eventConfig.MessageBytes = uint64(serverRPCEvent.MaxMessageBytes)
@@ -455,69 +448,20 @@ func startLogging(ctx context.Context, config *config) error {
 		return nil
 	}
 	var err error
-	lExporter, err = newLoggingExporter(ctx, config) // mock this function, make this function global is how you inject, orthogonal to the problem for how you close
+	lExporter, err = newLoggingExporter(ctx, config)
 	if err != nil {
 		return fmt.Errorf("unable to create CloudLogging exporter: %v", err)
 	}
 
 	cl := config.CloudLogging
-	registerClientRPCEvents(cl.ClientRPCEvents, lExporter) // one exporter for client and server
-	registerServerRPCEvents(cl.ServerRPCEvents, lExporter) // these don't return errors
+	registerClientRPCEvents(cl.ClientRPCEvents, lExporter)
+	registerServerRPCEvents(cl.ServerRPCEvents, lExporter)
 	return nil
 }
 
 func stopLogging() {
-	// Do we want to do this unconditionally? Unregistering? I feel like there's no harm calling this unconditionally, no nil checks or anything.
-	internal.ClearGlobalDialOptions() // this happen as a part of this logging, and also as a part of opencensus. Do we want to move this to a shared cleanup? After testing, you can play around with what works and not
-	internal.ClearGlobalServerOptions()
-	// flush some type of buffer from design review
-	// how to get ref to clear the buffer
-
-	// do I need to close/cleanup everything in the client and server
-	// binaryloggers as well? Do we need client/server? master just uses to
-	// clean up exporter. If so, you need to hold a ref for it in this function
-	// (master is global)
-
-	// exporter.Close() <- single exporter, shared amongst client and server,
-	// need to hold a ref, also this is important because this is what we're
-	// mocking/hooking in for testing. How does it mock/hook in on master?
-
-	// Close() is a function ON the logger. That's how it has a ref.
-	// Globally exporter to mock/cleanup? exporter is shared amongst two and cleaned up at end
-
 	if lExporter != nil {
+		// This Close() call handles the flushing of the logging buffer.
 		lExporter.Close()
-	} // also needs a Close() to flush buffer, Lidi handled that for you (eric talked about how we need to flush buffer at the end), and we will lose data when logging buffer is full, non blocking
-
+	}
 }
-
-// server side: configure with some methods,
-// will need to match this iterative list somehow
-// No preprocessing
-
-// One of the nodes is a never log node, should cause it to not log at all
-
-// You want a single config or multiple cases
-
-// the config configures both
-
-// client             server
-
-// this is specified in JSON
-
-// Task list I can see:
-
-// 1. Rewrite binary logger GetMethodLogger to be exported, reuse that logic by sticking as child of MethodLogger in o11y
-
-// 2. Change the internal logging schema to an internal struct, this will have all the layerings of JSON
-//          just need to finish EmitGrpcLogRecord
-
-// 3. Rewrite the EmitGrpcLogRecord(gcplogging.Entry) rather than o11y proto (done, but need to test)
-//          gcplogging.Entry <- populated with switched internal struct that defines MarshalJSON, cloudlogging library will then handle this for you
-
-// 4. Test :D!
-
-// Need to change his configs to new configs, new configs are tied to my test cases/overall idea of how to test this
-//
-
-// HookPoint EmitGrpcLoggingEntry() <- the downstream behaviors are all tied to this

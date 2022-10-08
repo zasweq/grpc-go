@@ -22,8 +22,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/internal/stubserver"
-	"google.golang.org/grpc/test/grpc_testing"
 	"io"
 	"io/ioutil"
 	"os"
@@ -35,7 +33,9 @@ import (
 	"go.opencensus.io/trace"
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/leakcheck"
+	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/test/grpc_testing"
 )
 
 type s struct {
@@ -67,7 +67,7 @@ var (
 	defaultRequestCount       = 24
 )
 
-const ( // ugh i'll need to rewrite the one liner too, ohhh maybe I can add that, I'm done with testing outside of Doug's comment about starting with an error...
+const (
 	TypeOpenCensusViewDistribution string = "distribution"
 	TypeOpenCensusViewCount               = "count"
 	TypeOpenCensusViewSum                 = "sum"
@@ -84,16 +84,9 @@ type fakeOpenCensusExporter struct {
 	mu sync.RWMutex
 }
 
-// called within open census
-func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) { // How do the 4 default views registered plumb into/relate to view.Data?
-	print("ExportView() called")
-	// Now this only exports the metric of completed RPCs (which seems to be
-	// what Lidi is testing) vs. ClientSentBytesPerRPCView,
-	// ClientReceivedBytesPerRPCView, ClientRoundtripLatencyView,
-	// ClientCompletedRPCsView
+func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) {
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
-	// Does it correctly trigger the completed RPC's to log?
 	for _, row := range vd.Rows {
 		fe.t.Logf("Metrics[%s RECEIVED VIEW", vd.View.Name)
 		switch row.Data.(type) {
@@ -109,22 +102,17 @@ func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) { // How do the 4 de
 	}
 }
 
-// So should this tbh ^^^
-
-// make sure the exporter is actually being parsed? But CustomTagsTracingMetrics seems to work...
-
-// This should stay constant, views should just be only completed RPC's, need a sync point.
-func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) { // this should still stay the same, since it's not like the logic changed
+func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) {
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
 	fe.SeenSpans++
 	fe.t.Logf("Span[%v]", vd.Name)
 }
 
-func (fe *fakeOpenCensusExporter) Flush() {} // can this be a sync point for all the RPCs writing to it?
+func (fe *fakeOpenCensusExporter) Flush() {}
 
 func (fe *fakeOpenCensusExporter) Close() error {
-	return nil // nothing beautiful, so doesn't clear out seen state...
+	return nil
 }
 
 func (s) TestRefuseStartWithInvalidPatterns(t *testing.T) {
@@ -144,18 +132,18 @@ func (s) TestRefuseStartWithInvalidPatterns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to convert config to JSON: %v", err)
 	}
-	os.Setenv(envObservabilityConfigJSON, "") // I feel like I need to clear some of these os.SetEnv calls
+	os.Setenv(envObservabilityConfigJSON, "")
 	os.Setenv(envObservabilityConfig, string(invalidConfigJSON))
 	// If there is at least one invalid pattern, which should not be silently tolerated.
 	if err := Start(context.Background()); err == nil {
 		t.Fatalf("Invalid patterns not triggering error")
 	}
-	// need to scale this up to take in exclude + * is wrong
 }
 
-// oh also need to test bin headers
-
-// TestRefuseStartWithExcludeAndWildCardAll tests the sceanrio wehre
+// TestRefuseStartWithExcludeAndWildCardAll tests the sceanrio where an
+// observability configuration is provided with client RPC event specifying to
+// exclude, and which matches on the '*' wildcard (any). This should cause an
+// error in the attempted starting of the observability system.
 func (s) TestRefuseStartWithExcludeAndWildCardAll(t *testing.T) {
 	invalidConfig := &config{
 		ProjectID: "fake",
@@ -245,7 +233,6 @@ func (s) TestBothConfigEnvVarsSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to convert config to JSON: %v", err)
 	}
-	// invalid pattern == what in new config?
 	cleanup, err := createTmpConfigInFileSystem(string(invalidConfigJSON))
 	defer cleanup()
 	if err != nil {
@@ -296,10 +283,7 @@ func (s) TestNoEnvSet(t *testing.T) {
 }
 
 func (s) TestOpenCensusIntegration(t *testing.T) {
-	// does this still need the new test stuff? Rewrite this test to my own
-	// thing, just Start defer Stop yourself?
-	// also, if I do my own stuff use stub server handles all the starting and dialing for you,
-	// like what I had in logging_test.go
+	defaultMetricsReportingInterval = time.Millisecond * 100
 	fe := &fakeOpenCensusExporter{SeenViews: make(map[string]string), t: t}
 
 	defer func(ne func(config *config) (tracingMetricsExporter, error)) {
@@ -312,9 +296,7 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 
 	openCensusOnConfig := &config{
 		ProjectID: "fake",
-		// no cloud monitoring
 		CloudMonitoring: &cloudMonitoring{},
-		// no cloud trace
 		CloudTrace: &cloudTrace{
 			SamplingRate: 1.0,
 		},
@@ -325,13 +307,11 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	}
 	defer cleanup()
 
-	// if the metrics has been plumbed to opencensus, LockExporter
-
 	ss := &stubserver.StubServer{
 		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
 			return &grpc_testing.SimpleResponse{}, nil
 		},
-		FullDuplexCallF: func(stream grpc_testing.TestService_FullDuplexCallServer) error { // Another dependency - he has some comment about making this cleaner
+		FullDuplexCallF: func(stream grpc_testing.TestService_FullDuplexCallServer) error {
 			for {
 				_, err := stream.Recv()
 				if err == io.EOF {
@@ -343,7 +323,7 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	if err := ss.Start(nil); err != nil {
 		t.Fatalf("Error starting endpoint server: %v", err)
 	}
-	// defer ss.Stop()
+	defer ss.Stop()
 
 	for i := 0; i < defaultRequestCount; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -353,57 +333,30 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 		}
 	}
 	t.Logf("unary call passed count=%v", defaultRequestCount)
-
-	// Wait for the gRPC transport to gracefully close to ensure no lost event.
-	// will I need to wait for anything in my test? Explicitly flush buffer perhaps?
-	// te.cc.Close()
-	// te.srv.GracefulStop()
-	// flush the buffer for opencensus metrics and tracing? do I need to test the logging flow as well?
-	/*
-	// Wait for the gRPC transport to gracefully close to ensure no lost event.
-	te.cc.Close()
-	te.srv.GracefulStop()
-	*/
-	ss.Stop()
-	// cleanup() // sync point for flushing buffer, but does this clear exporters memory too?
-	/*
-		// Wait for the gRPC transport to gracefully close to ensure no lost event.
-		te.cc.Close()
-		te.srv.GracefulStop()
-	*/ // - how does this guarantee all the seen views are correctly written to exporter?
-
-	// this isn't plugged into stream operations? So you don't have a happens before relationship?
-
-	// After you switch views to the correct default client/server views,
-	// you can change this expectation as well
-
-	// what the fuck do I want emitted here?, the view count which is a number which counts
-	// how many completed RPCs there are
-	var errs []error
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
-	time.Sleep(5 * time.Second)
-	print("finished sleeping")
+	stream, err := ss.Client.FullDuplexCall(ctx)
+	if err != nil {
+		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
+	}
+
+	stream.CloseSend()
+	if _, err = stream.Recv(); err != io.EOF {
+		t.Fatalf("unexpected error: %v, expected an EOF error", err)
+	}
+
+	var errs []error
 	for ctx.Err() == nil {
 		errs = nil
 		fe.mu.RLock()
-		// Two things need to happen here: sync point higher up, and also make sure this SeenViews is the same string,b ut it should be
-		// This is exactly what I want/care about, the completed rpcs
-		/*if value := fe.SeenViews["grpc.io/client/completed_rpcs"]; value != TypeOpenCensusViewCount {
+		if value := fe.SeenViews["grpc.io/client/completed_rpcs"]; value != TypeOpenCensusViewCount {
 			errs = append(errs, fmt.Errorf("unexpected type for grpc.io/client/completed_rpcs: %s != %s", value, TypeOpenCensusViewCount))
 		}
-		// need to verify
 		if value := fe.SeenViews["grpc.io/server/completed_rpcs"]; value != TypeOpenCensusViewCount {
 			errs = append(errs, fmt.Errorf("unexpected type for grpc.io/server/completed_rpcs: %s != %s", value, TypeOpenCensusViewCount))
-		}*/
+		}
 
-		// Span's are happening but not views
-
-		// "Blocks until all the pending RPC's are finished."
-
-		// BLOCK THE UNTIL EXPORTVIEW() IS CALLED 20? TIMES...
-
-		if fe.SeenSpans <= 0 { // Can comment out above to see if this still works - it should, we're not changing anything
+		if fe.SeenSpans <= 0 {
 			errs = append(errs, fmt.Errorf("unexpected number of seen spans: %v <= 0", fe.SeenSpans))
 		}
 		fe.mu.RUnlock()
@@ -458,14 +411,12 @@ func (s) TestCustomTagsTracingMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() failed with err: %v", err)
 	}
-} // get this and env var precedence tests to both actually work with the config
+}
 
-// Default view changes, *Done
-// opencensus test (still need to do)
-
-// Doug's e2e test case here he brought up in documents
+// TestStartErrorsThenEnd tests that an End call after Start errors works
+// without problems, as this is a possible codepath in the public observability
+// API.
 func (s) TestStartErrorsThenEnd(t *testing.T) {
-	// bad config that plumbs back error
 	invalidConfig := &config{
 		ProjectID: "fake",
 		CloudLogging: &cloudLogging{
@@ -482,15 +433,10 @@ func (s) TestStartErrorsThenEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to convert config to JSON: %v", err)
 	}
-	os.Setenv(envObservabilityConfigJSON, "") // I feel like I need to clear some of these os.SetEnv calls
+	os.Setenv(envObservabilityConfigJSON, "")
 	os.Setenv(envObservabilityConfig, string(invalidConfigJSON))
-	// If there is at least one invalid pattern, which should not be silently tolerated.
 	if err := Start(context.Background()); err == nil {
 		t.Fatalf("Invalid patterns not triggering error")
 	}
-	// call End even after Start, see if anything bad happens
 	End()
 }
-
-// cleanup, then done :)))))))) (when I go back to my desk go ahead and clean this up)
-// Also go over what you cleaned up so it looks clean when they review

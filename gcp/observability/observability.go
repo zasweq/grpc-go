@@ -30,6 +30,7 @@ import (
 	"fmt"
 
 	"google.golang.org/grpc/grpclog"
+	"google.golang.org/grpc/internal"
 )
 
 var logger = grpclog.Component("observability")
@@ -75,6 +76,8 @@ func Start(ctx context.Context) error {
 //
 // Note: this method should only be invoked once.
 func End() {
+	internal.ClearGlobalDialOptions()
+	internal.ClearGlobalServerOptions()
 	stopLogging()
 	stopOpenCensus()
 }

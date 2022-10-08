@@ -221,7 +221,7 @@ type cloudLogging struct {
 	// binary. The client_rpc_events configs are evaluated in text order, the
 	// first one matched is used. If an RPC doesn't match an entry, it will
 	// continue on to the next entry in the list.
-	ClientRPCEvents []clientRPCEvents/*client rpc events configs? pointer or not?*/ `json:client_rpc_events,omitempty`
+	ClientRPCEvents []clientRPCEvents `json:client_rpc_events,omitempty`
 
 	// ServerRPCEvents represents the configuration for incoming RPC's to the
 	// binary. The server_rpc_events configs are evaluated in text order, the
