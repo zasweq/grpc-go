@@ -19,20 +19,21 @@
 package observability
 
 import (
-	gcplogging "cloud.google.com/go/logging"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"sync"
+	"testing"
+
+	gcplogging "cloud.google.com/go/logging"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	binlogpb "google.golang.org/grpc/binarylog/grpc_binarylog_v1"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/test/grpc_testing"
-	"io"
-	"os"
-	"sync"
-	"testing"
 )
 
 func cmpLoggingEntryList(entryList1 []*grpcLogEntry, entryList2 []*grpcLogEntry) error {
@@ -46,17 +47,18 @@ func cmpLoggingEntryList(entryList1 []*grpcLogEntry, entryList2 []*grpcLogEntry)
 }
 
 type fakeLoggingExporter struct {
-	t        *testing.T
+	t *testing.T
 
-	mu       sync.Mutex
+	mu      sync.Mutex
 	entries []*grpcLogEntry
 }
 
 func (fle *fakeLoggingExporter) EmitGcpLoggingEntry(entry gcplogging.Entry) {
 	fle.mu.Lock()
 	defer fle.mu.Unlock()
-	print(entry.Timestamp.String())
-	print(entry.Severity)
+	if entry.Severity != 100 {
+		fle.t.Errorf("entry.Severity is not 100, this should be hardcoded")
+	}
 	grpcLogEntry, ok := entry.Payload.(*grpcLogEntry)
 	if !ok {
 		fle.t.Errorf("payload passed in isn't grpcLogEntry")
@@ -68,7 +70,8 @@ func (fle *fakeLoggingExporter) Close() error {
 	return nil
 }
 
-// setupObservabilitySystemWithConfig sets up
+// setupObservabilitySystemWithConfig sets up the observability system with the
+// specified config, and returns a cleanup to cleanup the observability system.
 func setupObservabilitySystemWithConfig(cfg *config) (func(), error) {
 	validConfigJSON, err := json.Marshal(cfg)
 	if err != nil {
@@ -108,9 +111,9 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		CloudLogging: &cloudLogging{
 			ClientRPCEvents: []clientRPCEvents{
 				{
-					Method: []string{"*"},
+					Method:           []string{"*"},
 					MaxMetadataBytes: 30,
-					MaxMessageBytes: 30,
+					MaxMessageBytes:  30,
 				},
 			},
 		},
@@ -150,8 +153,8 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		Authority: ss.Address,
-		SequenceID: 1,
+		Authority:   ss.Address,
+		SequenceID:  1,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -161,8 +164,8 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 2,
-		Authority: ss.Address,
+		SequenceID:  2,
+		Authority:   ss.Address,
 		Payload: payload{
 			Message: []uint8{},
 		},
@@ -172,8 +175,8 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 3,
-		Authority: ss.Address,
+		SequenceID:  3,
+		Authority:   ss.Address,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -183,16 +186,16 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		Authority: ss.Address,
-		SequenceID: 4,
+		Authority:   ss.Address,
+		SequenceID:  4,
 	}
 	grpcLogEntriesWant[4] = &grpcLogEntry{
 		Type:        serverTrailer,
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 5,
-		Authority: ss.Address,
+		SequenceID:  5,
+		Authority:   ss.Address,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -220,8 +223,8 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		Authority: ss.Address,
-		SequenceID: 1,
+		Authority:   ss.Address,
+		SequenceID:  1,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -231,16 +234,16 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		SequenceID: 2,
-		Authority: ss.Address,
+		SequenceID:  2,
+		Authority:   ss.Address,
 	}
 	grpcLogEntriesWant[2] = &grpcLogEntry{
 		Type:        serverHeader,
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		SequenceID: 3,
-		Authority: ss.Address,
+		SequenceID:  3,
+		Authority:   ss.Address,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -250,8 +253,8 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		Authority: ss.Address,
-		SequenceID: 4,
+		Authority:   ss.Address,
+		SequenceID:  4,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -320,8 +323,8 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 		Logger:      server,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		Authority: ss.Address,
-		SequenceID: 1,
+		Authority:   ss.Address,
+		SequenceID:  1,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -331,16 +334,16 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 		Logger:      server,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 2,
-		Authority: ss.Address,
+		SequenceID:  2,
+		Authority:   ss.Address,
 	}
 	grpcLogEntriesWant[2] = &grpcLogEntry{
 		Type:        serverHeader,
 		Logger:      server,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 3,
-		Authority: ss.Address,
+		SequenceID:  3,
+		Authority:   ss.Address,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -350,8 +353,8 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 		Logger:      server,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		Authority: ss.Address,
-		SequenceID: 4,
+		Authority:   ss.Address,
+		SequenceID:  4,
 		Payload: payload{
 			Message: []uint8{},
 		},
@@ -361,8 +364,8 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 		Logger:      server,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 5,
-		Authority: ss.Address,
+		SequenceID:  5,
+		Authority:   ss.Address,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -390,8 +393,8 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 		Logger:      server,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		Authority: ss.Address,
-		SequenceID: 1,
+		Authority:   ss.Address,
+		SequenceID:  1,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -401,16 +404,16 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 		Logger:      server,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		SequenceID: 2,
-		Authority: ss.Address,
+		SequenceID:  2,
+		Authority:   ss.Address,
 	}
 	grpcLogEntriesWant[2] = &grpcLogEntry{
 		Type:        serverTrailer,
 		Logger:      server,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		Authority: ss.Address,
-		SequenceID: 3,
+		Authority:   ss.Address,
+		SequenceID:  3,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -595,8 +598,8 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		Authority: ss.Address,
-		SequenceID: 1,
+		Authority:   ss.Address,
+		SequenceID:  1,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -606,8 +609,8 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 2,
-		Authority: ss.Address,
+		SequenceID:  2,
+		Authority:   ss.Address,
 		Payload: payload{
 			Message: []uint8{},
 		},
@@ -617,8 +620,8 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 3,
-		Authority: ss.Address,
+		SequenceID:  3,
+		Authority:   ss.Address,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -628,16 +631,16 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		Authority: ss.Address,
-		SequenceID: 4,
+		Authority:   ss.Address,
+		SequenceID:  4,
 	}
 	grpcLogEntriesWant[4] = &grpcLogEntry{
 		Type:        serverTrailer,
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		SequenceID: 5,
-		Authority: ss.Address,
+		SequenceID:  5,
+		Authority:   ss.Address,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -679,8 +682,8 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		Authority: ss.Address,
-		SequenceID: 1,
+		Authority:   ss.Address,
+		SequenceID:  1,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -690,16 +693,16 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		SequenceID: 2,
-		Authority: ss.Address,
+		SequenceID:  2,
+		Authority:   ss.Address,
 	}
 	grpcLogEntriesWant[2] = &grpcLogEntry{
 		Type:        serverHeader,
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		SequenceID: 3,
-		Authority: ss.Address,
+		SequenceID:  3,
+		Authority:   ss.Address,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -709,8 +712,8 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "FullDuplexCall",
-		Authority: ss.Address,
-		SequenceID: 4,
+		Authority:   ss.Address,
+		SequenceID:  4,
 		Payload: payload{
 			Metadata: map[string]string{},
 		},
@@ -723,20 +726,20 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 func (s) TestTranslateMetadata(t *testing.T) {
 	concatBinLogValue := base64.StdEncoding.EncodeToString([]byte("value1")) + "," + base64.StdEncoding.EncodeToString([]byte("value2"))
 	tests := []struct {
-		name string
+		name     string
 		binLogMD *binlogpb.Metadata
-		wantMD map[string]string
+		wantMD   map[string]string
 	}{
 		{
 			name: "two-entries-different-key",
 			binLogMD: &binlogpb.Metadata{
 				Entry: []*binlogpb.MetadataEntry{
 					{
-						Key: "header1",
+						Key:   "header1",
 						Value: []byte("value1"),
 					},
 					{
-						Key: "header2",
+						Key:   "header2",
 						Value: []byte("value2"),
 					},
 				},
@@ -751,11 +754,11 @@ func (s) TestTranslateMetadata(t *testing.T) {
 			binLogMD: &binlogpb.Metadata{
 				Entry: []*binlogpb.MetadataEntry{
 					{
-						Key: "header1",
+						Key:   "header1",
 						Value: []byte("value1"),
 					},
 					{
-						Key: "header1",
+						Key:   "header1",
 						Value: []byte("value2"),
 					},
 				},
@@ -769,11 +772,11 @@ func (s) TestTranslateMetadata(t *testing.T) {
 			binLogMD: &binlogpb.Metadata{
 				Entry: []*binlogpb.MetadataEntry{
 					{
-						Key: "header1-bin",
+						Key:   "header1-bin",
 						Value: []byte("value1"),
 					},
 					{
-						Key: "header1-bin",
+						Key:   "header1-bin",
 						Value: []byte("value2"),
 					},
 				},
@@ -787,25 +790,25 @@ func (s) TestTranslateMetadata(t *testing.T) {
 			binLogMD: &binlogpb.Metadata{
 				Entry: []*binlogpb.MetadataEntry{
 					{
-						Key: "header1",
+						Key:   "header1",
 						Value: []byte("value1"),
 					},
 					{
-						Key: "header1",
+						Key:   "header1",
 						Value: []byte("value2"),
 					},
 					{
-						Key: "header1-bin",
+						Key:   "header1-bin",
 						Value: []byte("value1"),
 					},
 					{
-						Key: "header1-bin",
+						Key:   "header1-bin",
 						Value: []byte("value2"),
 					},
 				},
 			},
 			wantMD: map[string]string{
-				"header1": "value1,value2",
+				"header1":     "value1,value2",
 				"header1-bin": concatBinLogValue,
 			},
 		},

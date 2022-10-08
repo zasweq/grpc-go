@@ -295,7 +295,7 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 	}
 
 	openCensusOnConfig := &config{
-		ProjectID: "fake",
+		ProjectID:       "fake",
 		CloudMonitoring: &cloudMonitoring{},
 		CloudTrace: &cloudTrace{
 			SamplingRate: 1.0,

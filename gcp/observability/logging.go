@@ -37,7 +37,6 @@ import (
 	"google.golang.org/grpc/internal/grpcutil"
 )
 
-
 var lExporter loggingExporter
 
 var newLoggingExporter = newCloudLoggingExporter
@@ -150,28 +149,28 @@ type payload struct {
 	// Metadata ( go into manual bin encoding)
 	Metadata map[string]string `json:"metadata,omitempty"`
 	// Timeout is the RPC timeout value.
-	Timeout       time.Duration `json:"timeout,omitempty"` // does this need special handling for JSON marshaling? Can verify in my test.
+	Timeout time.Duration `json:"timeout,omitempty"` // does this need special handling for JSON marshaling? Can verify in my test.
 	// StatusCode is the gRPC status code.
-	StatusCode    uint32        `json:"statusCode,omitempty"`
+	StatusCode uint32 `json:"statusCode,omitempty"`
 	// StatusMessage is the gRPC status message.
-	StatusMessage string        `json:"statusMessage,omitempty"`
+	StatusMessage string `json:"statusMessage,omitempty"`
 	// StatusDetails is the value of the grpc-status-details-bin metadata key,
 	// if any. This is always an encoded google.rpc.Status message.
-	StatusDetails []byte        `json:"statusMessage,omitempty"`
+	StatusDetails []byte `json:"statusMessage,omitempty"`
 	// MessageLength is the length of the message.
-	MessageLength uint32        `json:"messageLength,omitempty"` // can use this for the logic I want in my test, clear int (but would need to put stuff in payload to trigger)
+	MessageLength uint32 `json:"messageLength,omitempty"` // can use this for the logic I want in my test, clear int (but would need to put stuff in payload to trigger)
 	// Message is the message of this entry. This is populated in the case of a
 	// message event.
-	Message       []byte        `json:"message,omitempty"`
+	Message []byte `json:"message,omitempty"`
 }
 
 type addrType int
 
 const (
-	typeUnknown addrType = iota    // `json:"TYPE_UNKNOWN"`
-	ipv4                           // `json:"TYPE_IPV4"`
-	ipv6                           // `json:"TYPE_IPV6"`
-	unix                           // `json:"TYPE_UNIX"`
+	typeUnknown addrType = iota // `json:"TYPE_UNKNOWN"`
+	ipv4                        // `json:"TYPE_IPV4"`
+	ipv6                        // `json:"TYPE_IPV6"`
+	unix                        // `json:"TYPE_UNIX"`
 )
 
 func (at addrType) MarshalJSON() ([]byte, error) {
@@ -192,12 +191,12 @@ func (at addrType) MarshalJSON() ([]byte, error) {
 
 type address struct {
 	// Type is the address type of the address of the peer of the RPC.
-	Type    addrType   `json:"type,omitempty"`
+	Type addrType `json:"type,omitempty"`
 	// Address is the address of the peer of the RPC.
 	Address string `json:"address,omitempty"`
 	// IpPort is the ip and port in string form. It is used only for addrType
 	// ipv4 and ipv6.
-	IpPort  uint32 `json:"ipPort,omitempty"`
+	IpPort uint32 `json:"ipPort,omitempty"`
 }
 
 type grpcLogEntry struct {
@@ -205,34 +204,34 @@ type grpcLogEntry struct {
 	// several log entries. They will all have the same CallId. Nothing is
 	// guaranteed about their value other than they are unique across different
 	// RPCs in the same gRPC process.
-	CallId     string    `json:"callId,omitempty"`
+	CallId string `json:"callId,omitempty"`
 	// SequenceID is the entry sequence ID for this call. The first message has
 	// a value of 1, to disambiguate from an unset value. The purpose of this
 	// field is to detect missing entries in environments where durability or
 	// ordering is not guaranteed.
-	SequenceID uint64    `json:"sequenceId,omitempty"`
+	SequenceID uint64 `json:"sequenceId,omitempty"`
 	// Type is the type of binary logging event being logged.
-	Type       eventType `json:"type,omitempty"`
+	Type eventType `json:"type,omitempty"`
 	// Logger is the entity that generates the log entry.
-	Logger     loggerType    `json:"logger,omitempty"`
+	Logger loggerType `json:"logger,omitempty"`
 
 	// Payload is the payload of this log entry.
-	Payload          payload `json:"payload,omitempty"`
+	Payload payload `json:"payload,omitempty"`
 	// PayloadTruncated is whether the message or metadata field is either
 	// truncated or emitted due to options specified in the configuration.
-	PayloadTruncated bool    `json:"payloadTruncated,omitempty"`
+	PayloadTruncated bool `json:"payloadTruncated,omitempty"`
 	// Peer is information about the Peer of the RPC.
-	Peer             address `json:"peer,omitempty"`
+	Peer address `json:"peer,omitempty"`
 
 	// A single process may be used to run multiple virtual servers with
 	// different identities.
 	// Authority is the name of such a server identify. It is typically a
 	// portion of the URI in the form of <host> or <host>:<port>.
-	Authority   string `json:"authority,omitempty"`
+	Authority string `json:"authority,omitempty"`
 	// ServiceName is the name of the service.
 	ServiceName string `json:"serviceName,omitempty"`
 	// MethodName is the name of the RPC method.
-	MethodName  string `json:"methodName,omitempty"`
+	MethodName string `json:"methodName,omitempty"`
 }
 
 func (gle *grpcLogEntry) MarshalJSON() ([]byte, error) {
