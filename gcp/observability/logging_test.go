@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	binlogpb "google.golang.org/grpc/binarylog/grpc_binarylog_v1"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/test/grpc_testing"
@@ -34,25 +35,20 @@ import (
 	"testing"
 )
 
-
-// expected log entries
-// throughout this goddamn test will need to define expected log entries
-
-// In regards to sharing the []LoggingEntry
-// Unary Server/ClientSide are the same
-
-// Streaming RPC Server/Client Side share the same thing expect extra server headers (stick that into []?)
-
-// Empty Call has a different []LoggingEntry - only for last test
-
-
-
+func cmpLoggingEntryList(entryList1 []*grpcLogEntry, entryList2 []*grpcLogEntry) error {
+	if diff := cmp.Diff(entryList1, entryList2,
+		cmpopts.IgnoreFields(grpcLogEntry{}, "CallId", "Peer"),
+		cmpopts.IgnoreFields(address{}, "IpPort", "Type"),
+		cmpopts.IgnoreFields(payload{}, "Timeout")); diff != "" {
+		return fmt.Errorf("got unexpected grpcLogEntry list, diff (-got, +want): %v", diff)
+	}
+	return nil
+}
 
 type fakeLoggingExporter struct {
 	t        *testing.T
 
 	mu       sync.Mutex
-	isClosed bool
 	entries []*grpcLogEntry
 }
 
@@ -69,25 +65,11 @@ func (fle *fakeLoggingExporter) EmitGcpLoggingEntry(entry gcplogging.Entry) {
 }
 
 func (fle *fakeLoggingExporter) Close() error {
-	fle.isClosed = true // maybe verfiy this gets set when observability exits in Close()
 	return nil
 }
 
 // setupObservabilitySystemWithConfig sets up
 func setupObservabilitySystemWithConfig(cfg *config) (func(), error) {
-	/*fle := &fakeLoggingExporter{
-		t: t,
-
-	}
-	defer func(ne func(ctx context.Context, config *config) (loggingExporter, error)) {
-		newLoggingExporter = ne
-	}(newLoggingExporter)
-
-	newLoggingExporter = func(ctx context.Context, config *config) (loggingExporter, error) {
-		return fle, nil
-	}*/ // unless there is a way to plumb this within this function (particularly the cleanup function seems tricky)
-
-	// If they get mad it's not declared JSON, say it's cleaner this way and tests JSON tags?
 	validConfigJSON, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert config to JSON: %v", err)
@@ -105,8 +87,8 @@ func setupObservabilitySystemWithConfig(cfg *config) (func(), error) {
 	}, nil
 }
 
-// TestClientRPCEventsLogAll tests the observability system setup with a client
-// RPC event that logs every call. It performs a Unary and Bidirectional
+// TestClientRPCEventsLogAll tests the observability system configured with a
+// client RPC event that logs every call. It performs a Unary and Bidirectional
 // Streaming RPC, and expects certain gRPC Logging entries to make it's way to
 // the exporter.
 func (s) TestClientRPCEventsLogAll(t *testing.T) {
@@ -119,13 +101,7 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 
 	newLoggingExporter = func(ctx context.Context, config *config) (loggingExporter, error) {
 		return fle, nil
-	} // this and server setup are common to every test - put into setup()?
-
-	// test this by plumbing in? and seeing how many bytes get emitted?
-	// Orthogonal to number of events emitted and you can further test the bytes
-	// by looking at specific payload. This is a dependency for logic for last
-	// test (i.e. correct bytes logged). Need to fill up Metadata and Messages
-	// with a big enough thing to log it pushes against the max.
+	}
 
 	clientRPCEventLogAllConfig := &config{
 		ProjectID: "fake",
@@ -168,139 +144,65 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{}); err != nil {
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
 	}
-
-	for i, gle := range fle.entries {
-		print("entry index: ", i, " ")
-		print("entry type: ", gle.Type, " ")
-		print("method name: ", gle.MethodName, " ")
-		print("service name: ", gle.ServiceName, " ")
-		print("authority: ", gle.Authority, " ")
-		print("gle.Peer.Address: ", gle.Peer.Address, " ")
-		print("gle.Peer.Type: ", gle.Peer.Type, " ")
-		print("gle.Peer.IpPort: ", gle.Peer.IpPort, " ")
-		// the payload seems to be dependent on what type of stream operation is happening on the RPC.
-		print("gle.payload.Type: ", gle.Payload.Message, " ")
-		print("gle.payload.StatusCode: ", gle.Payload.StatusCode, " ")
-		print("gle.payload.Metadata: ", gle.Payload.Metadata, " ")
-		// payload stuff comes later
-	}
-	// Get this sanity test working in regards to the events specific to logging
-	// var expectedGCPLoggingEntries []grpcLogEntry // do we want this to be a pointer?
-
-	/*
-		EventTypeUnknown EventType = iota 0
-		// ClusterTypeLogicalDNS represents the Logical DNS cluster type, which essentially
-		// maps to the gRPC behavior of using the DNS resolver with pick_first LB policy.
-		ClientHeader 1
-		// ClusterTypeAggregate represents the Aggregate Cluster type, which provides a
-		// prioritized list of clusters to use. It is used for failover between clusters
-		// with a different configuration.
-		ServerHeader 2
-		ClientMessage 3
-		ServerMessage 4
-		ClientHalfClose 5
-		ServerTrailer 6
-		Cancel 7
-	*/
-
-	/*
-		type grpcLogEntry struct {
-		    CallId           string    `json:"callId,omitempty"`
-		    SequenceID       uint64    `json:"sequenceId,omitempty"`
-		    Type             EventType `json:"type,omitempty"`
-		    Logger           Logger    `json:"logger,omitempty"`
-		    payload          payload   `json:"payload,omitempty"`
-		    PayloadTruncated bool      `json:"payloadTruncated,omitempty"`
-		    Peer             Address   `json:"peer,omitempty"`
-		    Authority        string    `json:"authority,omitempty"`
-		    ServiceName      string    `json:"serviceName,omitempty"`
-		    MethodName       string    `json:"methodName,omitempty"`
-		}
-	*/
-
-	// fill out a want for the entries client side
-
-	// cmp.Diff only the entries you reallyyyyy want to test and are verifiable
-	// IgnoreFields <- keep adding these until it works.
-
-	// cmp.Diff with ignoring fields or something like Lidi's where you verify each field individually
-	grpcLogEntriesWant := make([]grpcLogEntry, 5)
-	grpcLogEntriesWant[0] = grpcLogEntry{
+	grpcLogEntriesWant := make([]*grpcLogEntry, 5)
+	grpcLogEntriesWant[0] = &grpcLogEntry{
 		Type:        clientHeader,
-		Logger:      client, // these are all for client streams in the bin, should all be client stream, yeah lines up with client events in Lidi's verification
+		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		// doesn't have an address? Is this correct?
-		Authority: "127.0.0.1:501", // authority only on the first client header? This is a port where do I get this information
-		// Authority:   te.srvAddr, in Lidi's, only tests on the first event
+		Authority: ss.Address,
+		SequenceID: 1,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
 	}
-	// Need a comparator for Metadata. This seems like an important thing to compare.
-	// cmp.Diff() // on the whole slice of log entries?
-	/*
-		type payload struct {
-		    Metadata      map[string]string `json:"metadata,omitempty"`
-		    Timeout       time.Duration     `json:"timeout,omitempty"`
-		    StatusCode    uint32            `json:"statusCode,omitempty"`
-		    StatusMessage string            `json:"statusMessage,omitempty"`
-		    StatusDetails []byte            `json:"statusMessage,omitempty"`
-		    MessageLength uint32            `json:"messageLength,omitempty"`
-		    Message       []byte            `json:"message,omitempty"`
-		}
-	*/
-	/*
-		type Address struct {
-		    Type    Type   `json:"type,omitempty"`
-		    Address string `json:"address,omitempty"`
-		    IpPort  uint32 `json:"ipPort,omitempty"`
-		}
-	*/
-
-	// cmp.Diff across the whole array, but then the fields you want to ignore for others won't happen
-	// I think if you try cmp.Diff and play around with it you can go from utmost granularity to work backwards
-	// and see the least amount of things you need to exclude.
-
-	grpcLogEntriesWant[1] = grpcLogEntry{
+	grpcLogEntriesWant[1] = &grpcLogEntry{
 		Type:        clientMessage,
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
+		SequenceID: 2,
+		Authority: ss.Address,
+		Payload: payload{
+			Message: []uint8{},
+		},
 	}
-	grpcLogEntriesWant[2] = grpcLogEntry{
+	grpcLogEntriesWant[2] = &grpcLogEntry{
 		Type:        serverHeader,
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		// this is the only thing with address,
-		Peer: address{
-			Address: "127.0.0.1", // localhost :)
-			Type:    1,           // weird, IPV4, I don't think this is really fixed and something we should verify. This seems to be a variable.
-			IpPort:  50166,       // what?
+		SequenceID: 3,
+		Authority: ss.Address,
+		Payload: payload{
+			Metadata: map[string]string{},
 		},
 	}
-	grpcLogEntriesWant[3] = grpcLogEntry{
+	grpcLogEntriesWant[3] = &grpcLogEntry{
 		Type:        serverMessage,
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
+		Authority: ss.Address,
+		SequenceID: 4,
 	}
-	grpcLogEntriesWant[4] = grpcLogEntry{
+	grpcLogEntriesWant[4] = &grpcLogEntry{
 		Type:        serverTrailer,
 		Logger:      client,
 		ServiceName: "grpc.testing.TestService",
 		MethodName:  "UnaryCall",
-		Peer: address{
-			Address: "127.0.0.1", // localhost :)
-			Type:    1,           // weird, IPV4, I don't think this is really fixed and something we should verify. This seems to be a variable.
-			IpPort:  50166,       // what?
+		SequenceID: 5,
+		Authority: ss.Address,
+		Payload: payload{
+			Metadata: map[string]string{},
 		},
-	} // Why doesn't this have status?
+	}
 
-	// If you want to triage streaming difference,
-	// log the events here
-	// streaming RPC
-	// could see 4 client events
+	if err := cmpLoggingEntryList(fle.entries, grpcLogEntriesWant); err != nil {
+		t.Fatalf("error in logging entry list comparison %v", err)
+	}
 
-	// in another test case, if you configure with server, can see 5 then 3
+	fle.entries = nil
 
 	// Make a streaming RPC. This should cause Log calls on the MethodLogger.
 	stream, err := ss.Client.FullDuplexCall(ctx)
@@ -308,52 +210,55 @@ func (s) TestClientRPCEventsLogAll(t *testing.T) {
 		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
 	}
 
-	stream.CloseSend() // set handshake - causes return nil on server side, causes an io.EOF error to come out of client side due to strema ending with no error present
+	stream.CloseSend()
 	if _, err = stream.Recv(); err != io.EOF {
 		t.Fatalf("unexpected error: %v, expected an EOF error", err)
 	}
-	for i, gle := range fle.entries {
-		print("entry index: ", i, " ")
-		print("entry type: ", gle.Type, " ")
-		/*print("method name: ", gle.MethodName, " ")
-		print("service name: ", gle.ServiceName, " ")
-		print("authority: ", gle.Authority, " ")
-		print("gle.Peer.Address: ", gle.Peer.Address, " ")
-		print("gle.Peer.Type: ", gle.Peer.Type, " ")
-		print("gle.Peer.IpPort: ", gle.Peer.IpPort, " ")
-		// the payload seems to be dependent on what type of stream operation is happening on the RPC.
-		print("gle.payload.Type: ", gle.payload.Message, " ")
-		print("gle.payload.StatusCode: ", gle.payload.StatusCode, " ")
-		print("gle.payload.Metadata: ", gle.payload.Metadata, " ")
-		// payload stuff comes later*/
+	grpcLogEntriesWant = make([]*grpcLogEntry, 4)
+	grpcLogEntriesWant[0] = &grpcLogEntry{
+		Type:        clientHeader,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		Authority: ss.Address,
+		SequenceID: 1,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
 	}
-
-	// entry type: 1 Client Header
-	gle := grpcLogEntry{
-		Type: clientHeader,
+	grpcLogEntriesWant[1] = &grpcLogEntry{
+		Type:        clientHalfClose,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		SequenceID: 2,
+		Authority: ss.Address,
 	}
-	grpcLogEntriesWant = append(grpcLogEntriesWant, gle)
-	// entry type: 5 Client Half Close
-	gle = grpcLogEntry{
-		Type: clientHalfClose,
+	grpcLogEntriesWant[2] = &grpcLogEntry{
+		Type:        serverHeader,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		SequenceID: 3,
+		Authority: ss.Address,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
 	}
-	grpcLogEntriesWant = append(grpcLogEntriesWant, gle)
-	// ^^^^ shared atoms with server side
-
-	// entry type: 2 Server Header WRONG, logs headers if trailers only.
-	gle = grpcLogEntry{
-		Type: serverHeader,
+	grpcLogEntriesWant[3] = &grpcLogEntry{
+		Type:        serverTrailer,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		Authority: ss.Address,
+		SequenceID: 4,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
 	}
-
-	// vvvv shared atoms with client side
-	grpcLogEntriesWant = append(grpcLogEntriesWant, gle)
-	// entry type: 6 Server Trailer
-	gle = grpcLogEntry{
-		Type: serverTrailer,
+	if err := cmpLoggingEntryList(fle.entries, grpcLogEntriesWant); err != nil {
+		t.Fatalf("error in logging entry list comparison %v", err)
 	}
-	grpcLogEntriesWant = append(grpcLogEntriesWant, gle)
-
-	print("final count: ", len(fle.entries))
 }
 
 func (s) TestServerRPCEventsLogAll(t *testing.T) {
@@ -366,7 +271,7 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 
 	newLoggingExporter = func(ctx context.Context, config *config) (loggingExporter, error) {
 		return fle, nil
-	} // this and server setup are common to every test - put into setup()?
+	}
 
 	serverRPCEventLogAllConfig := &config{
 		ProjectID: "fake",
@@ -390,7 +295,7 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
 			return &grpc_testing.SimpleResponse{}, nil
 		},
-		FullDuplexCallF: func(stream grpc_testing.TestService_FullDuplexCallServer) error { // Another dependency - he has some comment about making this cleaner
+		FullDuplexCallF: func(stream grpc_testing.TestService_FullDuplexCallServer) error {
 			for {
 				_, err := stream.Recv()
 				if err == io.EOF {
@@ -404,53 +309,116 @@ func (s) TestServerRPCEventsLogAll(t *testing.T) {
 	}
 	defer ss.Stop()
 
-	// same thing as client,
-	// unary
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{}); err != nil {
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
 	}
-	// expected logEntries
+	grpcLogEntriesWant := make([]*grpcLogEntry, 5)
+	grpcLogEntriesWant[0] = &grpcLogEntry{
+		Type:        clientHeader,
+		Logger:      server,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		Authority: ss.Address,
+		SequenceID: 1,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
+	grpcLogEntriesWant[1] = &grpcLogEntry{
+		Type:        clientMessage,
+		Logger:      server,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		SequenceID: 2,
+		Authority: ss.Address,
+	}
+	grpcLogEntriesWant[2] = &grpcLogEntry{
+		Type:        serverHeader,
+		Logger:      server,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		SequenceID: 3,
+		Authority: ss.Address,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
+	grpcLogEntriesWant[3] = &grpcLogEntry{
+		Type:        serverMessage,
+		Logger:      server,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		Authority: ss.Address,
+		SequenceID: 4,
+		Payload: payload{
+			Message: []uint8{},
+		},
+	}
+	grpcLogEntriesWant[4] = &grpcLogEntry{
+		Type:        serverTrailer,
+		Logger:      server,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		SequenceID: 5,
+		Authority: ss.Address,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
 
-	// streaming
+	if err := cmpLoggingEntryList(fle.entries, grpcLogEntriesWant); err != nil {
+		t.Fatalf("error in logging entry list comparison %v", err)
+	}
+
+	fle.entries = nil
+
 	stream, err := ss.Client.FullDuplexCall(ctx)
 	if err != nil {
 		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
 	}
 
-	stream.CloseSend() // set handshake - causes return nil on server side, causes an io.EOF error to come out of client side due to strema ending with no error present
+	stream.CloseSend()
 	if _, err = stream.Recv(); err != io.EOF {
 		t.Fatalf("unexpected error: %v, expected an EOF error", err)
 	}
 
-	// expected logEntries
-
-	// Same exact expectations as the client except Logger: Server,
-	for i, gle := range fle.entries {
-		print("entry index: ", i, " ")
-		print("entry type: ", gle.Type, " ")
-		/*print("method name: ", gle.MethodName, " ")
-		print("service name: ", gle.ServiceName, " ")
-		print("authority: ", gle.Authority, " ")
-		print("gle.Peer.Address: ", gle.Peer.Address, " ")
-		print("gle.Peer.Type: ", gle.Peer.Type, " ")
-		print("gle.Peer.IpPort: ", gle.Peer.IpPort, " ")
-		// the payload seems to be dependent on what type of stream operation is happening on the RPC.
-		print("gle.payload.Type: ", gle.payload.Message, " ")
-		print("gle.payload.StatusCode: ", gle.payload.StatusCode, " ")
-		print("gle.payload.Metadata: ", gle.payload.Metadata, " ")*/
-		// payload stuff comes later
+	grpcLogEntriesWant = make([]*grpcLogEntry, 3)
+	grpcLogEntriesWant[0] = &grpcLogEntry{
+		Type:        clientHeader,
+		Logger:      server,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		Authority: ss.Address,
+		SequenceID: 1,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
 	}
-
-	// entry type: 1 - Client Header
-	// entry type: 5 - Client Half Close
-	// entry type: 6 - Server Trailer
-
-	print("final count: ", len(fle.entries))
+	grpcLogEntriesWant[1] = &grpcLogEntry{
+		Type:        clientHalfClose,
+		Logger:      server,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		SequenceID: 2,
+		Authority: ss.Address,
+	}
+	grpcLogEntriesWant[2] = &grpcLogEntry{
+		Type:        serverTrailer,
+		Logger:      server,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		Authority: ss.Address,
+		SequenceID: 3,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
+	if err := cmpLoggingEntryList(fle.entries, grpcLogEntriesWant); err != nil {
+		t.Fatalf("error in logging entry list comparison %v", err)
+	}
 }
-
-// after these basic things (unary/streaming on capture all on client and server) have other logic to test:
 
 // TestBothClientAndServerRPCEvents tests the scenario where you have both
 // Client and Server RPC Events configured to log. Both sides should log and
@@ -500,7 +468,7 @@ func (s) TestBothClientAndServerRPCEvents(t *testing.T) {
 		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
 			return &grpc_testing.SimpleResponse{}, nil
 		},
-		FullDuplexCallF: func(stream grpc_testing.TestService_FullDuplexCallServer) error { // Another dependency - he has some comment about making this cleaner
+		FullDuplexCallF: func(stream grpc_testing.TestService_FullDuplexCallServer) error {
 			for {
 				_, err := stream.Recv()
 				if err == io.EOF {
@@ -514,31 +482,24 @@ func (s) TestBothClientAndServerRPCEvents(t *testing.T) {
 	}
 	defer ss.Stop()
 
-	// Same thing as client,
-
-	// unary
+	// Make a Unary RPC. Both client side and server side streams should log
+	// entries, which share the same exporter. The exporter should thus receive
+	// entries from both the client and server streams (the specificity of
+	// entries is checked in previous tests).
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{}); err != nil {
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
 	}
-
-	// Both client side and server side streams should log entries, which share
-	// the same exporter. The exporter should thus receive both entries (the
-	// specificity of entries is checked in previous tests).
 	if len(fle.entries) != 10 {
 		t.Fatalf("Unexpected length of entries %v, want 10 (collective of client and server)", len(fle.entries))
 	}
-
-
-
-	// "both sides of streams should write to exporter", so expect it with n
 	stream, err := ss.Client.FullDuplexCall(ctx)
 	if err != nil {
 		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
 	}
 
-	stream.CloseSend() // set handshake - causes return nil on server side, causes an io.EOF error to come out of client side due to strema ending with no error present
+	stream.CloseSend()
 	if _, err = stream.Recv(); err != io.EOF {
 		t.Fatalf("unexpected error: %v, expected an EOF error", err)
 	}
@@ -547,28 +508,14 @@ func (s) TestBothClientAndServerRPCEvents(t *testing.T) {
 	}
 }
 
-// Config with three blobs of events: [!exclude, exclude, !exclude], have one
-// that hits each event (also makes sure it doesn't hit two nodes and log twice
-// and makes sure it stops processing the moment it hits), explain what logic
-// this test covers further in comment, and how the three nodes cover logic we
-// want tested
-
-// First test case: service/unary super specific - should log (this would also match third, if this only logs once tests
-// it hits first match and doesn't proceed further)
-
-// Second test case: service/streaming - shouldn't log
-
-// Third test case: service/ - should log (needs to be a third function call which doesn't hit first one)
-
 // TestPrecedenceOrderingInConfiguration tests the scenario where the logging
 // part of observability is configured with three client RPC events, the first
 // two on specific methods in the service, the last one for any method within
 // the service. This test sends three RPC's, one corresponding to each log
 // entry. The logging logic dictated by that specific event should be what is
-// used for emission (i.e. a specific method in a service will match the third
-// event too, but should only use logic within one it first matches to). The
-// second event will specify to exclude logging on RPC's, which should generate
-// no log entries if an RPC gets to and matches that event.
+// used for emission. The second event will specify to exclude logging on RPC's,
+// which should generate no log entries if an RPC gets to and matches that
+// event.
 func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 	fle := &fakeLoggingExporter{
 		t: t,
@@ -592,7 +539,7 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 					MaxMessageBytes:  30,
 				},
 				{
-					Method:           []string{"/grpc.testing.TestService/FullDuplexCall"},
+					Method:           []string{"/grpc.testing.TestService/EmptyCall"},
 					Exclude:          true,
 					MaxMetadataBytes: 30,
 					MaxMessageBytes:  30,
@@ -600,7 +547,7 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 				{
 					Method:           []string{"/grpc.testing.TestService/*"},
 					MaxMetadataBytes: 30,
-					MaxMessageBytes:  20, // can verify first doesn't hit this.
+					MaxMessageBytes:  30,
 				},
 			},
 		},
@@ -612,7 +559,6 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 	}
 	defer cleanup()
 
-	// This is common setup ^^^ factor out into setup() with config as parameter?
 	ss := &stubserver.StubServer{
 		EmptyCallF: func(ctx context.Context, in *grpc_testing.Empty) (*grpc_testing.Empty, error) {
 			return &grpc_testing.Empty{}, nil
@@ -643,20 +589,80 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{}); err != nil {
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
 	}
-	print("len(fle.entries) after unary call: ", len(fle.entries), " ")
+	grpcLogEntriesWant := make([]*grpcLogEntry, 5)
+	grpcLogEntriesWant[0] = &grpcLogEntry{
+		Type:        clientHeader,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		Authority: ss.Address,
+		SequenceID: 1,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
+	grpcLogEntriesWant[1] = &grpcLogEntry{
+		Type:        clientMessage,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		SequenceID: 2,
+		Authority: ss.Address,
+		Payload: payload{
+			Message: []uint8{},
+		},
+	}
+	grpcLogEntriesWant[2] = &grpcLogEntry{
+		Type:        serverHeader,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		SequenceID: 3,
+		Authority: ss.Address,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
+	grpcLogEntriesWant[3] = &grpcLogEntry{
+		Type:        serverMessage,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		Authority: ss.Address,
+		SequenceID: 4,
+	}
+	grpcLogEntriesWant[4] = &grpcLogEntry{
+		Type:        serverTrailer,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "UnaryCall",
+		SequenceID: 5,
+		Authority: ss.Address,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
+	if err := cmpLoggingEntryList(fle.entries, grpcLogEntriesWant); err != nil {
+		t.Fatalf("error in logging entry list comparison %v", err)
+	}
 
-	// A streaming RPC should match with the second event, which has the exclude
-	// flag set. Thus, a streaming RPC should cause no downstream logs.
+	fle.entries = nil
 
+	// A unary empty RPC should match with the second event, which has the exclude
+	// flag set. Thus, a unary empty RPC should cause no downstream logs.
+	if _, err := ss.Client.EmptyCall(ctx, &grpc_testing.Empty{}); err != nil {
+		t.Fatalf("Unexpected error from EmptyCall: %v", err)
+	}
+	// The exporter should have received no new log entries due to this call.
+	if len(fle.entries) != 0 {
+		t.Fatalf("Unexpected length of entries %v, want 0", len(fle.entries))
+	}
 
-	// []grpcLogEntries shared with first test, have it the same metadata and header bytes
-	// to keep logic consistent and can test it doens't log like last one.
+	print("len(fle.entries) after full duplex call: ", len(fle.entries), " ")
 
-
-
-	// Streaming RPC should match with second event and cause no downstream logs
-	// (ASSERT count is same as after Unary RPC?)
-	// streaming
+	// A third RPC, a full duplex call, which doesn't match with first two and
+	// matches to last one, due to being a wildcard for every method in the
+	// service, should log accordingly to the last event's logic.
 	stream, err := ss.Client.FullDuplexCall(ctx)
 	if err != nil {
 		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
@@ -666,31 +672,55 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 	if _, err = stream.Recv(); err != io.EOF {
 		t.Fatalf("unexpected error: %v, expected an EOF error", err)
 	}
-	// (ASSERT count is same as after Unary RPC?)
 
-	// The exporter should have received no new log entries due to this call,
-	// and should have the same number of entries as after the Unary Call.
-	if len(fle.entries) != 5 {
-		t.Fatalf("Unexpected length of entries %v, want 5", len(fle.entries))
+	grpcLogEntriesWant = make([]*grpcLogEntry, 4)
+	grpcLogEntriesWant[0] = &grpcLogEntry{
+		Type:        clientHeader,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		Authority: ss.Address,
+		SequenceID: 1,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
 	}
-
-	print("len(fle.entries) after full duplex call: ", len(fle.entries), " ")
-
-	// A third RPC, which doesn't match with first two and matches to last one,
-	// due to being a wildcard for every method in the service, should log
-	// accordingly to the last event's logic.
-	if _, err := ss.Client.EmptyCall(ctx, &grpc_testing.Empty{}); err != nil {
-		t.Fatalf("Unexpected error from EmptyCall: %v", err)
-	} // will this be able to trigger the max, this is literally an empty call
-	print("len(fle) after empty call: ", len(fle.entries), " ") // ugh also need to cmp.Diff fuck
-
-	// declare a [] that tests the logic of new bytes (metadata length)
-
+	grpcLogEntriesWant[1] = &grpcLogEntry{
+		Type:        clientHalfClose,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		SequenceID: 2,
+		Authority: ss.Address,
+	}
+	grpcLogEntriesWant[2] = &grpcLogEntry{
+		Type:        serverHeader,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		SequenceID: 3,
+		Authority: ss.Address,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
+	grpcLogEntriesWant[3] = &grpcLogEntry{
+		Type:        serverTrailer,
+		Logger:      client,
+		ServiceName: "grpc.testing.TestService",
+		MethodName:  "FullDuplexCall",
+		Authority: ss.Address,
+		SequenceID: 4,
+		Payload: payload{
+			Metadata: map[string]string{},
+		},
+	}
+	if err := cmpLoggingEntryList(fle.entries, grpcLogEntriesWant); err != nil {
+		t.Fatalf("error in logging entry list comparison %v", err)
+	}
 }
 
-// oh also need to test bin headers fuck, unit test (see examples in codebase for this)
 func (s) TestTranslateMetadata(t *testing.T) {
-	// translateMetadata(m *binlogpb.Metadata) map[string]string
 	concatBinLogValue := base64.StdEncoding.EncodeToString([]byte("value1")) + "," + base64.StdEncoding.EncodeToString([]byte("value2"))
 	tests := []struct {
 		name string
@@ -735,7 +765,6 @@ func (s) TestTranslateMetadata(t *testing.T) {
 			},
 		},
 		{
-			// two kvs with same key and key is a bin header -> k: "base64 encoded", "base64 encoded"
 			name: "two-entries-same-key-bin-header",
 			binLogMD: &binlogpb.Metadata{
 				Entry: []*binlogpb.MetadataEntry{
@@ -753,7 +782,6 @@ func (s) TestTranslateMetadata(t *testing.T) {
 				"header1-bin": concatBinLogValue,
 			},
 		},
-		// both of them combined - tests the interleaving of these two
 		{
 			name: "four-entries-two-keys",
 			binLogMD: &binlogpb.Metadata{
@@ -783,7 +811,6 @@ func (s) TestTranslateMetadata(t *testing.T) {
 		},
 	}
 
-	// How to compare maps? Map ordering isn't guaranteed.
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if gotMD := translateMetadata(test.binLogMD); !cmp.Equal(gotMD, test.wantMD) {

@@ -50,7 +50,7 @@ func translateMetadata(m *binlogpb.Metadata) map[string]string { // unit test of
 		entryKey := entry.GetKey()
 		var newVal string
 		if strings.HasSuffix(entryKey, "-bin") { // bin header
-			base64.StdEncoding.EncodeToString(entry.GetValue())
+			newVal = base64.StdEncoding.EncodeToString(entry.GetValue())
 		} else { // normal header
 			newVal = string(entry.GetValue())
 		}
