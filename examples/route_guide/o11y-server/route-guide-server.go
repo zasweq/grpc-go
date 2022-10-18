@@ -221,7 +221,7 @@ func newServer() *routeGuideServer {
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
-	err := observability.Start(ctx)
+	err := observability.Start(ctx) // BIG NOTE: THE CONFIG FILTER MIGHT NOT BE THE CORRECT METHOD NAME FOR ROUTE GUIDE IN GO
 	if err != nil {
 		log.Fatalf("observability start failed: %v", err)
 	}

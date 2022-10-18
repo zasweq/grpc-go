@@ -4,9 +4,10 @@ go 1.14
 
 require (
 	github.com/golang/protobuf v1.5.2
-	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
-	google.golang.org/genproto v0.0.0-20200806141610-86f49bd18e98
-	google.golang.org/grpc v1.36.0
+	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8
+	google.golang.org/genproto v0.0.0-20211018162055-cf77aa76bad2
+	google.golang.org/grpc v1.46.0
+	google.golang.org/grpc/gcp/observability v0.0.0-20221018224448-439221d85ac9 // indirect
 	google.golang.org/protobuf v1.27.1
 )
 

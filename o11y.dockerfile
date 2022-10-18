@@ -9,12 +9,25 @@ ENV GRPC_GO_LOG_VERBOSITY_LEVEL 2
 WORKDIR /grpc-go
 
 # what does this do and how does it relate to
-# the WORKDIR set above
+# the WORKDIR set above wtf is this copying and where is this copying to
 COPY ..
 
-RUN go build -o examples/route_guide/o11y-server/ examples/route_guide/o11y-server/server.go
-RUN go build -o examples/route_guide/o11y-client/ examples/route_guide/o11y-client/client.go
+RUN mkdir -p ./build/install/examples/bin
+
+# Commands used in the BUILDING of the container
+RUN go build -o ./build/install/examples/bin examples/route_guide/o11y-server/route-guide-server.go
+RUN go build -o ./build/install/examples/bin examples/route_guide/o11y-client/route-guide-client.go
+
+# COPY --from=build /build/install/examples/bin /build/install/examples/bin
 
 # EXPOSE 10000?
 
-CMD ["/bin/sleep", "inf"]
+
+# Based on start comamnds, either run the server binary or client binary
+
+# build, and then upload the built image to a registry (alongside this file)?
+
+# pull from the registry and run container, runs this ENTRYPOINT command
+
+# Command executed when the container is STARTED. When you deploy an image on Kubernetes, is this considered "STARTED"?
+# ENTRYPOINT ["./client"]
