@@ -40,7 +40,6 @@ import (
 var (
 	tls                = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
 	caFile             = flag.String("ca_file", "", "The file containing the CA root cert file")
-	serverAddr         = flag.String("addr", "localhost:50051", "The server address in the format of host:port")
 	serverHostOverride = flag.String("server_host_override", "x.test.example.com", "The server name used to verify the hostname returned by the TLS handshake")
 )
 
@@ -174,8 +173,7 @@ func main() {
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
-
-	conn, err := grpc.Dial(*serverAddr, opts...)
+	conn, err := grpc.Dial(flag.Arg(0), opts...)
 	if err != nil {
 		log.Fatalf("fail to dial: %v", err)
 	}
