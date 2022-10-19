@@ -1,0 +1,173 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-grpc-server
+  labels:
+    name: example-grpc-server
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-grpc-client
+  labels:
+    name: example-grpc-client
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: example-grpc-server
+  namespace: example-grpc-server
+  annotations:
+    iam.gke.io/gcp-service-account: ${PROJNUM}-compute@developer.gserviceaccount.com
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: example-grpc-client
+  namespace: example-grpc-client
+  annotations:
+    iam.gke.io/gcp-service-account: ${PROJNUM}-compute@developer.gserviceaccount.com
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: appconfig
+  namespace: example-grpc-server
+data:
+  GRPC_GCP_OBSERVABILITY_CONFIG: |
+    {
+      "cloud_monitoring": {},
+      "cloud_trace": {
+         "sampling_rate": 1.00
+       },
+      "cloud_logging": {
+         "client_rpc_events": [{
+             "methods": ["routeguide.RouteGuide/*"]
+         }],
+         "server_rpc_events": [{
+             "methods": ["routeguide.RouteGuide/*"]
+         }]
+      },
+      "labels": {
+          "DATACENTER" : "SAN_JOSE_DC"
+       }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: appconfig
+  namespace: example-grpc-client
+data:
+  GRPC_GCP_OBSERVABILITY_CONFIG: |
+    {
+      "cloud_monitoring": {},
+      "cloud_trace": {
+         "sampling_rate": 1.00
+       },
+      "cloud_logging": {
+         "client_rpc_events": [{
+             "methods": ["routeguide.RouteGuide/*"]
+         }],
+         "server_rpc_events": [{
+             "methods": ["routeguide.RouteGuide/*"]
+         }]
+      },
+      "labels": {
+          "DATACENTER" : "SAN_JOSE_DC"
+       }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-grpc-server
+  namespace: example-grpc-server
+  labels:
+    k8s-app: example-grpc-server
+spec:
+  ports:
+  - name: helloworld
+    port: 8080
+    protocol: TCP
+    targetPort: 50051
+  selector:
+    k8s-app: example-grpc-server
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-grpc-server
+  namespace: example-grpc-server
+  labels:
+    k8s-app: example-grpc-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: example-grpc-server
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        k8s-app: example-grpc-server
+    spec:
+      containers:
+      - image: grpctesting/o11y-examples:1.1
+        imagePullPolicy: Always
+        name: example-grpc-server
+        command:
+        - /bin/sleep
+        - inf
+        envFrom:
+        - configMapRef:
+            name: appconfig
+        ports:
+        - protocol: TCP
+          containerPort: 50051
+        resources:
+          limits:
+            cpu: 800m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 512Mi
+      serviceAccountName: example-grpc-server
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-grpc-client
+  namespace: example-grpc-client
+  labels:
+    k8s-app: example-grpc-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: example-grpc-client
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        k8s-app: example-grpc-client
+    spec:
+      containers:
+      - image: grpctesting/o11y-examples:1.1
+        imagePullPolicy: Always
+        name: example-grpc-client
+        command:
+        - /bin/sleep
+        - inf
+        envFrom:
+        - configMapRef:
+            name: appconfig
+        resources:
+          limits:
+            cpu: 800m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 512Mi
+      serviceAccountName: example-grpc-client

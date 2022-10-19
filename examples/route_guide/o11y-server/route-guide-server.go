@@ -27,7 +27,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"google.golang.org/grpc/gcp/observability"
 	"io"
 	"io/ioutil"
 	"log"
@@ -35,6 +34,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"google.golang.org/grpc/gcp/observability"
 
 	"google.golang.org/grpc"
 
@@ -225,6 +226,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("observability start failed: %v", err)
 	}
+	defer observability.End()
 	flag.Parse()
 	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", *port))
 	if err != nil {

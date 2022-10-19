@@ -10,13 +10,16 @@ WORKDIR /grpc-go
 
 # what does this do and how does it relate to
 # the WORKDIR set above wtf is this copying and where is this copying to
-COPY ..
+COPY . .
 
 RUN mkdir -p ./build/install/examples/bin
 
 # Commands used in the BUILDING of the container
-RUN go build -o ./build/install/examples/bin examples/route_guide/o11y-server/route-guide-server.go
-RUN go build -o ./build/install/examples/bin examples/route_guide/o11y-client/route-guide-client.go
+RUN go get google.golang.org/grpc/examples/data
+RUN go get google.golang.org/grpc/examples/route_guide/routeguide
+RUN go get google.golang.org/grpc/gcp/observability
+RUN go build -o /build/install/examples/bin examples/route_guide/o11y-server/route-guide-server.go
+RUN go build -o /build/install/examples/bin examples/route_guide/o11y-client/route-guide-client.go
 
 # COPY --from=build /build/install/examples/bin /build/install/examples/bin
 

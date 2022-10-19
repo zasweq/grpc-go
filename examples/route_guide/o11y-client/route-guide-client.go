@@ -24,11 +24,12 @@ package main
 import (
 	"context"
 	"flag"
-	"google.golang.org/grpc/gcp/observability"
 	"io"
 	"log"
 	"math/rand"
 	"time"
+
+	"google.golang.org/grpc/gcp/observability"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -158,7 +159,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("observability start failed: %v", err)
 	}
-
+	defer observability.End()
 	flag.Parse()
 	var opts []grpc.DialOption
 	if *tls {

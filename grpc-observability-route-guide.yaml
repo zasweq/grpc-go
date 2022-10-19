@@ -1,0 +1,51 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: appconfig
+data:
+  GRPC_GCP_OBSERVABILITY_CONFIG: |
+    {
+      "cloud_monitoring": {},
+      "cloud_trace": {
+         "sampling_rate": 1.00
+       },
+      "cloud_logging": {
+         "client_rpc_events": [{
+             "methods": ["routeguide.RouteGuide/*"]
+         }],
+         "server_rpc_events": [{
+             "methods": ["routeguide.RouteGuide/*"]
+         }]
+      },
+      "labels": {
+          "DATACENTER" : "SAN_JOSE_DC"
+       }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: app1
+  name: app1
+spec:
+  selector:
+    matchLabels:
+      run: app1
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        run: app1
+    spec:
+      containers:
+      - image: grpctesting/o11y-examples:1.1
+        name: app1
+        ports:
+        - protocol: TCP
+          containerPort: 50051
+        envFrom:
+          - configMapRef:
+              name: appconfig
+
