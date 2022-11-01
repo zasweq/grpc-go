@@ -43,6 +43,8 @@ import (
 	"google.golang.org/grpc/tap"
 )
 
+var ErrNoHeaders = errors.New("stream has no headers")
+
 const logLevel = 2
 
 type bufferPool struct {
@@ -360,6 +362,33 @@ func (s *Stream) Done() <-chan struct{} {
 // On server side, it returns the out header after t.WriteHeader is called.  It
 // does not block and must not be called until after WriteHeader.
 func (s *Stream) Header() (metadata.MD, error) {
+	s.noHeaders // bool that's already an invariant of system we can leverage
+
+	// a conditional type of error - is it literally just an equivalence to error
+
+	// Make transport/Stream.Header() return a magic error with trailers-only:
+	// where to put this?
+
+	// So this is client and server side, but server side can never be called
+	// with no headers right, no trailers only response.
+
+	if s.noHeaders {
+		// is returning nil for headers, I think so what we want to do here?
+
+		// this is in internal/transport. if was a method, need to export
+		// something so stream.go can see it. Or just use substring?
+
+		// never use string match, always define an exporter error - ok since
+		// you're in internal, no extra External symbols for users
+
+		return nil, ErrNoHeaders /*"a magic error with trailers only" - define a certain error? stream.go has to be able to see it's that certain error., or just trigger this with the error text substring?*/
+	}
+
+	// all you do is adjust the number in three places and change the expected
+	// logs and I honestly think that's enough verification
+
+	// but how does it interact with this vvv
+
 	if s.headerChan == nil {
 		// On server side, return the header in stream. It will be the out
 		// header after t.WriteHeader is called.

@@ -755,14 +755,31 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 	err := cs.withRetry(func(a *csAttempt) error {
 		var err error
 		m, err = a.s.Header()
+		// can have this logic here or inside toRPCErr
+		if err == transport.ErrNoHeaders {
+			return err
+		}
 		return toRPCErr(err)
 	}, cs.commitAttemptLocked)
-	if err != nil {
+
+	/*Suppress it from the application, but use it as a signal to not binary log
+	/*the Header event on the client"*/ // add checks at both of the ifs, then fix tests, then done.
+
+	transport.ErrNoHeaders // gate the call below to not finish. Only used to not hit the if for binary logging the log Entry
+
+	if err != nil && err != transport.ErrNoHeaders { // don't hit this?
 		cs.finish(err)
 		return nil, err
 	}
-	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged {
+	// if this thing gets a magic error with trailers only, where is this persisted?
+	// this err local var?
+	transport.ErrNoHeaders
+
+	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged && err != transport.ErrNoHeaders { // don't hit this if err
 		// Only log if binary log is on and header has not been logged.
+
+		// gate here - invariant that stems from this noHeaders field thingy
+
 		logEntry := &binarylog.ServerHeader{
 			OnClientSide: true,
 			Header:       m,
