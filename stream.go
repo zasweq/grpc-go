@@ -705,6 +705,18 @@ func (cs *clientStream) Context() context.Context {
 }
 
 func (cs *clientStream) withRetry(op func(a *csAttempt) error, onSuccess func()) error {
+	// Two things: need to plumb this invariant around. The error needs to make
+	// it's way to the Header() callsite. Second layer from the op function which calls the stream
+	// to this function which returns error.
+
+
+	// Second thing...what I was thinking about before, keep behavior (where does this even happen)
+	// consistent, now that I've scaled up an error being returned, the functionality of the system needs to be constant
+	// switched from error returned nil to specific type of error
+
+	// operation is valid
+
+
 	cs.mu.Lock()
 	for {
 		if cs.committed {
@@ -752,12 +764,14 @@ func (cs *clientStream) withRetry(op func(a *csAttempt) error, onSuccess func())
 
 func (cs *clientStream) Header() (metadata.MD, error) {
 	var m metadata.MD
+	noHeader := false
 	err := cs.withRetry(func(a *csAttempt) error {
 		var err error
 		m, err = a.s.Header()
 		// can have this logic here or inside toRPCErr
 		if err == transport.ErrNoHeaders {
-			return err
+			noHeader = true
+			return nil
 		}
 		return toRPCErr(err)
 	}, cs.commitAttemptLocked)
@@ -765,17 +779,12 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 	/*Suppress it from the application, but use it as a signal to not binary log
 	/*the Header event on the client"*/ // add checks at both of the ifs, then fix tests, then done.
 
-	transport.ErrNoHeaders // gate the call below to not finish. Only used to not hit the if for binary logging the log Entry
-
-	if err != nil && err != transport.ErrNoHeaders { // don't hit this?
+	if err != nil {
 		cs.finish(err)
 		return nil, err
 	}
-	// if this thing gets a magic error with trailers only, where is this persisted?
-	// this err local var?
-	transport.ErrNoHeaders
 
-	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged && err != transport.ErrNoHeaders { // don't hit this if err
+	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged && !noHeader { // don't hit this if err
 		// Only log if binary log is on and header has not been logged.
 
 		// gate here - invariant that stems from this noHeaders field thingy
