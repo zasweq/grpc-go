@@ -769,7 +769,9 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 		var err error
 		m, err = a.s.Header()
 		// can have this logic here or inside toRPCErr
+		print("CHECKING if err is transport.ErrNoHeaders")
 		if err == transport.ErrNoHeaders {
+			print("NO HEADER SET TO TRUE")
 			noHeader = true
 			return nil
 		}
@@ -784,12 +786,16 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 		return nil, err
 	}
 
-	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged && !noHeader { // don't hit this if err
+	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged && !noHeader {
 		// Only log if binary log is on and header has not been logged.
 
-		// gate here - invariant that stems from this noHeaders field thingy
+		// Run this in my specific e2e test
+		// 1. figure out where the extra sh is actually being logged, is it even here?
+		// 2. If it is here, why is the invariant not working, should hit noHeader = true
 
-		logEntry := &binarylog.ServerHeader{
+		print("LOGGING SERVER HEADER")
+
+		logEntry := &binarylog.ServerHeader{ // is this actually what's logging the extra server header? if so, why isn't the invariant sent here?
 			OnClientSide: true,
 			Header:       m,
 			PeerAddr:     nil,
