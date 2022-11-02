@@ -705,18 +705,6 @@ func (cs *clientStream) Context() context.Context {
 }
 
 func (cs *clientStream) withRetry(op func(a *csAttempt) error, onSuccess func()) error {
-	// Two things: need to plumb this invariant around. The error needs to make
-	// it's way to the Header() callsite. Second layer from the op function which calls the stream
-	// to this function which returns error.
-
-
-	// Second thing...what I was thinking about before, keep behavior (where does this even happen)
-	// consistent, now that I've scaled up an error being returned, the functionality of the system needs to be constant
-	// switched from error returned nil to specific type of error
-
-	// operation is valid
-
-
 	cs.mu.Lock()
 	for {
 		if cs.committed {
@@ -768,18 +756,12 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 	err := cs.withRetry(func(a *csAttempt) error {
 		var err error
 		m, err = a.s.Header()
-		// can have this logic here or inside toRPCErr
-		print("CHECKING if err is transport.ErrNoHeaders")
 		if err == transport.ErrNoHeaders {
-			print("NO HEADER SET TO TRUE")
 			noHeader = true
 			return nil
 		}
 		return toRPCErr(err)
 	}, cs.commitAttemptLocked)
-
-	/*Suppress it from the application, but use it as a signal to not binary log
-	/*the Header event on the client"*/ // add checks at both of the ifs, then fix tests, then done.
 
 	if err != nil {
 		cs.finish(err)
@@ -787,15 +769,9 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 	}
 
 	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged && !noHeader {
-		// Only log if binary log is on and header has not been logged.
-
-		// Run this in my specific e2e test
-		// 1. figure out where the extra sh is actually being logged, is it even here?
-		// 2. If it is here, why is the invariant not working, should hit noHeader = true
-
-		print("LOGGING SERVER HEADER")
-
-		logEntry := &binarylog.ServerHeader{ // is this actually what's logging the extra server header? if so, why isn't the invariant sent here?
+		// Only log if binary log is on and header has not been logged, and
+		// there is actually headers to log.
+		logEntry := &binarylog.ServerHeader{
 			OnClientSide: true,
 			Header:       m,
 			PeerAddr:     nil,

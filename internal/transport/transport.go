@@ -362,19 +362,6 @@ func (s *Stream) Done() <-chan struct{} {
 // On server side, it returns the out header after t.WriteHeader is called.  It
 // does not block and must not be called until after WriteHeader.
 func (s *Stream) Header() (metadata.MD, error) {
-	/*print("checking for s.noHeaders")
-	if s.noHeaders { // I feel like this is going to break something
-		// this could be s.header.Copy() - will get caught in tests if this is a problem.
-		// the s.headerValid logic too inside it "but how does it interact with this vvv"
-		print("s.noHeaders is true, returning ErrNoHeaders")
-		return nil, ErrNoHeaders
-	}*/
-
-	// all you do is adjust the number in three places and change the expected
-	// logs and I honestly think that's enough verification
-
-	// On the server headerChan is always nil since a stream originates
-	// only after having received headers. Seems like this is all server side...
 	if s.headerChan == nil {
 		// On server side, return the header in stream. It will be the out
 		// header after t.WriteHeader is called.
@@ -382,19 +369,11 @@ func (s *Stream) Header() (metadata.MD, error) {
 	}
 	s.waitOnHeader()
 
-	// or do we do it before - I think we should do it after since
-	// invalid headers take precedence logcially/handling wise over a trailers only response
-	// which should return as a valid error but no headers error as an invariant.
-
 	if !s.headerValid {
 		return nil, s.status.Err()
 	}
 
-	print("checking for s.noHeaders")
-	if s.noHeaders { // I feel like this is going to break something
-		// this could be s.header.Copy() - will get caught in tests if this is a problem.
-		// the s.headerValid logic too inside it "but how does it interact with this vvv"
-		print("s.noHeaders is true, returning ErrNoHeaders")
+	if s.noHeaders {
 		return nil, ErrNoHeaders
 	}
 

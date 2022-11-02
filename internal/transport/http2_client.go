@@ -1488,7 +1488,6 @@ func (t *http2Client) operateHeaders(frame *http2.MetaHeadersFrame) {
 			}
 		} else {
 			// HEADERS frame block carries a Trailers-Only.
-			print("setting noHeaders to true")
 			s.noHeaders = true
 		}
 		close(s.headerChan)

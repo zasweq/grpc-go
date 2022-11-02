@@ -936,17 +936,6 @@ func (s) TestPrecedenceOrderingInConfiguration(t *testing.T) {
 			SequenceID:  2,
 			Authority:   ss.Address,
 		},
-		/*{
-			Type:        eventTypeServerHeader,
-			Logger:      loggerClient,
-			ServiceName: "grpc.testing.TestService",
-			MethodName:  "FullDuplexCall",
-			SequenceID:  3,
-			Authority:   ss.Address,
-			Payload: payload{
-				Metadata: map[string]string{},
-			},
-		},*/ // DONE, SEND THIS PR OUT, AND ALSO REVIEW DOUGS TESTS AGAIN
 		{
 			Type:        eventTypeServerTrailer,
 			Logger:      loggerClient,
