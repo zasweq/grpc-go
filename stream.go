@@ -156,6 +156,36 @@ func (cc *ClientConn) NewStream(ctx context.Context, desc *StreamDesc, method st
 	// configured as defaults from dial option as well as per-call options
 	opts = combine(cc.dopts.callOptions, opts)
 
+	// ah ok, so can do it right here at interceptor level,
+	// for unary does it at the invoke layer, but essentially does
+	// 1. interceptor (how would this work for this trace object?)
+	// 2. newClientStream
+
+	// traces:
+	// 1. interceptor (option one, do it at this level (maybe look at his example for xDS fault injection/interceptors)
+	// 2. newClientStream (option two emit a new TagRPC call from this), tag and handle, but just needs to create top level span not any objects in that span?)
+
+	// interceptor would be same (aka could be used) for both ^^^ and vvv
+
+
+	// (Retry metrics defined in A45 + Yash's metrics)
+	// 1. interceptor (this could potentially change how opencensus worked in general and created metrics in general? (i.e. how you actually instrument metrics using measures and views on those measures)) I think you need to define both interceptors for unary and streaming?
+	// 2. newClientStream or elsewhere would need to create these metrics
+
+	// A big consideration for me is how you implement the /call logic...?
+
+	// particularly the timestamp with the down time...how would this work from an interceptor level?
+
+	// how would it work with our current system (already has timestamps plumbed around)?
+	// how would all the metrics work with our current system?
+
+	// for the interception, when would it emit the metrics? At the very very end? or steady stream?
+	// if at the end, could take aggregated data and emit at end?
+
+	// how would an interceptor even get access to retry data?
+
+	// how do retry operations relate to unary/streaming? Does it reply send message recv message for unary?
+
 	if cc.dopts.streamInt != nil {
 		return cc.dopts.streamInt(ctx, desc, cc, method, newClientStream, opts...)
 	}
@@ -167,7 +197,18 @@ func NewClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	return cc.NewStream(ctx, desc, method, opts...)
 }
 
+// dial/call option relationship? This is how we'll turn off cloud ops logging on endpoints
+
+// interceptor gets all of this information listed here...
+
 func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, method string, opts ...CallOption) (_ ClientStream, err error) {
+
+	// no somewhere here call Tag and handle or just tag, need to just create the top level span...
+
+	// Tag creates the span (or creates a child...by adding a reference?)
+
+	// Handle attaches attributes (you need to scale up this function to to handle all the attributes of child attempts defined in A45)
+
 	if md, _, ok := metadata.FromOutgoingContextRaw(ctx); ok {
 		if err := imetadata.Validate(md); err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
@@ -321,9 +362,14 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	// Pick the transport to use and create a new stream on the transport.
 	// Assign cs.attempt upon success.
 	op := func(a *csAttempt) error {
+		// Ohhh, so even though the transoort is already created and you just get it from the client conn,
+
+		// picks next subchanel, retries allow you to use a bunch of different subchannels
+
 		if err := a.getTransport(); err != nil {
 			return err
 		}
+		// still need to create a new stream from the transport (need to type up Outlier Detection design)
 		if err := a.newStream(); err != nil {
 			return err
 		}
@@ -333,6 +379,10 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 		cs.attempt = a
 		return nil
 	}
+	// op type is func(a *csAttempt) error
+
+	// this gets added to a buffer and replayed?
+
 	if err := cs.withRetry(op, func() { cs.bufferForRetryLocked(0, op) }); err != nil {
 		return nil, err
 	}
@@ -383,7 +433,7 @@ func (cs *clientStream) newAttemptLocked(isTransparent bool) (*csAttempt, error)
 		return nil, ErrClientConnClosing
 	}
 
-	ctx := newContextWithRPCInfo(cs.ctx, cs.callInfo.failFast, cs.callInfo.codec, cs.cp, cs.comp)
+	ctx := newContextWithRPCInfo(cs.ctx, cs.callInfo.failFast, cs.callInfo.codec, cs.cp, cs.comp) // creates a new context from the parent context csAttempt ctx != cs context
 	method := cs.callHdr.Method
 	var beginTime time.Time
 	shs := cs.cc.dopts.copts.StatsHandlers
@@ -396,13 +446,13 @@ func (cs *clientStream) newAttemptLocked(isTransparent bool) (*csAttempt, error)
 			FailFast:                  cs.callInfo.failFast,
 			IsClientStream:            cs.desc.ClientStreams,
 			IsServerStream:            cs.desc.ServerStreams,
-			IsTransparentRetryAttempt: isTransparent,
+			IsTransparentRetryAttempt: isTransparent, // passes in data here to determine the traces and metrics requiring this knowledge of whether attempt is transparent
 		}
 		sh.HandleRPC(ctx, begin)
 	}
 
 	var trInfo *traceInfo
-	if EnableTracing {
+	if EnableTracing { // these traces are orthogonal to the traces emitted by opencensus right? opencensus uses that sh interface
 		trInfo = &traceInfo{
 			tr: trace.New("grpc.Sent."+methodFamily(method), method),
 			firstLine: firstLine{
@@ -438,6 +488,12 @@ func (a *csAttempt) getTransport() error {
 	cs := a.cs
 
 	var err error
+	// the attempt picks using getTransport() call, picks a subconn which wraps an http2 transport than uses that, so I think it's all the operations atomically?
+
+	// but if the subconn was already created and you just get it, why do you even need to create the stream?
+
+	// oh duh, interfaces with picker (which is a construct of the LB policy), and pops out a SubConn
+
 	a.t, a.done, err = cs.cc.getTransport(a.ctx, cs.callInfo.failFast, cs.callHdr.Method)
 	if err != nil {
 		if de, ok := err.(dropError); ok {
@@ -453,9 +509,10 @@ func (a *csAttempt) getTransport() error {
 }
 
 func (a *csAttempt) newStream() error {
+	// Somewhere here add call out, this would create using TagRPC (Crap this requires changes in opencensus plugin so need to move here regardless)
 	cs := a.cs
-	cs.callHdr.PreviousAttempts = cs.numRetries
-	s, err := a.t.NewStream(a.ctx, cs.callHdr)
+	cs.callHdr.PreviousAttempts = cs.numRetries // previous attempts nice in the callHDr, this is how it gives it to server side?
+	s, err := a.t.NewStream(a.ctx, cs.callHdr) // transport level stream, not a client stream
 	if err != nil {
 		nse, ok := err.(*transport.NewStreamError)
 		if !ok {
@@ -509,6 +566,8 @@ type clientStream struct {
 	mu                      sync.Mutex
 	firstAttempt            bool // if true, transparent retry is valid
 	numRetries              int  // exclusive of transparent retry attempt(s)
+	// also need transparent retry attempts
+	numTransparentRetries   int
 	numRetriesSincePushback int  // retries since pushback; to reset backoff
 	finished                bool // TODO: replace with atomic cmpxchg or sync.Once?
 	// attempt is the active client stream attempt.
@@ -522,13 +581,20 @@ type clientStream struct {
 	// TODO(hedging): hedging will have multiple attempts simultaneously.
 	committed  bool // active attempt committed for retry?
 	onCommit   func()
+	// buffer represents the buffer for this RPC - A Client Stream is philosophically an RPC.
+	// (fill up the buffer with retry operations..., and replay if the RPC fails and it doesn't go over the buffer size.)
+
+	// A buffer for the logical RPC from the clients point of view, this data structure suppoorts retries.
+
+	// Is there another buffer? I think it's just one...
+
 	buffer     []func(a *csAttempt) error // operations to replay on retry
 	bufferSize int                        // current size of buffer
 }
 
 // csAttempt implements a single transport stream attempt within a
 // clientStream.
-type csAttempt struct {
+type csAttempt struct { // theres a million operations that can be retried...send/recv on unary flow, arbitrary stream operations on stream creation..., are these smaller parts of a single csAttempt (operation, operation, operation)
 	ctx  context.Context
 	cs   *clientStream
 	t    transport.ClientTransport
@@ -545,7 +611,7 @@ type csAttempt struct {
 	// trInfo may be nil (if EnableTracing is false).
 	// trInfo.tr is set when created (if EnableTracing is true),
 	// and cleared when the finish method is called.
-	trInfo *traceInfo
+	trInfo *traceInfo // how does this relate to opencensus - golangs version of traces...
 
 	statsHandlers []stats.Handler
 	beginTime     time.Time
@@ -555,6 +621,20 @@ type csAttempt struct {
 	// set for pick errors that are returned as a status
 	drop bool
 }
+
+/*
+
+Both client and server application logic will have access to data about retries
+via gRPC metadata. Upon seeing an RPC from the client, the server will know if
+it was a retry, and moreover, it will know the number of previously made
+attempts. Likewise, the client will receive the number of retry attempts made
+when receiving the results of an RPC.
+
+Need to add a partition between transparent retries and non tranparent retires
+
+The metadata name is "grpc-previous-rpc-attempts" does this exist?
+
+*/
 
 func (cs *clientStream) commitAttemptLocked() {
 	if !cs.committed && cs.onCommit != nil {
@@ -573,17 +653,22 @@ func (cs *clientStream) commitAttempt() {
 // shouldRetry returns nil if the RPC should be retried; otherwise it returns
 // the error that should be returned by the operation.  If the RPC should be
 // retried, the bool indicates whether it is being retried transparently.
-func (a *csAttempt) shouldRetry(err error) (bool, error) {
+// if caller sees true, can iterate count
+func (a *csAttempt) shouldRetry(err error) (bool, error) { // (t = should be retried transparently (need to count this return value) || f should not be retried transparently, there is a count?)  nil error
 	cs := a.cs
 
 	if cs.finished || cs.committed || a.drop {
 		// RPC is finished or committed or was dropped by the picker; cannot retry.
 		return false, err
 	}
+	// First case: The RPC never leaves the client, can transparently retry until a success occurs.
 	if a.s == nil && a.allowTransparentRetry {
 		return true, nil
 	}
+	// End first case...
+
 	// Wait for the trailers.
+	// Second case: If the RPC reaches the gRPC server library, but has never been seen by the server application logic, the client library will immediately retry it once.
 	unprocessed := false
 	if a.s != nil {
 		<-a.s.Done()
@@ -593,6 +678,10 @@ func (a *csAttempt) shouldRetry(err error) (bool, error) {
 		// First attempt, stream unprocessed: transparently retry.
 		return true, nil
 	}
+	// End second case
+
+	// ^^^ transparent retries
+	// non transparent retries handling vvv
 	if cs.cc.dopts.disableRetry {
 		return false, err
 	}
@@ -639,9 +728,11 @@ func (a *csAttempt) shouldRetry(err error) (bool, error) {
 	if cs.retryThrottler.throttle() {
 		return false, err
 	}
-	if cs.numRetries+1 >= rp.MaxAttempts {
+	// right here - so shouldRetry() = csAttempt?
+	if cs.numRetries+1 >= rp.MaxAttempts { // throttles based on only non transparent retries
 		return false, err
 	}
+
 
 	var dur time.Duration
 	if hasPushback {
@@ -656,13 +747,30 @@ func (a *csAttempt) shouldRetry(err error) (bool, error) {
 		dur = time.Duration(grpcrand.Int63n(int64(cur)))
 		cs.numRetriesSincePushback++
 	}
+	// calculate Retry Delay Per Call - "Total time of delay while there is no active attempt during the client call"
+	// (
+	// no rpc attempt (sum this duration with all the "no rpc attempt" durations)
+	// *
+	// no rpc attempt
+	// *
+	// no rpc attempt
+	// )
 
 	// TODO(dfawley): we could eagerly fail here if dur puts us past the
 	// deadline, but unsure if it is worth doing.
 	t := time.NewTimer(dur)
 	select {
 	case <-t.C:
-		cs.numRetries++
+		// sets that header thing
+		// this count only transparent retry attempts (where does this count and where should I count transparent retry attempts?)
+
+		// retries outside of transparent...
+
+		// so thus, getting here means it reached the server application logic,
+		// and it fails (is transparent retry even part of this function, I think so,
+		// can return false
+
+		cs.numRetries++ // this count is exclusive of transparent retry attempts
 		return false, nil
 	case <-cs.ctx.Done():
 		t.Stop()
@@ -812,12 +920,12 @@ func (cs *clientStream) replayBufferLocked(attempt *csAttempt) error {
 }
 
 func (cs *clientStream) bufferForRetryLocked(sz int, op func(a *csAttempt) error) {
-	// Note: we still will buffer if retry is disabled (for transparent retries).
+	// Note: we still will buffer if retry is disabled (for transparent retries). What? transparent retreis are still enabled even if retry is disabled?
 	if cs.committed {
 		return
 	}
 	cs.bufferSize += sz
-	if cs.bufferSize > cs.callInfo.maxRetryRPCBufferSize {
+	if cs. bufferSize > cs.callInfo.maxRetryRPCBufferSize {
 		cs.commitAttemptLocked()
 		return
 	}
@@ -878,7 +986,7 @@ func (cs *clientStream) RecvMsg(m interface{}) error {
 		recvInfo = &payloadInfo{}
 	}
 	err := cs.withRetry(func(a *csAttempt) error {
-		return a.recvMsg(m, recvInfo)
+		return a.recvMsg(m, recvInfo) // wow...the retry attempt wraps the recvMsg() call which records recvBytes per rpc, and each attempt. Can def just reuse rpc data
 	}, cs.commitAttemptLocked)
 	if len(cs.binlogs) != 0 && err == nil {
 		sm := &binarylog.ServerMessage{
@@ -998,6 +1106,8 @@ func (a *csAttempt) sendMsg(m interface{}, hdr, payld, data []byte) error {
 		}
 		a.mu.Unlock()
 	}
+	// the attempt has a transport, it itself writes to transport, the attempts transport...
+	// create a transport per attempt..?
 	if err := a.t.Write(a.s, hdr, payld, &transport.Options{Last: !cs.desc.ClientStreams}); err != nil {
 		if !cs.desc.ClientStreams {
 			// For non-client-streaming RPCs, we return nil instead of EOF on error

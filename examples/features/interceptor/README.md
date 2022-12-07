@@ -56,6 +56,9 @@ To install a unary interceptor on a ClientConn, configure `Dial` with
 `DialOption`
 [`WithUnaryInterceptor`](https://godoc.org/google.golang.org/grpc#WithUnaryInterceptor).
 
+HOW DO INTERCEPTORS GET ACCESS TO THE DATA WE WANT FOR RETRIES (STREAMING OR AT THE END?)
+IS IT ALREADY PLUMBED OR DO WE NEED TO ADD IT?
+
 #### Stream Interceptor
 
 [`StreamClientInterceptor`](https://godoc.org/google.golang.org/grpc#StreamClientInterceptor)

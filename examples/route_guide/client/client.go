@@ -118,6 +118,8 @@ func runRouteChat(client pb.RouteGuideClient) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// I think a csAttempt wraps multiple operations - operations to retry
+	// csAttempt ( composed of operation, operation, operation, operation)
 	stream, err := client.RouteChat(ctx)
 	if err != nil {
 		log.Fatalf("client.RouteChat failed: %v", err)

@@ -98,12 +98,27 @@ func startOpenCensus(config *config) error {
 
 	var so trace.StartOptions
 	if config.CloudTrace != nil {
+		// Atomically coupled - with the trace sampling + registering of trace
+		// exporter, do I want this to be a knob in opencensus or is this fine
+		// wrt not running a bunch of dead code/instructions?
 		so.Sampler = trace.ProbabilitySampler(config.CloudTrace.SamplingRate)
 		trace.RegisterExporter(exporter.(trace.Exporter))
 		logger.Infof("Start collecting and exporting trace spans with global_trace_sampling_rate=%.2f", config.CloudTrace.SamplingRate)
+		// Finish atomic instructions, within the if branch
 	}
 
 	if config.CloudMonitoring != nil {
+		// Want metrics to work even if traces are disabled...will it not create
+		// this span thing in context if not registered, honestly though I think
+		// this is thinking too deep about it.
+
+		// Atomically coupled - with the registration of certain views (which will trigger measures) +
+		// registering of view exporter, do I want this to be a knob in
+		// opencensus or is this fine wrt not running a bunch of dead
+		// code/instructions?
+
+		// but doesn't this count regardless?
+
 		if err := view.Register(ocgrpc.ServerStartedRPCsView, ocgrpc.ClientCompletedRPCsView); err != nil {
 			return fmt.Errorf("failed to register default client views: %v", err)
 		}
@@ -113,6 +128,7 @@ func startOpenCensus(config *config) error {
 		view.SetReportingPeriod(defaultMetricsReportingInterval)
 		view.RegisterExporter(exporter.(view.Exporter))
 		logger.Infof("Start collecting and exporting metrics")
+		// Finish atomic instructions, within the if branch
 	}
 
 	// Only register default StatsHandlers if other things are setup correctly.

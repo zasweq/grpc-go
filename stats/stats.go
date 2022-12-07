@@ -36,6 +36,37 @@ type RPCStats interface {
 	IsClient() bool
 }
 
+// Interceptor populates context with object used to calculate stats.
+
+// Interceptor also triggers top level span.
+
+// Number of retry or hedging attempts excluding transparent retries made during
+// the client call. The original attempt is not counted as a retry/hedging
+// attempt.
+// So all you need to do is count when isTransparentRetryAttempt - first attempt (i.e. don't count first attempt)
+
+// Can't you use these timestamps pass in to iterate the counting in the object pointed to by context...?
+
+// context (itself and child) -> same heap memory (atomic counting of attempts,
+// also time of no RPC), seems to be steady telemetry...
+
+// "Why do we need to scale up any data at all?"
+
+// openCensus unaryInterceptor here
+
+
+// openCensus streamingInterceptor here
+
+
+// all the functionality already in the opencensus plugin will need to be
+// accounted for... does this addition change anything?
+
+
+// Begin contains stats when an RPC attempt begins...
+
+// RPC attempt begins, so the call out is already correct I'm assuming
+
+
 // Begin contains stats when an RPC attempt begins.
 // FailFast is only valid if this Begin is from client side.
 type Begin struct {
@@ -51,7 +82,9 @@ type Begin struct {
 	IsServerStream bool
 	// IsTransparentRetryAttempt indicates whether this attempt was initiated
 	// due to transparently retrying a previous attempt.
-	IsTransparentRetryAttempt bool
+	IsTransparentRetryAttempt bool // "Number of transparent retries made during the client call" can just use this - first attempt isn't right
+
+	// or could we scale up this struct to indicate number of preceding attempts?
 }
 
 // IsClient indicates if the stats information is from client side.
