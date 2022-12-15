@@ -83,7 +83,7 @@ func (bc *BalancerConfig) UnmarshalJSON(b []byte) error {
 		if len(lbcfg) != 1 {
 			return fmt.Errorf("invalid loadBalancingConfig: entry %v does not contain exactly 1 policy/config pair: %q", i, lbcfg)
 		}
-
+r
 		var (
 			name    string
 			jsonCfg json.RawMessage

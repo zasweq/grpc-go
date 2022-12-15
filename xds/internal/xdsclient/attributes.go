@@ -58,3 +58,4 @@ func SetClient(state resolver.State, c XDSClient) resolver.State {
 	state.Attributes = state.Attributes.WithValue(clientKey, c)
 	return state
 }
+
