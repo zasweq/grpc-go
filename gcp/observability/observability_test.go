@@ -102,9 +102,79 @@ func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) {
 	}
 }
 
-func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) {
+func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) { // ExportSPAN, information collected by a SPAN, not overall trace, perhaps something builds this, again what triggers this
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
+	// I think the same structure as defined in A45 to test emissions, just didn't have top level call
+	// Test at this level too
+	// See top level calls from trace_common.go
+	// - - - - > creates a span like structure from all those trace. calls
+	// emits here with certain data - same concept, what part of vd do we want to verify...
+	vd.Name // string - yes, simple enough
+	vd.SpanKind // I think so
+	vd.Message // Sure status?
+	vd.Attributes // map[string]interface{} - these are defined, will this make it too coupled? both client and server side add on begin, will need to change once I add attributes for A45...
+	vd.Code // int32 - I think this makes sense (plumbed in End() call, set by gRPC status codes...) status code if no error if error codes.Internal (both of these are ints)
+	vd.Links // []links - Links represents a reference from one span to another span...
+	vd.MessageEvents // []MessageEvent -- represents an event describing a message sent or received on the network
+	vd.Annotations // []annotations
+	vd.Tracestate // Tracestate represents tracing-system specific context in a list of key-value pairs. Tracestate allows different vendors propagate additiona
+	vd.SpanContext // SpanContext contains the state that must propagate across process boundaries.
+
+
+
+	// iirc - it's tag rpc on first cs attempt this creates,
+	// so span per attempt
+	// although UnaryCall() honestly will never fail, so this logic is mute
+
+	// for testing on client and server...
+	// gets one tag call
+	// handle rpc call
+	// what logical tracing? structure does this create
+	// trace - span span span
+
+	// perhaps test linking traces and logging...by testing the logic wrt spanCintext, across process boundaries
+	// span is full client and server or separate? IIRC from the gcp user's perspective it is in one span, sent and recv?
+
+
+	// don't have top level call...
+	// cs attempt creates span
+	// cs attempt creates span ^^
+	// cs attempt creates span ^^
+
+	// so End() does trigger the recording event...ends the span, which makes
+	// sense because this is getting exported data about a SPAN, not a trace, so
+	// again the parent as part of the span object that comprises the trace
+
+	// one trace, with a sent span and a recv span...so remote parent comes in server side I'm assuming to link to the span started client side...
+
+	// client side you just have the spans be children of each other representing per attempt
+
+	// client side propagates span context into metadata (stored as a []byte as a metadata value)
+	// one span (the granularity that we want to test)
+
+	// takes spanContext() of created span and puts it into the metadata, can we test this?
+
+
+	// server side reads this from metadata and uses this to create the right span object
+	// one span - uses the span context as a remote parent...
+	// reads []byte from metadata and uses this as part of constructor to RemoteParent, does that data actually come here to this call...?
+
+	// sent spans and recv spans are logically separate things...so test both
+
+	// what I want to test: (will need to change this once I add top level call)
+	// 1. unary call:
+
+	// client side span representing attempt I'm assuming
+
+	// server side span pointing to client side span
+
+	// 2. streaming call
+	// more spans or just more message receive events per span?
+	vd.MessageEvents // []MessageEvents...still triggered by client stream end so I think one span with a lot of these
+	// I think message receive server side and message send client side
+	// compressed/uncompressed bytes I shoulddd be able to scale up, this increases, trigger point an rpc downstream effects should happen as a result of that call
+
 	fe.SeenSpans++
 	fe.t.Logf("Span[%v]", vd.Name)
 }

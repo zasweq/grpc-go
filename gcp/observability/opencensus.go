@@ -98,7 +98,7 @@ func startOpenCensus(config *config) error {
 
 	var so trace.StartOptions
 	if config.CloudTrace != nil {
-		so.Sampler = trace.ProbabilitySampler(config.CloudTrace.SamplingRate)
+		so.Sampler = trace.ProbabilitySampler(config.CloudTrace.SamplingRate) // there's no reporting interval, simply the probability a trace will be sampled, so what triggers trace to be reported? trace.End?
 		trace.RegisterExporter(exporter.(trace.Exporter))
 		logger.Infof("Start collecting and exporting trace spans with global_trace_sampling_rate=%.2f", config.CloudTrace.SamplingRate)
 	}

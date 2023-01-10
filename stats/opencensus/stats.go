@@ -34,6 +34,18 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// todo:
+// 1. rewrite metrics recording points
+// perhaps split into files...
+
+
+// for recording the measures, maybe we structure things differently. Maybe we have fewer files or more fiels
+
+// the reusing makes sense for client and server outside that one bool partition
+
+// rename to stats handler.go or something
+
+
 var logger = grpclog.Component("opencensus-instrumentation")
 
 type grpcInstrumentationKey string
@@ -55,6 +67,9 @@ type rpcData struct {
 
 // The following variables define the default hard-coded auxiliary data used by
 // both the default GRPC client and GRPC server metrics.
+
+// rename this and also are these bounds defined by a spec or do I have a knob over these?
+// def rename ugly names
 var (
 	defaultBytesDistributionBounds        = []float64{1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
 	DefaultBytesDistribution              = view.Distribution(defaultBytesDistributionBounds...)
@@ -72,7 +87,7 @@ var (
 
 // Client tags are applied to measures at the end of each RPC.
 var (
-	KeyClientMethod = tag.MustNewKey("grpc_client_method")
+	KeyClientMethod = tag.MustNewKey("grpc_client_method") // how the data is partioned wrt view data...each bucket right will come back when I look at it
 	KeyClientStatus = tag.MustNewKey("grpc_client_status")
 )
 
@@ -99,13 +114,16 @@ func (csh *clientStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCT
 		startTime: startTime,
 		method:    info.FullMethodName,
 	}
-	ts := tag.FromContext(ctx)
+	ts := tag.FromContext(ctx) // where is this populated, and is this tested...
 	if ts != nil {
-		encoded := tag.Encode(ts)
-		ctx = stats.SetTags(ctx, encoded)
+		encoded := tag.Encode(ts) // encodes from tag[map] -> binary format to be sent on wire
+		// attaches stats tagging data to context...sent in the outgoing rpc
+		// with header grpc-tags-bin. It says new uses shouldn't use it, but use
+		// a non reserved header ** perhaps ping Doug about this.
+		ctx = stats.SetTags(ctx, encoded) // encoded the tags here after opencensus specific encoding
 	}
 
-	return context.WithValue(ctx, rpcDataKey, d)
+	return context.WithValue(ctx, rpcDataKey, d) // returns a context with rpc data, per attempt, server side doesn't have this concept so is per overall call caleld once
 }
 
 // statsTagRPC gets the metadata from gRPC context, extracts the encoded tags from
@@ -118,12 +136,33 @@ func (ssh *serverStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCT
 		}
 		return ctx
 	}
-	d := &rpcData{
+	d := &rpcData{ // per attempt, so traces really are per attempt? Unless they point to the same trace on the heap...
 		startTime: startTime,
 		method:    info.FullMethodName,
 	}
-	propagated := ssh.extractPropagatedTags(ctx)
+	/*
+
+	Package tag contains OpenCensus tags. Tags are key-value pairs. Tags provide
+	additional cardinality to the
+	OpenCensus instrumentation data. Tags can be propagated on the wire and in the same process via
+	context.Context. Encode and Decode should be used to represent tags into
+	their binary propagation form.
+
+	*/
+
+	// keyServerMethod (how they partition metrics "cardinality"): fullmethod
+	// name need to to do this client and server side
+
+	// takes the []byte inside the gRPC metadata, and
+	// converts to tag map, sticks it in the context,
+	// and also attaches the full method name in the tag map
+	propagated := ssh.extractPropagatedTags(ctx) // tags plumbed into context?
 	ctx = tag.NewContext(ctx, propagated)
+	// have knobs over the tab key as well
+
+	// Server tags are applied to the context used to process each RPC, as well
+	// as the measures at the end of each RPC - so yeah this is used for the cardinality
+
 	ctx, _ = tag.New(ctx, tag.Upsert(KeyServerMethod, methodName(info.FullMethodName)))
 	return context.WithValue(ctx, rpcDataKey, d)
 }
@@ -131,11 +170,11 @@ func (ssh *serverStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCT
 // extractPropagatedTags creates a new tag map containing the tags extracted from the
 // gRPC metadata.
 func (ssh *serverStatsHandler) extractPropagatedTags(ctx context.Context) *tag.Map {
-	buf := stats.Tags(ctx)
+	buf := stats.Tags(ctx) // this gets the []byte representing the encoded bytes from the tag map in context
 	if buf == nil {
 		return nil
 	}
-	propagated, err := tag.Decode(buf)
+	propagated, err := tag.Decode(buf) // opencensus specific decoding of tag map
 	if err != nil {
 		if logger.V(2) {
 			logger.Warningf("opencensus: Failed to decode tags from gRPC metadata failed to decode: %v", err)
@@ -173,7 +212,7 @@ func handleRPCBegin(ctx context.Context, s *stats.Begin) {
 		}
 	}
 
-	if s.IsClient() {
+	if s.IsClient() { // only partition on client/server in the whole file...
 		print("recording client started rpcs + 1")
 		ocstats.RecordWithOptions(ctx,
 			ocstats.WithTags(tag.Upsert(KeyClientMethod, methodName(d.method))),
@@ -199,7 +238,7 @@ func handleRPCOutPayload(ctx context.Context, s *stats.OutPayload) {
 }
 
 func handleRPCInPayload(ctx context.Context, s *stats.InPayload) {
-	d, ok := ctx.Value(rpcDataKey).(*rpcData)
+	d, ok := ctx.Value(rpcDataKey).(*rpcData) // stores data here, used for measures as derived...
 	if !ok {
 		if logger.V(2) {
 			logger.Infoln("Failed to retrieve *rpcData from context.")
@@ -212,7 +251,7 @@ func handleRPCInPayload(ctx context.Context, s *stats.InPayload) {
 }
 
 func handleRPCEnd(ctx context.Context, s *stats.End) {
-	d, ok := ctx.Value(rpcDataKey).(*rpcData)
+	d, ok := ctx.Value(rpcDataKey).(*rpcData) // high level - gets the rpc data collected over the lifetime of the rpc ATTEMPT, then records at end in handleRPCEnd()
 	if !ok {
 		if logger.V(2) {
 			logger.Infoln("Failed to retrieve *rpcData from context.")
@@ -234,7 +273,7 @@ func handleRPCEnd(ctx context.Context, s *stats.End) {
 
 	latencyMillis := float64(elapsedTime) / float64(time.Millisecond)
 	attachments := getSpanCtxAttachment(ctx)
-	if s.Client {
+	if s.Client { // another branch :(
 		ocstats.RecordWithOptions(ctx,
 			ocstats.WithTags(
 				tag.Upsert(KeyClientMethod, methodName(d.method)),
@@ -303,6 +342,7 @@ func statusCodeToString(s *status.Status) string {
 	}
 }
 
+// spanCtx attachment?!?!
 func getSpanCtxAttachment(ctx context.Context) metricdata.Attachments {
 	attachments := map[string]interface{}{}
 	span := trace.FromContext(ctx)

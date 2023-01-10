@@ -19,6 +19,7 @@ package opencensus
 import (
 	"context"
 	"fmt"
+	"go.opencensus.io/trace"
 	"io"
 	"sync"
 	"testing"
@@ -121,7 +122,7 @@ func compareRows(rows []*view.Row, rows2 []*view.Row) bool {
 	if (rows != nil) != (rows2 != nil) {
 		return false
 	}
-	if len(rows) != len(rows2) {
+	if len(rows) != len(rows2)  {
 		return false
 	}
 
@@ -219,6 +220,252 @@ func seenViewMatches(fe *fakeExporter, viewName string, wantVI *viewInformation)
 	}
 	return errs
 }
+
+func (fe *fakeExporter) ExportSpan(sd *trace.SpanData) {
+	fe.mu.Lock()
+	defer fe.mu.Unlock()
+	// persist span data in fakeExporter, did it with a map for o(1) accesses
+	// this is deterministic though so you can persist
+	// span received, span received, span received in the correct ordering
+
+	// persist only what I want here
+
+}
+
+type spanInformation struct {
+	// only the data needed to be compared here...
+	name string // important to test this for sure...
+	// spankind? what are the different types even?
+	message string // somewhat related to status I think...
+	attributes map[string]interface{} // hardcoded, but will add for A45
+	code int32 // status code || error - codes.Internal
+	/*
+	type Link struct {
+	    TraceID    TraceID
+	    SpanID     SpanID
+	    Type       LinkType
+	    Attributes map[string]interface{}
+	}
+	*/
+	// []links, links from one span to another, assuming left and right span within the trace?
+	hasRemoteParent bool
+	// annotations?
+	// traceState - [] arbitrary key value pairs...
+	/*
+	type SpanContext struct {
+	    TraceID      TraceID
+	    SpanID       SpanID
+	    TraceOptions TraceOptions
+	    Tracestate   *tracestate.Tracestate
+	}
+	SpanContext contains the state that must propagate across process boundaries.
+	SpanContext is not an implementation of context.Context. TODO: add reference to external Census docs for SpanContext
+	*/
+	spanContext // definelty populated server side to link it back to client, does client also have this...or does it just stick it as a metadata value in bin form?
+}
+
+func (si *spanInformation) equal(si2 *spanInformation) bool {
+	if si == nil && si2 == nil {
+		return true
+	}
+	if (si != nil) != (si2 != nil) {
+		return false
+	}
+	// field1...
+	if si.name != si2.name {
+		return false
+	}
+	if si.message != si2.message {
+		return false
+	}
+	// attributes map[string]interface{} how to compare?
+	// cmp.Equal will call equal with a comparer might need this for some
+	if si.code != si2.code {
+		return false
+	}
+	// these are three lists...how to compare?
+	// []links - expands
+	// []message
+	// []annotations
+	// tracestate - expands
+
+	// TraceID [16]byte
+	// SpanID [8]byte
+	// Trace Options: I think literally a bit that determines whether the trace will be sampled or not...
+	// TraceState: same as top level data, Tracing system specific context in a
+	// list of ey value pairs, allows use with legacy systems, I think we can
+	// probably just ignore this in both this blob and top level blob...
+
+	// span context - expands into multiple things of data...trace id, span id,
+	// trace options, and trace state...
+
+	return true
+}
+
+func (si *spanInformation) Equal(si2 *spanInformation) bool {
+	return si.equal(si2)
+}
+
+// seenSpanMatches checks if the exported received spans contain the desired
+// information for the span within the scope of a certain time. Returns an nil
+// slice if correct information found, non nil slice of at least length 1 if
+// correct information not found within a timeout.
+func seenSpanMatches(fe *fakeExporter, wantSI *spanInformation) []error {
+	// [] spans a list of spans...
+	// cmpdiff want and got calls Equal...
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	var errs []error // can make this one error if only one failure point the cmp.Diff...
+	for ctx.Err() == nil {
+		errs = nil
+		fe.mu.RLock()
+		// read siGot here from persisting in fakeExporter
+		if diff := cmp.Diff(wantSI/*<- switch to siGot*/, wantSI); diff != "" {
+			errs = append(errs, fmt.Errorf("got unexpected spanInformation, diff (-got, +want): %v", diff))
+		}
+		fe.mu.RUnlock()
+		if len(errs) == 0 { // || err == nil
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return errs
+}
+
+// TestSpan tests emitted spans from gRPC. It configures a system with a gRPC
+// Client and gRPC server with the OpenCensus Dial and Server Option configured,
+// and makes a Unary RPC and a Streaming RPC. This should cause certain spans to
+// be emitted from client and server side.
+func (s) TestSpan(t *testing.T) {
+
+	// do it separate so that it's easy to partition trace.register
+	// also can test the knob which turns on only traces vs. metrics
+
+	// problem: also needs to plumb start options into the option, as this
+	// controls created span type and also the trace sampling rate
+
+	// var so trace.StartOptions
+	// so.Sampler
+	so := trace.StartOptions{
+		Sampler: trace.ProbabilitySampler(1),
+	}
+	
+	
+	// *** this codeblock can be made a helper
+
+	fe := &fakeExporter{
+		t:         t,
+		seenViews: make(map[string]*viewInformation),
+		// add seenSpans creation as well (you can append to nil slice though)
+	}
+	view.RegisterExporter(fe)
+	defer view.UnregisterExporter(fe)
+
+	trace.RegisterExporter(fe)
+	defer trace.UnregisterExporter(fe)
+
+	ss := &stubserver.StubServer{
+		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
+			return &grpc_testing.SimpleResponse{}, nil
+		},
+		FullDuplexCallF: func(stream grpc_testing.TestService_FullDuplexCallServer) error {
+			for {
+				_, err := stream.Recv()
+				if err == io.EOF {
+					return nil
+				}
+			}
+		},
+	}
+	if err := ss.Start([]grpc.ServerOption{ServerOption()}, DialOption()); err != nil {
+		t.Fatalf("Error starting endpoint server: %v", err)
+	}
+	defer ss.Stop()
+	// ***
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	// Make two RPC's, a unary RPC and a streaming RPC. These should cause
+	// certain spans to be emitted.
+	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{Payload: &grpc_testing.Payload{}}); err != nil {
+		t.Fatalf("Unexpected error from UnaryCall: %v", err)
+	}
+
+	// 1. unary call:
+
+	// client side span representing attempt I'm assuming
+	// no parent, one attempt for overall csAttempt level...at this granularity
+
+	// unary
+
+	// I think emits one span for client and one for server...
+
+	// need to: persist probably a list of spans and just declare a [] with all
+	// the expected spans in it...
+
+
+
+	// span emitted client
+	wantSI := &spanInformation{
+		// what stuff do we want to verify? print this lol
+		name: /*this is hardcoded Sent...? or method or something*/,
+		message: /**/,
+		hasRemoteParent: false,
+		attributes: ,
+		code: /*codes.OK since rpc went as usual*/,
+	}
+
+
+
+	// span emitted from server - eventually put into []
+	wantSI := &spanInformation{
+		name: ,
+		message: ,
+		hasRemoteParent: true, // points to above, where else is this information passed?
+		// message send and recv events, zero? streaming will def differ wrt this
+		attributes: ,
+		code: ,
+		// server side is DERIVED from span context, does that information make it here
+	}
+
+
+	// so (for trace sampling rate) and bool that selectively turns on one or the other (I think we still need to disable traces)
+	// in the OpenCensus API
+	// I own the rewrite so I can change this up though
+
+
+
+
+	stream, err := ss.Client.FullDuplexCall(ctx)
+	if err != nil {
+		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
+	}
+
+	stream.CloseSend()
+	if _, err = stream.Recv(); err != io.EOF {
+		t.Fatalf("unexpected error: %v, expected an EOF error", err)
+	}
+
+	// I think two separate verifications makes sense
+
+	// server side span pointing to client side span as a remote parent
+	// how is remote represented in spanInformation...? HasRemoteParent bool...anything else
+
+	// streaming
+	wantSI = &spanInformation{
+		name: /**/,
+		message: ,
+		hasRemoteParent: true,
+		// there's got to be a name attached to this remote parent ^^^...
+	}
+
+	// literally just stdout print
+	// the events that happened that will be much easier
+
+}
+
+// declare span inline in test and pass to this function fuck need to add a
+// selective toggle for one or the other...
 
 // TestAllMetrics tests emitted metrics from gRPC. It configures a system with a
 // gRPC Client and gRPC server with the OpenCensus Dial and Server Option

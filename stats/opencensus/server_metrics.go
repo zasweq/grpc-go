@@ -22,13 +22,15 @@ import (
 	"go.opencensus.io/tag"
 )
 
-// The following variables are measures are recorded by ServerHandler:
+// per rpc, not attempt, no concept of attempt on server side
+
+// Measures, which are recorded by server stats handler:
 var (
 	ServerReceivedMessagesPerRPC = stats.Int64("grpc.io/server/received_messages_per_rpc", "Number of messages received in each RPC. Has value 1 for non-streaming RPCs.", stats.UnitDimensionless) // the collection/measurement point of this measure handles the /rpc aspect of it
 	ServerReceivedBytesPerRPC    = stats.Int64("grpc.io/server/received_bytes_per_rpc", "Total bytes received across all messages per RPC.", stats.UnitBytes)
 	ServerSentMessagesPerRPC     = stats.Int64("grpc.io/server/sent_messages_per_rpc", "Number of messages sent in each RPC. Has value 1 for non-streaming RPCs.", stats.UnitDimensionless)
 	ServerSentBytesPerRPC        = stats.Int64("grpc.io/server/sent_bytes_per_rpc", "Total bytes sent in across all response messages per RPC.", stats.UnitBytes)
-	ServerStartedRPCs            = stats.Int64("grpc.io/server/started_rpcs", "Number of started server RPCs.", stats.UnitDimensionless)
+	ServerStartedRPCs            = stats.Int64("grpc.io/server/started_rpcs", "The total number of server RPCs ever opened, including those that have not completed.", stats.UnitDimensionless)
 	ServerLatency                = stats.Float64("grpc.io/server/server_latency", "Time between first byte of request received to last byte of response sent, or terminal error.", stats.UnitMilliseconds)
 )
 
@@ -61,8 +63,6 @@ var (
 		Aggregation: DefaultMillisecondsDistribution,
 	}
 
-	// Purposely reuses the count from `ServerLatency`, tagging
-	// with method and status to result in ServerCompletedRpcs.
 	ServerCompletedRPCsView = &view.View{
 		Name:        "grpc.io/server/completed_rpcs",
 		Description: "Number of completed RPCs by method and status.",
@@ -74,7 +74,7 @@ var (
 	ServerStartedRPCsView = &view.View{
 		Measure:     ServerStartedRPCs,
 		Name:        "grpc.io/server/started_rpcs",
-		Description: "Number of started server RPCs.",
+		Description: "Number of opened server RPCs, by method.",
 		TagKeys:     []tag.Key{KeyServerMethod},
 		Aggregation: view.Count(),
 	}
@@ -96,10 +96,26 @@ var (
 	}
 )
 
-// DefaultServerViews are the default server views provided by this package.
+// DefaultServerViews is the set of server views which are considered the
+// minimum required to monitor server side performance.
 var DefaultServerViews = []*view.View{
 	ServerReceivedBytesPerRPCView,
 	ServerSentBytesPerRPCView,
 	ServerLatencyView,
 	ServerCompletedRPCsView,
+	ServerStartedRPCsView,
 }
+
+// *** find spec
+// don't add metrics unless there's a o11y GA - Eric mentioned I only need to add one metric
+
+// per call latency * only one that requires interceptor
+// per attempt latency *I think just reenable (ServerLatencyView)
+// so no readds
+
+
+// no choice but to add it to grpc-tag-bin
+
+// request response flow opencensus client server I'm assuming keep
+// it...forwarded along populated by application code...
+
