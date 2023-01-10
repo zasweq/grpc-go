@@ -95,6 +95,7 @@ var (
 	rpcDataKey = grpcInstrumentationKey("opencensus-rpcData")
 )
 
+// REWRITE
 func methodName(fullname string) string {
 	return strings.TrimLeft(fullname, "/")
 }
@@ -114,6 +115,12 @@ func (csh *clientStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCT
 		startTime: startTime,
 		method:    info.FullMethodName,
 	}
+	// WHY DO I HAVE OPENCENSUS SPECIFIC TAGS BEING SENT ACCROSS THE WIRE IS THIS NEEDED GRPC NEVER POPULATES THIS???
+
+	// tag.Map populated by the application code...can you do this as an opencensus user for what...
+
+	// i really dont think you need this, leave out and see what happens
+
 	ts := tag.FromContext(ctx) // where is this populated, and is this tested...
 	if ts != nil {
 		encoded := tag.Encode(ts) // encodes from tag[map] -> binary format to be sent on wire
@@ -163,7 +170,12 @@ func (ssh *serverStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCT
 	// Server tags are applied to the context used to process each RPC, as well
 	// as the measures at the end of each RPC - so yeah this is used for the cardinality
 
-	ctx, _ = tag.New(ctx, tag.Upsert(KeyServerMethod, methodName(info.FullMethodName)))
+	// STICKS THIS EXTRACTED TAGS + FULL METHOD NAME SERVER SIDE, BUT THIS IS
+	// USED ONLY IN GRPC, I REALLY DON'T THINK I NEED THIS
+
+	// gets []byte from wire creates tag map adds full method name to it
+
+	ctx, _ = tag.New(ctx, tag.Upsert(KeyServerMethod, methodName(info.FullMethodName))) // do we even need this? Test without and see what Doug says, method logic is handled from data plumbed in...
 	return context.WithValue(ctx, rpcDataKey, d)
 }
 
@@ -174,7 +186,11 @@ func (ssh *serverStatsHandler) extractPropagatedTags(ctx context.Context) *tag.M
 	if buf == nil {
 		return nil
 	}
+
+	// LEAVE THIS OUT AND SEE IF STILL WORKS
+	// sends opencensus tags across the sire and also adds server method as a tag
 	propagated, err := tag.Decode(buf) // opencensus specific decoding of tag map
+	// keep it, server can register without client break off the wire, how do tags work wrt the view partion
 	if err != nil {
 		if logger.V(2) {
 			logger.Warningf("opencensus: Failed to decode tags from gRPC metadata failed to decode: %v", err)
@@ -215,27 +231,39 @@ func handleRPCBegin(ctx context.Context, s *stats.Begin) {
 	if s.IsClient() { // only partition on client/server in the whole file...
 		print("recording client started rpcs + 1")
 		ocstats.RecordWithOptions(ctx,
-			ocstats.WithTags(tag.Upsert(KeyClientMethod, methodName(d.method))),
+			ocstats.WithTags(tag.Upsert(KeyClientMethod, methodName(d.method))), // puts method here and adds one to started rpcs
 			ocstats.WithMeasurements(ClientStartedRPCs.M(1)))
 	} else {
 		ocstats.RecordWithOptions(ctx,
-			ocstats.WithTags(tag.Upsert(KeyClientMethod, methodName(d.method))),
+			// Tags it here anyway, sicne we own it leave it out
+			ocstats.WithTags(tag.Upsert(KeyClientMethod, methodName(d.method))), // ugh do we want this on server method actually....
 			ocstats.WithMeasurements(ServerStartedRPCs.M(1)))
 	}
 }
 
+// records length in bytes of outgoing messages and increases total count of
+// sent messages for use in taking measurements at rpc end
+
+// recordDataOutPayload
+
 func handleRPCOutPayload(ctx context.Context, s *stats.OutPayload) {
 	d, ok := ctx.Value(rpcDataKey).(*rpcData)
-	if !ok {
+	if !ok { // don't need this...return, shouldn't happen since system populates rpcData by tagging rpcdata
 		if logger.V(2) {
 			logger.Infoln("Failed to retrieve *rpcData from context.")
 		}
 		return
 	}
 
-	atomic.AddInt64(&d.sentBytes, int64(s.Length))
+	atomic.AddInt64(&d.sentBytes, int64(s.Length)) // records length and count
 	atomic.AddInt64(&d.sentCount, 1)
 }
+
+
+// records length in bytes of incoming messages and increases total count of
+//// sent messages for use in taking measurements at rpc end
+
+// recordDataInPayload
 
 func handleRPCInPayload(ctx context.Context, s *stats.InPayload) {
 	d, ok := ctx.Value(rpcDataKey).(*rpcData) // stores data here, used for measures as derived...
@@ -249,6 +277,8 @@ func handleRPCInPayload(ctx context.Context, s *stats.InPayload) {
 	atomic.AddInt64(&d.recvBytes, int64(s.Length))
 	atomic.AddInt64(&d.recvCount, 1)
 }
+
+// takes overall measurements and
 
 func handleRPCEnd(ctx context.Context, s *stats.End) {
 	d, ok := ctx.Value(rpcDataKey).(*rpcData) // high level - gets the rpc data collected over the lifetime of the rpc ATTEMPT, then records at end in handleRPCEnd()
@@ -264,6 +294,7 @@ func handleRPCEnd(ctx context.Context, s *stats.End) {
 	var st string
 	if s.Error != nil {
 		s, ok := status.FromError(s.Error)
+		s.Code()
 		if ok {
 			st = statusCodeToString(s)
 		}
@@ -271,8 +302,13 @@ func handleRPCEnd(ctx context.Context, s *stats.End) {
 		st = "OK"
 	}
 
+	attachments := getSpanCtxAttachment(ctx) // what tbe fuck?
+
+	// other per rpc measurements read off rpc data directly,
+	// this one takes the difference between start and end time
+	// and divides by millisecond
 	latencyMillis := float64(elapsedTime) / float64(time.Millisecond)
-	attachments := getSpanCtxAttachment(ctx)
+
 	if s.Client { // another branch :(
 		ocstats.RecordWithOptions(ctx,
 			ocstats.WithTags(
@@ -288,6 +324,8 @@ func handleRPCEnd(ctx context.Context, s *stats.End) {
 	} else {
 		ocstats.RecordWithOptions(ctx,
 			ocstats.WithTags(
+				// all the views are tagged with keyservermethod...but my test seems to work?!?!?!?!
+				// why noooo keyServerMethod? does this exit (all serer metrics should be tagged with the following server method and server status?)
 				tag.Upsert(KeyServerStatus, st),
 			),
 			ocstats.WithAttachments(attachments),
@@ -342,7 +380,7 @@ func statusCodeToString(s *status.Status) string {
 	}
 }
 
-// spanCtx attachment?!?!
+// spanCtx attachment?!?! ignore this like propgating opencensus tags set by application on the wire and see what happens/if works
 func getSpanCtxAttachment(ctx context.Context) metricdata.Attachments {
 	attachments := map[string]interface{}{}
 	span := trace.FromContext(ctx)
@@ -350,7 +388,7 @@ func getSpanCtxAttachment(ctx context.Context) metricdata.Attachments {
 		return attachments
 	}
 	spanCtx := span.SpanContext()
-	if spanCtx.IsSampled() {
+	if spanCtx.IsSampled() { // why the fuckkkkkk do I need trace context in metrics, have we decided how to link logging and traces, is it just trace id tracing and logs so seperate partionwise/logically, handled by tracing flow...
 		attachments[metricdata.AttachmentKeySpanContext] = spanCtx
 	}
 	return attachments
