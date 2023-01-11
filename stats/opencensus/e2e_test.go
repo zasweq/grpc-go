@@ -19,6 +19,7 @@ package opencensus
 import (
 	"context"
 	"fmt"
+	"go.opencensus.io/trace"
 	"io"
 	"sync"
 	"testing"
@@ -80,6 +81,42 @@ func (fe *fakeExporter) ExportView(vd *view.Data) {
 		tagKeys:    vd.View.TagKeys,
 		rows:       vd.Rows,
 	}
+}
+
+func (fe *fakeExporter) ExportSpan(sd *trace.SpanData) {
+	fe.mu.Lock()
+	defer fe.mu.Unlock()
+	// persist span data in fakeExporter, did it with a map for o(1) accesses
+	// this is deterministic though so you can persist
+	// span received, span received, span received in the correct ordering
+
+	// persist only what I want here
+
+	// this feels super weird to test without the multiple attempt object, but I
+	// guess there's no multiple attempt ideal anyway in my tests (no failures -
+	// perhaps add tests for them useful even for metrics) so I'm good here.
+
+	// right now spans are single across remote, no parent child relationship
+	// across attempts, the span ends and gets exported the moment rpc end calls
+	// (whether through a failure or a success)
+
+
+	// ***NONE OF THESE SPANS HAVE PARENT SPANS***, can propagate the span
+	// across the whole line only across hops, NOT across attempts.
+
+	// span that fails at child - uploads itself
+
+
+	// span that succeeds at child, server span which points to that client span as a remote
+
+	sd.ParentSpanID // no parent
+
+	sd.HasRemoteParent // true on server side
+
+	// how are these constructed anyway?
+
+	sd.Attributes
+
 }
 
 func (vi *viewInformation) equal(vi2 *viewInformation) bool {

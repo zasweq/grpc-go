@@ -1,0 +1,453 @@
+=== RUN   Test
+=== RUN   Test/AllMetrics
+=== RUN   Test/AllMetrics/client-started-rpcs
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #1] Server created  (t=+1.36348ms)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #2] Channel created  (t=+1.460115ms)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #2] original dial target is: "whatever:///127.0.0.1:62223"  (t=+1.481338ms)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #2] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62223 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62223 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+1.515402ms)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #2] Channel authority set to "127.0.0.1:62223"  (t=+1.537474ms)
+    tlogger.go:116: INFO server.go:819 [core] [Server #1 ListenSocket #3] ListenSocket created  (t=+1.598029ms)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #2] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62223",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+1.662379ms)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #2] Channel switches to new LB policy "pick_first"  (t=+1.710716ms)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #2 SubChannel #4] Subchannel created  (t=+1.733954ms)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #2] Channel Connectivity change to CONNECTING  (t=+1.764629ms)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #2 SubChannel #4] Subchannel Connectivity change to CONNECTING  (t=+1.794403ms)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #2 SubChannel #4] Subchannel picks a new address "127.0.0.1:62223" to connect  (t=+1.809789ms)
+    tlogger.go:116: INFO syscall_nonlinux.go:39 [core] CPU time info is unavailable on non-linux environments.  (t=+2.258565ms)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #2 SubChannel #4] Subchannel Connectivity change to READY  (t=+2.369762ms)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #2] Channel Connectivity change to READY  (t=+2.406526ms)
+recording client started rpcs + 1recording client started rpcs + 1=== CONT  Test/AllMetrics/client-started-rpcs
+    e2e_test.go:763: Invalid OpenCensus export data: [got unexpected viewInformation, diff (-got, +want):   (*opencensus.viewInformation)(
+        - 	&{
+        - 		aggType:    s"Count",
+        - 		aggBuckets: []float64{},
+        - 		desc:       "Number of opened client RPCs, by method.",
+        - 		tagKeys:    []tag.Key{{name: "grpc_client_method"}},
+        - 		rows: []*view.Row{
+        - 			s"{ { {grpc_client_method grpc.testing.TestService/UnaryCall} }&{2"...,
+        - 			s"{ { {grpc_client_method grpc.testing.TestService/FullDuplexCall}"...,
+        - 		},
+        - 	},
+        + 	&{
+        + 		aggType:    s"Count",
+        + 		aggBuckets: []float64{},
+        + 		desc:       "Number of opened client RPCs, by method.",
+        + 		tagKeys:    []tag.Key{{name: "grpc_client_method"}},
+        + 		rows: []*view.Row{
+        + 			s"{ { {grpc_client_method grpc.testing.TestService/UnaryCall} }&{0"...,
+        + 			s"{ { {grpc_client_method grpc.testing.TestService/FullDuplexCall}"...,
+        + 		},
+        + 	},
+          )
+        ]
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #2] Channel Connectivity change to SHUTDOWN  (t=+5.045953987s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #2 SubChannel #4] Subchannel Connectivity change to SHUTDOWN  (t=+5.045997225s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #2 SubChannel #4] Subchannel deleted  (t=+5.046023579s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #2] Channel deleted  (t=+5.046044697s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #1 ListenSocket #3] ListenSocket deleted  (t=+5.046136853s)
+=== RUN   Test/AllMetrics/server-started-rpcs
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #7] Server created  (t=+5.047386127s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #8] Channel created  (t=+5.047458195s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #8] original dial target is: "whatever:///127.0.0.1:62225"  (t=+5.04753473s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #8] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62225 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62225 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.0475902s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #7 ListenSocket #9] ListenSocket created  (t=+5.047626523s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #8] Channel authority set to "127.0.0.1:62225"  (t=+5.047685725s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #8] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62225",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.047759137s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #8] Channel switches to new LB policy "pick_first"  (t=+5.047812038s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #8 SubChannel #10] Subchannel created  (t=+5.047845583s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #8] Channel Connectivity change to CONNECTING  (t=+5.047903927s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #8 SubChannel #10] Subchannel Connectivity change to CONNECTING  (t=+5.047933923s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #8 SubChannel #10] Subchannel picks a new address "127.0.0.1:62225" to connect  (t=+5.047956962s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #8 SubChannel #10] Subchannel Connectivity change to READY  (t=+5.04840088s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #8] Channel Connectivity change to READY  (t=+5.048447147s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #8] Channel Connectivity change to SHUTDOWN  (t=+5.150627211s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #8 SubChannel #10] Subchannel Connectivity change to SHUTDOWN  (t=+5.150707647s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #8 SubChannel #10] Subchannel deleted  (t=+5.150744999s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #8] Channel deleted  (t=+5.150770831s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #7 ListenSocket #9] ListenSocket deleted  (t=+5.150908569s)
+=== RUN   Test/AllMetrics/client-completed-rpcs
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #13] Server created  (t=+5.152029941s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #14] Channel created  (t=+5.152108706s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #14] original dial target is: "whatever:///127.0.0.1:62227"  (t=+5.152130039s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #13 ListenSocket #15] ListenSocket created  (t=+5.152154108s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #14] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62227 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62227 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.152179743s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #14] Channel authority set to "127.0.0.1:62227"  (t=+5.152214637s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #14] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62227",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.152267527s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #14] Channel switches to new LB policy "pick_first"  (t=+5.152308332s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #14 SubChannel #16] Subchannel created  (t=+5.15234016s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #14] Channel Connectivity change to CONNECTING  (t=+5.152371038s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #14 SubChannel #16] Subchannel Connectivity change to CONNECTING  (t=+5.152429365s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #14 SubChannel #16] Subchannel picks a new address "127.0.0.1:62227" to connect  (t=+5.152478194s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #14 SubChannel #16] Subchannel Connectivity change to READY  (t=+5.152991729s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #14] Channel Connectivity change to READY  (t=+5.153035922s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #14] Channel Connectivity change to SHUTDOWN  (t=+5.255955609s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #14 SubChannel #16] Subchannel Connectivity change to SHUTDOWN  (t=+5.256037937s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #14 SubChannel #16] Subchannel deleted  (t=+5.25607605s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #14] Channel deleted  (t=+5.256102329s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #13 ListenSocket #15] ListenSocket deleted  (t=+5.256219607s)
+=== RUN   Test/AllMetrics/server-completed-rpcs
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #19] Server created  (t=+5.257353512s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #20] Channel created  (t=+5.257426235s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #20] original dial target is: "whatever:///127.0.0.1:62229"  (t=+5.257451995s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #20] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62229 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62229 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.257483342s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #20] Channel authority set to "127.0.0.1:62229"  (t=+5.257505349s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #19 ListenSocket #21] ListenSocket created  (t=+5.25752993s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #20] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62229",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.257578477s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #20] Channel switches to new LB policy "pick_first"  (t=+5.257620368s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #20 SubChannel #22] Subchannel created  (t=+5.257645535s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #20] Channel Connectivity change to CONNECTING  (t=+5.257676454s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #20 SubChannel #22] Subchannel Connectivity change to CONNECTING  (t=+5.257729105s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #20 SubChannel #22] Subchannel picks a new address "127.0.0.1:62229" to connect  (t=+5.257764423s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #20 SubChannel #22] Subchannel Connectivity change to READY  (t=+5.259155807s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #20] Channel Connectivity change to READY  (t=+5.259217902s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #20] Channel Connectivity change to SHUTDOWN  (t=+5.362043158s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #20 SubChannel #22] Subchannel Connectivity change to SHUTDOWN  (t=+5.362118967s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #20 SubChannel #22] Subchannel deleted  (t=+5.362155967s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #20] Channel deleted  (t=+5.362181425s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #19 ListenSocket #21] ListenSocket deleted  (t=+5.362286186s)
+=== RUN   Test/AllMetrics/client-sent-bytes-per-rpc
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #25] Server created  (t=+5.363457077s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #26] Channel created  (t=+5.363536059s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #26] original dial target is: "whatever:///127.0.0.1:62231"  (t=+5.3635564s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #26] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62231 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62231 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.363590315s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #26] Channel authority set to "127.0.0.1:62231"  (t=+5.363612754s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #25 ListenSocket #27] ListenSocket created  (t=+5.363655818s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #26] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62231",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.363698538s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #26] Channel switches to new LB policy "pick_first"  (t=+5.363744663s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #26 SubChannel #28] Subchannel created  (t=+5.363773714s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #26] Channel Connectivity change to CONNECTING  (t=+5.3638056s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #26 SubChannel #28] Subchannel Connectivity change to CONNECTING  (t=+5.363850427s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #26 SubChannel #28] Subchannel picks a new address "127.0.0.1:62231" to connect  (t=+5.363875273s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #26 SubChannel #28] Subchannel Connectivity change to READY  (t=+5.364406079s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #26] Channel Connectivity change to READY  (t=+5.364451004s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #26] Channel Connectivity change to SHUTDOWN  (t=+5.467077703s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #26 SubChannel #28] Subchannel Connectivity change to SHUTDOWN  (t=+5.467159533s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #26 SubChannel #28] Subchannel deleted  (t=+5.467239167s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #26] Channel deleted  (t=+5.467271791s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #25 ListenSocket #27] ListenSocket deleted  (t=+5.467388931s)
+=== RUN   Test/AllMetrics/server-sent-bytes-per-rpc
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #31] Server created  (t=+5.468506893s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #32] Channel created  (t=+5.468575103s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #32] original dial target is: "whatever:///127.0.0.1:62233"  (t=+5.468600295s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #32] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62233 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62233 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.468642023s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #32] Channel authority set to "127.0.0.1:62233"  (t=+5.468665079s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #31 ListenSocket #33] ListenSocket created  (t=+5.468685061s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #32] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62233",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.468721014s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #32] Channel switches to new LB policy "pick_first"  (t=+5.468771126s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #32 SubChannel #34] Subchannel created  (t=+5.468798778s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #32] Channel Connectivity change to CONNECTING  (t=+5.468831414s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #32 SubChannel #34] Subchannel Connectivity change to CONNECTING  (t=+5.468880762s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #32 SubChannel #34] Subchannel picks a new address "127.0.0.1:62233" to connect  (t=+5.468910101s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #32 SubChannel #34] Subchannel Connectivity change to READY  (t=+5.469405732s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #32] Channel Connectivity change to READY  (t=+5.46945046s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #32] Channel Connectivity change to SHUTDOWN  (t=+5.572272729s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #32 SubChannel #34] Subchannel Connectivity change to SHUTDOWN  (t=+5.572355533s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #32 SubChannel #34] Subchannel deleted  (t=+5.572396269s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #32] Channel deleted  (t=+5.572425831s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #31 ListenSocket #33] ListenSocket deleted  (t=+5.572547593s)
+=== RUN   Test/AllMetrics/client-received-bytes-per-rpc
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #37] Server created  (t=+5.573710304s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #38] Channel created  (t=+5.57377846s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #38] original dial target is: "whatever:///127.0.0.1:62235"  (t=+5.573798915s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #38] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62235 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62235 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.57382966s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #38] Channel authority set to "127.0.0.1:62235"  (t=+5.573868123s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #37 ListenSocket #39] ListenSocket created  (t=+5.573898585s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #38] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62235",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.573947919s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #38] Channel switches to new LB policy "pick_first"  (t=+5.573991463s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #38 SubChannel #40] Subchannel created  (t=+5.574019271s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #38] Channel Connectivity change to CONNECTING  (t=+5.574050227s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #38 SubChannel #40] Subchannel Connectivity change to CONNECTING  (t=+5.574086443s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #38 SubChannel #40] Subchannel picks a new address "127.0.0.1:62235" to connect  (t=+5.574110737s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #38 SubChannel #40] Subchannel Connectivity change to READY  (t=+5.574711217s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #38] Channel Connectivity change to READY  (t=+5.574741467s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #38] Channel Connectivity change to SHUTDOWN  (t=+5.676818576s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #38 SubChannel #40] Subchannel Connectivity change to SHUTDOWN  (t=+5.676898176s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #38 SubChannel #40] Subchannel deleted  (t=+5.6769388s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #38] Channel deleted  (t=+5.676969831s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #37 ListenSocket #39] ListenSocket deleted  (t=+5.67709457s)
+=== RUN   Test/AllMetrics/server-received-bytes-per-rpc
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #43] Server created  (t=+5.678363892s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #44] Channel created  (t=+5.678432598s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #44] original dial target is: "whatever:///127.0.0.1:62237"  (t=+5.67845342s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #44] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62237 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62237 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.678484938s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #44] Channel authority set to "127.0.0.1:62237"  (t=+5.678514343s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #43 ListenSocket #45] ListenSocket created  (t=+5.678551782s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #44] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62237",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.678596991s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #44] Channel switches to new LB policy "pick_first"  (t=+5.678649373s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #44 SubChannel #46] Subchannel created  (t=+5.678679648s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #44] Channel Connectivity change to CONNECTING  (t=+5.678715665s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #44 SubChannel #46] Subchannel Connectivity change to CONNECTING  (t=+5.678751394s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #44 SubChannel #46] Subchannel picks a new address "127.0.0.1:62237" to connect  (t=+5.678770563s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #44 SubChannel #46] Subchannel Connectivity change to READY  (t=+5.679327067s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #44] Channel Connectivity change to READY  (t=+5.679364383s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #44] Channel Connectivity change to SHUTDOWN  (t=+5.885470002s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #44 SubChannel #46] Subchannel Connectivity change to SHUTDOWN  (t=+5.885557939s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #44 SubChannel #46] Subchannel deleted  (t=+5.885693008s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #44] Channel deleted  (t=+5.885731201s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #43 ListenSocket #45] ListenSocket deleted  (t=+5.886279037s)
+=== RUN   Test/AllMetrics/client-sent-messages-per-rpc
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #49] Server created  (t=+5.887539903s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #50] Channel created  (t=+5.887607263s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #50] original dial target is: "whatever:///127.0.0.1:62239"  (t=+5.887628478s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #50] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62239 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62239 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.887659314s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #50] Channel authority set to "127.0.0.1:62239"  (t=+5.887687324s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #49 ListenSocket #51] ListenSocket created  (t=+5.887713925s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #50] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62239",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.887758162s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #50] Channel switches to new LB policy "pick_first"  (t=+5.887806021s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #50 SubChannel #52] Subchannel created  (t=+5.88783368s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #50] Channel Connectivity change to CONNECTING  (t=+5.887881705s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #50 SubChannel #52] Subchannel Connectivity change to CONNECTING  (t=+5.887917609s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #50 SubChannel #52] Subchannel picks a new address "127.0.0.1:62239" to connect  (t=+5.887940908s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #50 SubChannel #52] Subchannel Connectivity change to READY  (t=+5.888477697s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #50] Channel Connectivity change to READY  (t=+5.888514655s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #50] Channel Connectivity change to SHUTDOWN  (t=+5.991198747s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #50 SubChannel #52] Subchannel Connectivity change to SHUTDOWN  (t=+5.99127476s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #50 SubChannel #52] Subchannel deleted  (t=+5.991311064s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #50] Channel deleted  (t=+5.991336997s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #49 ListenSocket #51] ListenSocket deleted  (t=+5.991461315s)
+=== RUN   Test/AllMetrics/server-sent-messages-per-rpc
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #55] Server created  (t=+5.992646002s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #56] Channel created  (t=+5.99271183s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #56] original dial target is: "whatever:///127.0.0.1:62241"  (t=+5.99273552s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #56] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62241 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62241 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+5.992765919s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #56] Channel authority set to "127.0.0.1:62241"  (t=+5.992785767s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #55 ListenSocket #57] ListenSocket created  (t=+5.992825097s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #56] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62241",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.992863736s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #56] Channel switches to new LB policy "pick_first"  (t=+5.99290926s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #56 SubChannel #58] Subchannel created  (t=+5.992936393s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #56] Channel Connectivity change to CONNECTING  (t=+5.992981578s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #56 SubChannel #58] Subchannel Connectivity change to CONNECTING  (t=+5.993017838s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #56 SubChannel #58] Subchannel picks a new address "127.0.0.1:62241" to connect  (t=+5.993041447s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #56 SubChannel #58] Subchannel Connectivity change to READY  (t=+5.993560223s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #56] Channel Connectivity change to READY  (t=+5.993597699s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #56] Channel Connectivity change to SHUTDOWN  (t=+6.095827361s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #56 SubChannel #58] Subchannel Connectivity change to SHUTDOWN  (t=+6.095900966s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #56 SubChannel #58] Subchannel deleted  (t=+6.095936116s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #56] Channel deleted  (t=+6.095962886s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #55 ListenSocket #57] ListenSocket deleted  (t=+6.096078488s)
+=== RUN   Test/AllMetrics/client-received-messages-per-rpc
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #61] Server created  (t=+6.097290564s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #62] Channel created  (t=+6.097355815s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #62] original dial target is: "whatever:///127.0.0.1:62243"  (t=+6.097377445s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #62] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62243 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62243 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+6.097408432s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #62] Channel authority set to "127.0.0.1:62243"  (t=+6.097429489s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #61 ListenSocket #63] ListenSocket created  (t=+6.097468409s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #62] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62243",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+6.09750917s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #62] Channel switches to new LB policy "pick_first"  (t=+6.097556818s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #62 SubChannel #64] Subchannel created  (t=+6.097584973s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #62] Channel Connectivity change to CONNECTING  (t=+6.097618341s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #62 SubChannel #64] Subchannel Connectivity change to CONNECTING  (t=+6.097654571s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #62 SubChannel #64] Subchannel picks a new address "127.0.0.1:62243" to connect  (t=+6.09767994s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #62 SubChannel #64] Subchannel Connectivity change to READY  (t=+6.098190185s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #62] Channel Connectivity change to READY  (t=+6.098227186s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #62] Channel Connectivity change to SHUTDOWN  (t=+6.407397151s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #62 SubChannel #64] Subchannel Connectivity change to SHUTDOWN  (t=+6.407532752s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #62 SubChannel #64] Subchannel deleted  (t=+6.407597611s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #62] Channel deleted  (t=+6.407629692s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #61 ListenSocket #63] ListenSocket deleted  (t=+6.407768321s)
+=== RUN   Test/AllMetrics/server-received-messages-per-rpc
+=== CONT  Test/AllMetrics
+    tlogger.go:116: INFO server.go:631 [core] [Server #67] Server created  (t=+6.408901767s)
+    tlogger.go:116: INFO clientconn.go:105 [core] [Channel #68] Channel created  (t=+6.408970167s)
+    tlogger.go:116: INFO clientconn.go:1552 [core] [Channel #68] original dial target is: "whatever:///127.0.0.1:62245"  (t=+6.408991154s)
+    tlogger.go:116: INFO clientconn.go:1559 [core] [Channel #68] parsed dial target is: {Scheme:whatever Authority: Endpoint:127.0.0.1:62245 URL:{Scheme:whatever Opaque: User: Host: Path:/127.0.0.1:62245 RawPath: OmitHost:false ForceQuery:false RawQuery: Fragment: RawFragment:}}  (t=+6.409022081s)
+    tlogger.go:116: INFO clientconn.go:263 [core] [Channel #68] Channel authority set to "127.0.0.1:62245"  (t=+6.409053361s)
+    tlogger.go:116: INFO server.go:819 [core] [Server #67 ListenSocket #69] ListenSocket created  (t=+6.409095704s)
+    tlogger.go:116: INFO resolver_conn_wrapper.go:175 [core] [Channel #68] Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:62245",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Type": 0,
+              "Metadata": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+6.40913639s)
+    tlogger.go:116: INFO balancer_conn_wrappers.go:274 [core] [Channel #68] Channel switches to new LB policy "pick_first"  (t=+6.409184775s)
+    tlogger.go:116: INFO clientconn.go:725 [core] [Channel #68 SubChannel #70] Subchannel created  (t=+6.409212851s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #68] Channel Connectivity change to CONNECTING  (t=+6.409248071s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #68 SubChannel #70] Subchannel Connectivity change to CONNECTING  (t=+6.409301137s)
+    tlogger.go:116: INFO clientconn.go:1217 [core] [Channel #68 SubChannel #70] Subchannel picks a new address "127.0.0.1:62245" to connect  (t=+6.409337102s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #68 SubChannel #70] Subchannel Connectivity change to READY  (t=+6.409814026s)
+    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #68] Channel Connectivity change to READY  (t=+6.409852128s)
+recording client started rpcs + 1recording client started rpcs + 1    tlogger.go:116: INFO clientconn.go:418 [core] [Channel #68] Channel Connectivity change to SHUTDOWN  (t=+6.511630533s)
+    tlogger.go:116: INFO clientconn.go:1106 [core] [Channel #68 SubChannel #70] Subchannel Connectivity change to SHUTDOWN  (t=+6.511680456s)
+    tlogger.go:116: INFO clientconn.go:1430 [core] [Channel #68 SubChannel #70] Subchannel deleted  (t=+6.511704316s)
+    tlogger.go:116: INFO clientconn.go:1061 [core] [Channel #68] Channel deleted  (t=+6.511720541s)
+    tlogger.go:116: INFO server.go:770 [core] [Server #67 ListenSocket #69] ListenSocket deleted  (t=+6.511801266s)
+--- FAIL: Test (6.51s)
+    --- FAIL: Test/AllMetrics (6.51s)
+        --- FAIL: Test/AllMetrics/client-started-rpcs (5.05s)
+        --- PASS: Test/AllMetrics/server-started-rpcs (0.10s)
+        --- PASS: Test/AllMetrics/client-completed-rpcs (0.11s)
+        --- PASS: Test/AllMetrics/server-completed-rpcs (0.11s)
+        --- PASS: Test/AllMetrics/client-sent-bytes-per-rpc (0.11s)
+        --- PASS: Test/AllMetrics/server-sent-bytes-per-rpc (0.11s)
+        --- PASS: Test/AllMetrics/client-received-bytes-per-rpc (0.10s)
+        --- PASS: Test/AllMetrics/server-received-bytes-per-rpc (0.21s)
+        --- PASS: Test/AllMetrics/client-sent-messages-per-rpc (0.11s)
+        --- PASS: Test/AllMetrics/server-sent-messages-per-rpc (0.10s)
+        --- PASS: Test/AllMetrics/client-received-messages-per-rpc (0.31s)
+        --- PASS: Test/AllMetrics/server-received-messages-per-rpc (0.10s)
+FAIL
+FAIL	google.golang.org/grpc/stats/opencensus	6.742s
+FAIL
