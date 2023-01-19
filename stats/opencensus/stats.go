@@ -189,7 +189,7 @@ func recordDataEnd(ctx context.Context, e *stats.End) {
 	// fractions, thus need a float.
 	latency := float64(time.Since(d.startTime)) / float64(time.Millisecond)
 	var st string
-	if e.Error != nil {
+	if e.Error != nil { // different conditional then trace, I thinkk I like trace more
 		s, _ := status.FromError(e.Error) // ignore second argument because codes.Unknown is fine
 		st = codes.CodeToStr[s.Code()]
 	} else {
@@ -204,8 +204,6 @@ func recordDataEnd(ctx context.Context, e *stats.End) {
 				tag.Upsert(keyClientMethod, removeLeadingSlash(d.method)),
 				tag.Upsert(keyClientStatus, st)),
 			ocstats.WithMeasurements(
-				clientSentBytesPerRPC.M(atomic.LoadInt64(&d.sentBytes)),
-				clientSentMessagesPerRPC.M(atomic.LoadInt64(&d.sentMsgs)),
 				clientReceivedMessagesPerRPC.M(atomic.LoadInt64(&d.recvMsgs)),
 				clientReceivedBytesPerRPC.M(atomic.LoadInt64(&d.recvBytes)),
 				clientRoundtripLatency.M(latency),

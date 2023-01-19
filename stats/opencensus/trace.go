@@ -29,6 +29,10 @@ const traceContextKey = "grpc-trace-bin"
 // It returns ctx with the new trace span added and a serialization of the
 // SpanContext added to the outgoing gRPC metadata.
 func (c *ClientHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTagInfo) context.Context {
+	// the c lambda is for c's persisted start options. persisted start options
+	// are needed to control things and plumb knobs through system/use the knobs
+	// plumbed
+
 
 	// so what actually gets emitted from the first call
 
@@ -62,18 +66,22 @@ func (s *ServerHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTagInfo) 
 		// https://github.com/grpc/grpc-go/blob/08d6261/Documentation/grpc-metadata.md#storing-binary-data-in-metadata
 		traceContextBinary := []byte(traceContext[0])
 		parent, haveParent = propagation.FromBinary(traceContextBinary)
+		// the public endpoint thing isn't set either, haveParent is just their being a trace ID, should this be the end?
+		// nothing in spec about public endpoint...just leave out, add link yourself seems like the right thing to do, parent can be either remote or local so still needs that link regardless
 		if haveParent && !s.IsPublicEndpoint { // the public endpoint gate is weird. Persist some other type of data as an option maybe disableRemoteSpanCreation bool or something
-			ctx, _ := trace.StartSpanWithRemoteParent(ctx, name, parent,
+			ctx, _ := trace.StartSpanWithRemoteParent(ctx, name, parent, // does this call just add a link like below?
 				trace.WithSpanKind(trace.SpanKindServer),
 				trace.WithSampler(s.StartOptions.Sampler),
 			)
 			return ctx
+			// oh can't return function because two things returned
 		}
 	}
 	ctx, span := trace.StartSpan(ctx, name,
 		trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithSampler(s.StartOptions.Sampler))
-	if haveParent {
+	// either adds link or doesn't, just do both in my case?
+	if haveParent { // this hits if no early return i.e. s.IsPublicEndpoitn set to true...wtf do we still need this? This is one of those arbitrary things that we want to change anyway...
 		span.AddLink(trace.Link{TraceID: parent.TraceID, SpanID: parent.SpanID, Type: trace.LinkTypeChild})
 	}
 	return ctx
@@ -94,6 +102,10 @@ func traceHandleRPC(ctx context.Context, rs stats.RPCStats) {
 		// data in span - one of those that will change for say streams with
 		// multiple messages sent back and forth, important that it just changes
 		// events in spans, not more spans
+
+		// I need to do this message id iteration, persist that counter in
+		// context - synchronization issues?
+
 		span.AddMessageReceiveEvent(0 /* TODO: messageID */, int64(rs.Length), int64(rs.WireLength)) // message receive event
 		// data in span
 	case *stats.OutPayload:
@@ -107,6 +119,7 @@ func traceHandleRPC(ctx context.Context, rs stats.RPCStats) {
 			if ok {
 				span.SetStatus(trace.Status{Code: int32(s.Code()), Message: s.Message()})
 			} else {
+				// I think should be codes.Unknown - codes.Internal is for major errors
 				span.SetStatus(trace.Status{Code: int32(codes.Internal), Message: rs.Error.Error()})
 			}
 		}
