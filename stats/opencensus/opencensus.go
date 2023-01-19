@@ -104,11 +104,14 @@ func (csh *clientStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 // TagRPC implements per RPC attempt context management.
 func (csh *clientStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo) context.Context {
 	ctx = csh.statsTagRPC(ctx, rti)
+	// csh.to.DisableTrace // this right here can be used to prevent traces, even a lambda of the interceptor on the csh type in the future
+	ctx = csh.traceTagRPC(ctx, rti)
 	return ctx
 }
 
 func (csh *clientStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	recordRPCData(ctx, rs)
+	traceHandleRPC(ctx, rs) // perhaps rename
 }
 
 type serverStatsHandler struct {
@@ -126,10 +129,12 @@ func (ssh *serverStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 // TagRPC implements per RPC context management.
 func (ssh *serverStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo) context.Context {
 	ctx = ssh.statsTagRPC(ctx, rti)
+	ctx = ssh.statsTagRPC(ctx, rti)
 	return ctx
 }
 
 // HandleRPC implements per RPC tracing and stats implementation.
 func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	recordRPCData(ctx, rs)
+	traceHandleRPC(ctx, rs)
 }
