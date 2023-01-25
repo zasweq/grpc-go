@@ -794,7 +794,7 @@ func (s) TestAllMetrics(t *testing.T) {
 
 // compareSpanContext only checks the equality of the trace options, which
 // represent whether the span should be sampled. The other fields are checked
-// for presense in later assertions.
+// for presence in later assertions.
 func compareSpanContext(sc trace.SpanContext, sc2 trace.SpanContext) bool {
 	return sc.TraceOptions.IsSampled() == sc2.TraceOptions.IsSampled()
 }
@@ -892,7 +892,7 @@ func presenceAndRelationshipAssertionsClientServerSpan(sis []spanInformation) er
 			}
 		}
 		// Due to the span IDs being 8 bytes, the documentation states that it
-		// is practically a mathematical uncertainity in practice to create two
+		// is practically a mathematical uncertainty in practice to create two
 		// colliding IDs. Thus, for a presence check (the ID was actually
 		// generated, I will simply compare to the zero value, even though a
 		// zero value is a theoretical possibility of generation). This is
