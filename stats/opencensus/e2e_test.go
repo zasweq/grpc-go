@@ -18,6 +18,7 @@ package opencensus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go.opencensus.io/trace"
 	"io"
@@ -848,20 +849,15 @@ func compareLinks(ls []trace.Link, ls2 []trace.Link) bool {
 	return true
 }
 
-// spanInformation is the information received about the span. SpanID/TraceID is
-// auto generated, thus you can't test the correctness of the ID, only the
-// relation between any IDs (i.e. this part of the data has the same ID as this
-// part of the data). Thus, due to the any relationship being important for
-// parent child relationship, which can be tested by hasRemoteParent, for
-// cleanliness just ignore randomly generated IDs.
-// This is a subset of information that is important to verify that gRPC has
-// knobs over, which goes through a stable OpenCensus API with well defined
-// behavior. This keeps the robustness of assertions over time.
+// spanInformation is the information received about the span. This is a subset
+// of information that is important to verify that gRPC has knobs over, which
+// goes through a stable OpenCensus API with well defined behavior. This keeps
+// the robustness of assertions over time.
 type spanInformation struct {
-	// SpanContext is important, either gets pulled off the wire server side or
-	// created. Thus check for presence.
+	// SpanContext either gets pulled off the wire in certain cases server side
+	// or created.
 	sc trace.SpanContext
-	parentSpanID trace.SpanID // still need to persist to check for presence
+	parentSpanID trace.SpanID
 	spanKind int
 	name string
 	message string
@@ -872,28 +868,56 @@ type spanInformation struct {
 	childSpanCount int
 }
 
-// Check for presense here...assertions are different, presense assertion, not equal assertio
-// helper for same trace ID or just compare [0] and [1] should be part of the same trace
-
-// presenceAndRelationshipAssertionsClientServerSpan checks for a populated (is
-// not checking zero value fine non robust but w/e) Trace/Span ID information in
-// the span context, and makes sure the trace IDs are the same across each span.
-// This is assumed to be called with spans from the same RPC (thus the same
-// trace). These assertions are orthogonal to pure equality assertions.
-func presenceAndRelationshipAssertionsClientServerSpan(si []spanInformation, si2 []spanInformation) {
-	// trace IDs are the same
-	// span context is populated...not the zero value? is this a strong enough assertion
-	// look at constructor to see if it emits the non zero value
-	// parent SPAN ID is populated
+// presenceAndRelationshipAssertionsClientServerSpan checks for consistent trace
+// ID across the full trace. It also asserts each span has a corresponding
+// generated SpanID, and makes sure in the case of a server span and a client
+// span, the server span points to the client span as it's parent. This is
+// assumed to be called with spans from the same RPC (thus the same trace).
+// These assertions are orthogonal to pure equality assertions, as this data is
+// generated at runtime, so can only test relations between IDs (i.e. this part
+// of the data has the same ID as this part of the data).
+//
+// Returns an error in the case of a failing assertion, non nil error otherwise.
+func presenceAndRelationshipAssertionsClientServerSpan(sis []spanInformation) error {
+	var traceID trace.TraceID
+	for i, si := range sis {
+		// Trace IDs should all be consistent across every span, since this
+		// function assumes called with Span from one RPC, which all fall under
+		// one trace.
+		if i == 0 {
+			traceID = si.sc.TraceID
+		} else {
+			if !cmp.Equal(si.sc.TraceID, traceID) {
+				return fmt.Errorf("TraceIDs should all be consistent: %v, %v", si.sc.TraceID, traceID)
+			}
+		}
+		// Due to the span IDs being 8 bytes, the documentation states that it
+		// is practically a mathematical uncertainity in practice to create two
+		// colliding IDs. Thus, for a presence check (the ID was actually
+		// generated, I will simply compare to the zero value, even though a
+		// zero value is a theoretical possibility of generation). This is
+		// because in practice, this zero value defined by this test will never
+		// collide with the generated ID.
+		if cmp.Equal(si.sc.SpanID, trace.SpanID{}) {
+			print("si.sc.SpanID: ", si.sc.SpanID.String())
+			print("si.parentSpanID: ", si.parentSpanID.String())
+			return errors.New("span IDs should be populated from the creation of the span")
+		}
+	}
+	// If the length of spans of an RPC is 2, it means there is a server span
+	// which exports first and a client span which exports second. Thus, the
+	// server span should point to the client span as it's parent, represented
+	// by it's ID.
+	if len(sis) == 2 {
+		if !cmp.Equal(sis[0].parentSpanID, sis[1].sc.SpanID) {
+			return fmt.Errorf("server span should point to the client span as it's parent. parentSpanID: %v, clientSpanID: %v", sis[0].parentSpanID, sis[1].sc.SpanID)
+		}
+	}
+	return nil
 }
 
-// or declare what you have from consts
-// and then fill in the rest from runtime information...
-// like traceID from one maps to all...
-
-// and SpanID stuff really just check for equality
-
-// equal compares only...and why...
+// equal compares the constant data of the exported span information that is
+// important for correctness known before runtime.
 func (si spanInformation) equal(si2 spanInformation) bool {
 	if !compareSpanContext(si.sc, si2.sc) {
 		return false
@@ -1040,7 +1064,7 @@ func (s) TestSpan(t *testing.T) {
 			// For some reason, status isn't populated in the data sent to the
 			// exporter. This seems wrong, but it didn't send status in old
 			// instrumentation code, so I'm iffy on it but fine.
-			hasRemoteParent: true, // What I am mainly using for verification that this server span actually correctly has a parent.
+			hasRemoteParent: true,
 		},
 		{
 			sc: trace.SpanContext{
@@ -1065,82 +1089,29 @@ func (s) TestSpan(t *testing.T) {
 		},
 	}
 
-	/* need to rebase on my metrics PR
-	        -       {
-	        -               sc: trace.SpanContext{
-	        -                       TraceID:      s"39b91a70aaed10e4f584faf0b9e5aa8d",
-	        -                       SpanID:       s"1d1c50b5e7951c80",
-	        -                       TraceOptions: 1,
-	        -               },
-								// correct span id...reads it off the span context
-								// points to itself as parent?
-	        -               parentSpanID: s"1d1c50b5e7951c80", // my question is where the heck is this stored?
-	        -               spanKind:     1,
-	        -               name:         "grpc.testing.TestService.UnaryCall",
-	        -               attributes:   map[string]any{"Client": bool(false), "FailFast": bool(false)}, // sure
-	        -               messageEvents: []trace.MessageEvent{
-	        - 
-										// Same, 2 3 1 4
-										{
-	        -                               Time:                 s"2023-01-23 21:58:59.620649 -0500"...,
-	        -                               EventType:            2,
-	        -                               UncompressedByteSize: 2,
-	        -                               CompressedByteSize:   7,
-	        -                       },
-	        -                       {
-	        -                               Time:               s"2023-01-23 21:58:59.620656 -0500"...,
-	        -                               EventType:          1,
-	        -                               CompressedByteSize: 5,
-	        -                       },
-	        -               },
-	        -               links: []trace.Link{
-	        -                       {
-	        -                               TraceID: s"39b91a70aaed10e4f584faf0b9e5aa8d", // right trace id...
-	        -                               SpanID:  s"6033e47031a2c816", // what the fuck, at least this shows the pointing to client but then would have to do [1].SpanID
-	        -                               Type:    1,
-	        -                       },
-	        -               },
-	        -               hasRemoteParent: true, // same
-	        -       },
-	        -       {
-	        -               sc: trace.SpanContext{
-	        -                       TraceID:      s"39b91a70aaed10e4f584faf0b9e5aa8d",
-	        -                       SpanID:       s"6033e47031a2c816",
-	        -                       TraceOptions: 1,
-	        -               },
-	        -               parentSpanID: s"6033e47031a2c816",
-	        -               spanKind:     2,
-	        -               name:         "grpc.testing.TestService.UnaryCall",
-	        -               attributes:   map[string]any{"Client": bool(true), "FailFast": bool(true)},
-	        -               messageEvents: []trace.MessageEvent{
-	        -                       {
-	        -                               Time:                 s"2023-01-23 21:58:59.620475 -0500"...,
-	        -                               EventType:            1,
-	        -                               UncompressedByteSize: 2,
-	        -                               CompressedByteSize:   7,
-	        -                       },
-	        -                       {
-	        -                               Time:               s"2023-01-23 21:58:59.620776 -0500"...,
-	        -                               EventType:          2,
-	        -                               CompressedByteSize: 5,
-	        -                       },
-	        -               },
-	        -       },
-	          }
-	*/
-
-	if err := spanMatches(fe, wantSI); err != nil { // but would need this to check for traceID populating at runtime, I think a second comparison is fine
+	if err := spanMatches(fe, wantSI); err != nil {
 		t.Fatalf("Invalid OpenCensus export span data: %v", err)
 	}
-	print("Finished with first check, ok")
-
 	fe.mu.Lock()
+	if err := presenceAndRelationshipAssertionsClientServerSpan(fe.seenSpans); err != nil {
+		fe.mu.Unlock()
+		t.Fatalf("Error in runtime data assertions: %v", err)
+	}
+	print("Finished with first check, ok")
 	fe.seenSpans = nil
 	fe.mu.Unlock()
 
 	stream, err := ss.Client.FullDuplexCall(ctx)
 	if err != nil {
-		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
+		t.Fatalf("ss.Client.FullDuplexCall failed: %v", err)
+	}
+	// Send two messages. This should be accounted for in the emitted spans
+	// message events, with message IDs which increase.
+	if err := stream.Send(&grpc_testing.StreamingOutputCallRequest{}); err != nil {
+		t.Fatalf("stream.Send failed: %v", err)
+	}
+	if err := stream.Send(&grpc_testing.StreamingOutputCallRequest{}); err != nil {
+		t.Fatalf("stream.Send failed: %v", err)
 	}
 
 	stream.CloseSend()
@@ -1160,6 +1131,18 @@ func (s) TestSpan(t *testing.T) {
 					Type: trace.LinkTypeChild,
 				},
 			},
+			messageEvents: []trace.MessageEvent{
+				{
+					EventType: trace.MessageEventTypeRecv,
+					MessageID: 1, // First msg recv so 1
+					CompressedByteSize: 5,
+				},
+				{
+					EventType: trace.MessageEventTypeRecv,
+					MessageID: 2, // Second msg recv so 2
+					CompressedByteSize: 5,
+				},
+			},
 			hasRemoteParent: true,
 		},
 		{
@@ -1168,12 +1151,27 @@ func (s) TestSpan(t *testing.T) {
 			},
 			spanKind: trace.SpanKindClient,
 			name:         "grpc.testing.TestService.FullDuplexCall",
+			messageEvents: []trace.MessageEvent{
+				{
+					EventType: trace.MessageEventTypeSent,
+					MessageID: 1, // First msg recv so 1
+					CompressedByteSize: 5,
+				},
+				{
+					EventType: trace.MessageEventTypeSent,
+					MessageID: 2, // Second msg recv so 2
+					CompressedByteSize: 5,
+				},
+			},
 			hasRemoteParent: false,
 		},
 	}
 	if err := spanMatches(fe, wantSI); err != nil {
 		t.Fatalf("Invalid OpenCensus export span data: %v", err)
 	}
+	fe.mu.Lock()
+	defer fe.mu.Unlock()
+	if err := presenceAndRelationshipAssertionsClientServerSpan(fe.seenSpans); err != nil {
+		t.Fatalf("Error in runtime data assertions: %v", err)
+	}
 }
-
-// Ask Stanley to run his test when o11y switches over...ugh
