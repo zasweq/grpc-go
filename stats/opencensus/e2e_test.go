@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go.opencensus.io/trace"
 	"io"
 	"sync"
 	"testing"
@@ -29,6 +28,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/internal/grpctest"
