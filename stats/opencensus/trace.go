@@ -143,10 +143,6 @@ func populateSpan(ctx context.Context, rs stats.RPCStats) {
 		} else {
 			span.SetStatus(trace.Status{Code: trace.StatusCodeOK}) // could get rid of this else conditional and just leave as 0 value, but this makes it explicit
 		}
-		print("stats.End passed, span.End() called")
 		span.End()
 	}
 }
-
-// when get back: Add error logging in those places (metadata receive, populate
-// Span), finish runtime data generated assertions on my tests.

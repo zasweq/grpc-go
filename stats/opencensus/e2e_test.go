@@ -899,8 +899,6 @@ func presenceAndRelationshipAssertionsClientServerSpan(sis []spanInformation) er
 		// because in practice, this zero value defined by this test will never
 		// collide with the generated ID.
 		if cmp.Equal(si.sc.SpanID, trace.SpanID{}) {
-			print("si.sc.SpanID: ", si.sc.SpanID.String())
-			print("si.parentSpanID: ", si.parentSpanID.String())
 			return errors.New("span IDs should be populated from the creation of the span")
 		}
 	}
@@ -957,7 +955,6 @@ func (si spanInformation) Equal(si2 spanInformation) bool {
 func (fe *fakeExporter) ExportSpan(sd *trace.SpanData) {
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
-	print("Export Span called")
 
 	// Persist the subset of data received that is important for correctness and
 	// to make various assertions on later. Keep the ordering as ordering of
@@ -1097,7 +1094,6 @@ func (s) TestSpan(t *testing.T) {
 		fe.mu.Unlock()
 		t.Fatalf("Error in runtime data assertions: %v", err)
 	}
-	print("Finished with first check, ok")
 	fe.seenSpans = nil
 	fe.mu.Unlock()
 
