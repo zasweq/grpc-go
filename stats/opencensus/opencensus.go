@@ -110,7 +110,7 @@ func (csh *clientStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo
 
 func (csh *clientStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	recordRPCData(ctx, rs)
-	traceHandleRPC(ctx, rs) // perhaps rename
+	populateSpan(ctx, rs) // perhaps rename
 }
 
 type serverStatsHandler struct {
@@ -135,5 +135,5 @@ func (ssh *serverStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo
 // HandleRPC implements per RPC tracing and stats implementation.
 func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	recordRPCData(ctx, rs)
-	traceHandleRPC(ctx, rs) // perhaps rename
+	populateSpan(ctx, rs) // perhaps rename
 }

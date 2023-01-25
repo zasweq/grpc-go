@@ -60,7 +60,7 @@ type fakeExporter struct {
 
 	mu        sync.RWMutex
 	seenViews map[string]*viewInformation
-	seenSpans []spanInformation // pointer? or inline
+	seenSpans []spanInformation
 }
 
 // viewInformation is information Exported from the view package through
@@ -199,31 +199,6 @@ func (vi *viewInformation) Equal(vi2 *viewInformation) bool {
 	return vi.equal(vi2)
 }
 
-// spanMatches checks if the seen spans of the exporter contain the desired
-// spans within the scope of a certain time. Returns a nil error if correct span
-// information found, non nil error if correct information not found within a
-// timeout.
-func spanMatches(fe *fakeExporter, wantSpans []spanInformation /*<- pointer?*/) error {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
-	defer cancel()
-	// polling loops wraps arbitrary event from a separate thread...
-	// only need one error perhaps?
-	var err error
-	for ctx.Err() == nil { // polling loop
-		err = nil
-		fe.mu.RLock()
-		if diff := cmp.Diff(fe.seenSpans, wantSpans); diff != "" {
-			err = fmt.Errorf("got unexpected spans, diff (-got, +want): %v", diff)
-		}
-		fe.mu.RUnlock()
-		if err == nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return err
-}
-
 // seenViewPresent checks if the seen views contain the desired information for
 // the view within the scope of a certain time. Returns an nil slice if correct
 // information found, non nil slice of at least length 1 if correct information
@@ -249,6 +224,29 @@ func seenViewMatches(fe *fakeExporter, viewName string, wantVI *viewInformation)
 		time.Sleep(50 * time.Millisecond)
 	}
 	return errs
+}
+
+// spanMatches checks if the seen spans of the exporter contain the desired
+// spans within the scope of a certain time. Returns a nil error if correct span
+// information found, non nil error if correct information not found within a
+// timeout.
+func spanMatches(fe *fakeExporter, wantSpans []spanInformation) error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	var err error
+	for ctx.Err() == nil {
+		err = nil
+		fe.mu.RLock()
+		if diff := cmp.Diff(fe.seenSpans, wantSpans); diff != "" {
+			err = fmt.Errorf("got unexpected spans, diff (-got, +want): %v", diff)
+		}
+		fe.mu.RUnlock()
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return err
 }
 
 // TestAllMetrics tests emitted metrics from gRPC. It configures a system with a
@@ -796,14 +794,8 @@ func (s) TestAllMetrics(t *testing.T) {
 	}
 }
 
-// compareSpanContext compares...and why only that...
+// ignore this stuff...leave up to Stanley
 func compareSpanContext(sc trace.SpanContext, sc2 trace.SpanContext) bool {
-	/*if sc == nil && sc2 == nil {
-		return true
-	}
-	if (sc != nil) != (sc2 != nil) {
-		return false
-	}*/
 	// if sc.TraceID // isn't this auto generated, so need to persist from client call into server call
 	// default value of slice is nil, is this just a numbered slice?
 	if sc.TraceID != sc2.TraceID { // [16]byte, can you just do this, can be nil will this compare right I guess you can just run it and see...
@@ -828,15 +820,14 @@ func compareMessageEvents(me []trace.MessageEvent, me2 []trace.MessageEvent) boo
 	if len(me) != len(me2) {
 		return false
 	}
-	// this should be deterministic vvv
-	// [sent, recv, sent, recv]
+	// Order matters here, message events are deterministic so no flakiness to
+	// test.
 	for i, e := range me {
-		// e vs. me2[i]
 		e2 := me2[i]
 		if e.EventType != e2.EventType {
 			return false
 		}
-		if e.MessageID != e2.MessageID { // the data that I am persisting...
+		if e.MessageID != e2.MessageID { // Add this through context
 			return false
 		}
 		if e.UncompressedByteSize != e2.UncompressedByteSize {
@@ -849,6 +840,7 @@ func compareMessageEvents(me []trace.MessageEvent, me2 []trace.MessageEvent) boo
 	return true
 }
 
+// compareLinks compares the type of link
 func compareLinks(ls []trace.Link, ls2 []trace.Link) bool {
 	if ls == nil && ls2 == nil {
 		return true
@@ -862,13 +854,15 @@ func compareLinks(ls []trace.Link, ls2 []trace.Link) bool {
 	for i, l := range ls {
 		l2 := ls2[i]
 		// l.SpanID // [8]byte this is compared a lot, if needed declare another helper function to compare these
-		// fuck will need to declare a want inline...
-		if l.TraceID != l2.TraceID {
+		// fuck will need to declare a want inline...or just don't compare
+		/*if l.TraceID != l2.TraceID {
 			return false
 		}
 		if l.SpanID != l2.SpanID {
 			return false
-		}
+		}*/ // actually just ignore this to not persist a bunch of crap
+		// Just compare the type, trace and span ID
+		// are useless...
 		if l.Type != l2.Type {
 			return false
 		}
@@ -879,10 +873,10 @@ func compareLinks(ls []trace.Link, ls2 []trace.Link) bool {
 
 type spanInformation struct {
 	// SpanContext seems dummy important esp since you need to propagate this over the wire from client side and build it server side, persisted and used to build out parent information
-	sc trace.SpanContext
+	sc trace.SpanContext // perhaps simply check that this is populated and not nil or something
 	parentSpanID trace.SpanID
 	// maybe see what happens without message id, perhaps I should go ahead and add it
-	spanKind int // client and server important to test this
+	spanKind int
 	name string
 	message string
 	attributes map[string]interface{}
@@ -891,16 +885,10 @@ type spanInformation struct {
 	links []trace.Link
 	hasRemoteParent bool
 	childSpanCount int
-} // separate data structure to persist only what I need and write a comparison function on that persisted data...
+}
 
+// equal compares only...and why...
 func (si spanInformation) equal(si2 spanInformation) bool {
-	// go down this list
-	/*if si == nil && si2 == nil {
-		return true
-	}
-	if (si != nil) != (si2 != nil) {
-		return false
-	}*/
 	// switch this comparison later since it comes as a struct in ExportSpan
 	/*if !compareSpanContext(si.sc, si2.sc) { // ugh so no pointers, just get rid of nil checks in compare functions?
 		return false
@@ -928,24 +916,28 @@ func (si spanInformation) equal(si2 spanInformation) bool {
 	// ...
 	// if cmp.Equal // dfs the tree of data? switch to that if the operation below doesn't actually compare the fields...
 	// code int32 and message string I need to add the checks for both
-	if si.status != si2.status { // what does this actually check on this struct
+	if si.status != si2.status { // what does this actually check on this struct - ignore? cmp.Diff on the struct data type?
 		return false
 	}
 	// compare the []links here
 	/*if !compareLinks(si.links, si2.links) { // probably fails here
 		return false
 	}*/
+	// compare link type for link type child
+	if !compareLinks(si.links, si2.links) {
+		return false
+	}
 	if si.hasRemoteParent != si2.hasRemoteParent {
 		return false
 	}
-	if si.childSpanCount != si2.childSpanCount {
+	return si.childSpanCount == si2.childSpanCount
+	/*if si.childSpanCount != si2.childSpanCount {
 		return false
 	}
-	return true // combine with statement above?
+	return true*/ // combine with statement above?
 }
 
 func (si spanInformation) Equal(si2 spanInformation) bool { // how do I get this to hit if comparing structs
-	// how to ignore the timestamp, does this already happen?
 	return si.equal(si2)
 }
 
@@ -1052,12 +1044,13 @@ func (s) TestSpan(t *testing.T) {
 		DisableTrace: false,
 	}
 
-	// this codeblock is shared, can be made a helper although traces and metrics are orthogonal so perhaps keep separate
+	// this codeblock is shared, can be made a helper although traces and
+	// metrics are orthogonal so perhaps keep separate
 
 	fe := &fakeExporter{
 		t: t,
 		seenViews: make(map[string]*viewInformation),
-		// seenSpans...slice with ordering matters I think so should be client and then server span if shared created data structures on heap map to both
+		// append to nil seenSpans...
 	}
 	view.RegisterExporter(fe)
 	defer view.UnregisterExporter(fe)
@@ -1087,8 +1080,9 @@ func (s) TestSpan(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 
-	// Make a Unary RPC. This should cause a span with no? message events to be
-	// emitted both from the client and the server.
+	// Make a Unary RPC. This should cause a span with message events
+	// corresponding to the request message and response message to be emitted
+	// both from the client and the server.
 	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{Payload: &grpc_testing.Payload{}}); err != nil {
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
 	}
@@ -1096,21 +1090,17 @@ func (s) TestSpan(t *testing.T) {
 	// server span sends first because it finishes first
 	// add comment about ordering
 	// 2. recv 3. send msg (end)
-
 	// 1. send 4. recv msg (end) on client side
 
+	// The spans received are server first, then client. This is due to the
+	// server finishing the RPC first. The ordering of message events is as
+	// follows: client send, server recv, server send (server span end), client
+	// recv (client span end).
+
 	// what part (subset) of message events are important for correctness?
-
-
-
-
-	// wantSI := spanInformation...
-	// actually I want [](span from client side, span from server side), message events I think are deterministic...
 	wantSI := []spanInformation{ // pointer? I have a knob whether I do & or inline struct in ExportSpan()...
 		{
 			// only has populated span context if parent, no parent in this case...
-
-			// FIX LEADING SLASH, made a decision
 
 			// does the generated client span have a span context? Does it populate it with it's own...
 			sc: trace.SpanContext{
@@ -1196,11 +1186,13 @@ func (s) TestSpan(t *testing.T) {
 
 					// add messageID when that happens...should correspond to the client side sends/recvs :)
 					EventType: trace.MessageEventTypeRecv,
+					MessageID: 1,
 					UncompressedByteSize: 2, // I don't know why...but perhaps leave out but I guess this is important for correctness...
 					CompressedByteSize: 7,
 				},
 				{
 					EventType: trace.MessageEventTypeSent,
+					MessageID: 1,
 					CompressedByteSize: 5, // what? no uncompressed yeah even on client side in all 3
 				},
 			},
@@ -1226,22 +1218,19 @@ func (s) TestSpan(t *testing.T) {
 			messageEvents: []trace.MessageEvent{
 				{
 					EventType: trace.MessageEventTypeSent,
+					MessageID: 1,
 					UncompressedByteSize: 2,
 					CompressedByteSize: 7,
 				},
 				{
 					EventType: trace.MessageEventTypeRecv,
+					MessageID: 1,
 					CompressedByteSize: 5, // I wonder why
 				},
 			},
 			hasRemoteParent: false, // implicit, but better to be implicit
 		}, // how to tell what portion failed...
 	}
-	// the got seems all kinds of messed up,
-	// maybe plumb in the normal opencensus instrumentation and see what gets sent there...
-
-	// stanley I coded up a fix, can you please run all your tests on it so I can see if it fixes and contineus to work with other test cases...
-
 	// put this helper in a separate function...
 
 	// does cmp.Diff iterate over the [], or {fieldA, fieldB} yes it iterates over array, and it iterates over struct fields too
@@ -1321,10 +1310,8 @@ func (s) TestSpan(t *testing.T) {
 	}
 	print("Finished with first check, ok")
 
-
-	// clear state for fresh verification later (like ginger lol)
 	fe.mu.Lock()
-	fe.seenSpans = nil // can just nil this because we're appending to it...
+	fe.seenSpans = nil
 	fe.mu.Unlock()
 
 	stream, err := ss.Client.FullDuplexCall(ctx)
@@ -1337,22 +1324,6 @@ func (s) TestSpan(t *testing.T) {
 		t.Fatalf("unexpected error: %v, expected an EOF error", err)
 	}
 
-	// actually I want [](span from client side with message events, span from server side with message events)
-	/*wantSI = []spanInformation{
-		// Client side with messages
-		{
-			// same shit as above except with message events, but I never sent a message or does that come in closesend()?
-		},
-		// Server side with messages
-		{
-		},
-	}*/
-	// because it'll always be coupled?
-	// or I could do wantSI[0].messageEvents = although the previous has message events too...
-	// also will have a different span id
-	// wantSI[0].messageEvents = []trace.MessageEvent{}
-	// and wantSI[1].messageEvents =
-	// wantSI[1].messageEvents = []trace.MessageEvent{}
 	wantSI = []spanInformation{
 		{
 			// this span ID points to that one ...again how the fuck do you persist
@@ -1416,18 +1387,7 @@ func (s) TestSpan(t *testing.T) {
 	}
 }
 
-// we have these whack emissions from my opencensus traces...
-
-// question I have: should the emissions be deterministic wrt ordering, and also
-// should the second Span point to the first span?
-
-// what about what actually gets emitted from OpenCensus currently...
-// ^^^
-// Take my verification of tests and instead of my new dial option,
-// use there's with their trace sampler (see o11y for callsite)
-
 func (s) TestActualOpenCensus(t *testing.T) {
-	// everything exactly the same expect start options for client and server are different...
 	fe := &fakeExporter{
 		t: t,
 		seenViews: make(map[string]*viewInformation),
@@ -1435,7 +1395,6 @@ func (s) TestActualOpenCensus(t *testing.T) {
 	trace.RegisterExporter(fe)
 	defer trace.UnregisterExporter(fe)
 
-	// linking in this will f with go.mod right?
 	ss := &stubserver.StubServer{
 		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
 			return &grpc_testing.SimpleResponse{}, nil
@@ -1449,7 +1408,6 @@ func (s) TestActualOpenCensus(t *testing.T) {
 			}
 		},
 	}
-	// this is really only difference...opencensus options (see o11y package)
 
 	so := trace.StartOptions{
 		Sampler: trace.ProbabilitySampler(1.0),
@@ -1597,6 +1555,8 @@ func (s) TestActualOpenCensus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
 	}
+
+	// stream.SendMsg() // perhaps call this with something to trigger message events
 
 	stream.CloseSend()
 	if _, err = stream.Recv(); err != io.EOF {
