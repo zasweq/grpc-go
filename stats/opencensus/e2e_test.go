@@ -856,16 +856,16 @@ func compareLinks(ls []trace.Link, ls2 []trace.Link) bool {
 type spanInformation struct {
 	// SpanContext either gets pulled off the wire in certain cases server side
 	// or created.
-	sc trace.SpanContext
-	parentSpanID trace.SpanID
-	spanKind int
-	name string
-	message string
-	messageEvents []trace.MessageEvent
-	status trace.Status
-	links []trace.Link
+	sc              trace.SpanContext
+	parentSpanID    trace.SpanID
+	spanKind        int
+	name            string
+	message         string
+	messageEvents   []trace.MessageEvent
+	status          trace.Status
+	links           []trace.Link
 	hasRemoteParent bool
-	childSpanCount int
+	childSpanCount  int
 }
 
 // presenceAndRelationshipAssertionsClientServerSpan checks for consistent trace
@@ -960,20 +960,20 @@ func (fe *fakeExporter) ExportSpan(sd *trace.SpanData) {
 	// to make various assertions on later. Keep the ordering as ordering of
 	// spans is deterministic in the context of one RPC.
 	gotSI := spanInformation{
-		sc: sd.SpanContext,
+		sc:           sd.SpanContext,
 		parentSpanID: sd.ParentSpanID,
-		spanKind: sd.SpanKind,
-		name: sd.Name,
-		message: sd.Message,
+		spanKind:     sd.SpanKind,
+		name:         sd.Name,
+		message:      sd.Message,
 		// annotations - ignore
 		// attributes - ignore, I just left them in from previous but no spec
 		// for correctness so no need to test. Java doesn't even have any
 		// attributes.
-		messageEvents: sd.MessageEvents,
-		status: sd.Status,
-		links: sd.Links,
+		messageEvents:   sd.MessageEvents,
+		status:          sd.Status,
+		links:           sd.Links,
 		hasRemoteParent: sd.HasRemoteParent,
-		childSpanCount: sd.ChildSpanCount,
+		childSpanCount:  sd.ChildSpanCount,
 	}
 	fe.seenSpans = append(fe.seenSpans, gotSI)
 }
@@ -990,7 +990,7 @@ func (s) TestSpan(t *testing.T) {
 	defer trace.UnregisterExporter(fe)
 
 	so := TraceOptions{
-		TS: trace.ProbabilitySampler(1),
+		TS:           trace.ProbabilitySampler(1),
 		DisableTrace: false,
 	}
 	ss := &stubserver.StubServer{
@@ -1033,7 +1033,7 @@ func (s) TestSpan(t *testing.T) {
 				TraceOptions: 1,
 			},
 			spanKind: trace.SpanKindServer,
-			name: "grpc.testing.TestService.UnaryCall",
+			name:     "grpc.testing.TestService.UnaryCall",
 			// message id - "must be calculated as two different counters
 			// starting from 1 one for sent messages and one for received
 			// message. This way we guarantee that the values will be consistent
@@ -1042,14 +1042,14 @@ func (s) TestSpan(t *testing.T) {
 			// client and server spans."
 			messageEvents: []trace.MessageEvent{
 				{
-					EventType: trace.MessageEventTypeRecv,
-					MessageID: 1, // First msg recv so 1 (see comment above)
+					EventType:            trace.MessageEventTypeRecv,
+					MessageID:            1, // First msg recv so 1 (see comment above)
 					UncompressedByteSize: 2,
-					CompressedByteSize: 7,
+					CompressedByteSize:   7,
 				},
 				{
-					EventType: trace.MessageEventTypeSent,
-					MessageID: 1, // First msg send so 1 (see comment above)
+					EventType:          trace.MessageEventTypeSent,
+					MessageID:          1, // First msg send so 1 (see comment above)
 					CompressedByteSize: 5,
 				},
 			},
@@ -1068,17 +1068,17 @@ func (s) TestSpan(t *testing.T) {
 				TraceOptions: 1,
 			},
 			spanKind: trace.SpanKindClient,
-			name:         "grpc.testing.TestService.UnaryCall",
+			name:     "grpc.testing.TestService.UnaryCall",
 			messageEvents: []trace.MessageEvent{
 				{
-					EventType: trace.MessageEventTypeSent,
-					MessageID: 1, // First msg send so 1 (see comment above)
+					EventType:            trace.MessageEventTypeSent,
+					MessageID:            1, // First msg send so 1 (see comment above)
 					UncompressedByteSize: 2,
-					CompressedByteSize: 7,
+					CompressedByteSize:   7,
 				},
 				{
-					EventType: trace.MessageEventTypeRecv,
-					MessageID: 1, // First msg recv so 1 (see comment above)
+					EventType:          trace.MessageEventTypeRecv,
+					MessageID:          1, // First msg recv so 1 (see comment above)
 					CompressedByteSize: 5,
 				},
 			},
@@ -1121,7 +1121,7 @@ func (s) TestSpan(t *testing.T) {
 				TraceOptions: 1,
 			},
 			spanKind: trace.SpanKindServer,
-			name: "grpc.testing.TestService.FullDuplexCall",
+			name:     "grpc.testing.TestService.FullDuplexCall",
 			links: []trace.Link{
 				{
 					Type: trace.LinkTypeChild,
@@ -1129,13 +1129,13 @@ func (s) TestSpan(t *testing.T) {
 			},
 			messageEvents: []trace.MessageEvent{
 				{
-					EventType: trace.MessageEventTypeRecv,
-					MessageID: 1, // First msg recv so 1
+					EventType:          trace.MessageEventTypeRecv,
+					MessageID:          1, // First msg recv so 1
 					CompressedByteSize: 5,
 				},
 				{
-					EventType: trace.MessageEventTypeRecv,
-					MessageID: 2, // Second msg recv so 2
+					EventType:          trace.MessageEventTypeRecv,
+					MessageID:          2, // Second msg recv so 2
 					CompressedByteSize: 5,
 				},
 			},
@@ -1146,16 +1146,16 @@ func (s) TestSpan(t *testing.T) {
 				TraceOptions: 1,
 			},
 			spanKind: trace.SpanKindClient,
-			name:         "grpc.testing.TestService.FullDuplexCall",
+			name:     "grpc.testing.TestService.FullDuplexCall",
 			messageEvents: []trace.MessageEvent{
 				{
-					EventType: trace.MessageEventTypeSent,
-					MessageID: 1, // First msg recv so 1
+					EventType:          trace.MessageEventTypeSent,
+					MessageID:          1, // First msg recv so 1
 					CompressedByteSize: 5,
 				},
 				{
-					EventType: trace.MessageEventTypeSent,
-					MessageID: 2, // Second msg recv so 2
+					EventType:          trace.MessageEventTypeSent,
+					MessageID:          2, // Second msg recv so 2
 					CompressedByteSize: 5,
 				},
 			},

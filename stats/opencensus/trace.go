@@ -47,7 +47,7 @@ func (csh *clientStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTa
 	_, span := trace.StartSpan(ctx, mn, trace.WithSampler(csh.to.TS), trace.WithSpanKind(trace.SpanKindClient))
 
 	swmc := &spanWithMsgCount{
-		Span: span,
+		Span:         span,
 		countSentMsg: 0, // msg events scoped to scope of context, per attempt client side
 		countRecvMsg: 0,
 	}
@@ -95,7 +95,7 @@ func (ssh *serverStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTa
 	}
 
 	swmc := &spanWithMsgCount{
-		Span: span,
+		Span:         span,
 		countSentMsg: 0,
 		countRecvMsg: 0,
 	}
