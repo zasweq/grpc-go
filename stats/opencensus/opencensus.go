@@ -20,6 +20,10 @@ package opencensus
 
 import (
 	"context"
+	ocstats "go.opencensus.io/stats"
+	"go.opencensus.io/tag"
+	"google.golang.org/grpc/status"
+	"time"
 
 	"go.opencensus.io/trace"
 
@@ -80,13 +84,60 @@ func ServerOption(to TraceOptions) grpc.ServerOption {
 // unaryInterceptor handles per RPC context management. It also handles per RPC
 // tracing and stats.
 func unaryInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	return invoker(ctx, method, req, reply, cc, opts...)
+	// "Start timestamp - After the client application starts the RPC."
+	// record timestamp
+	startTime := time.Now()
+	// s to err := invoker...
+	err := invoker(ctx, method, req, reply, cc, opts...)
+	// record another timestamp
+	// record: timestamp - timestamp...should this record on an error...including e2e time...I think I should record even on an error
+	// "before the status of the rpc is delivered to the application" - so even errors...
+	// "End timestamp - Before the status of the RPC is delivered to the
+	// application."
+	// right even on errors, distribution with errors in it too allows you to see it
+	callLatency := float64(time.Since(startTime)) / float64(time.Millisecond)
+
+	// Do it before calculating
+	// errToCanonicalString
+	// st := errToCanonicalString
+	var st string
+	if err != nil {
+		s, _ := status.FromError(err)
+		st = canonicalString(s.Code())
+	} else {
+		st = "OK"
+	}
+	// can we ignore here - yeah just returns a codes.Unknown if an error is plumbed
+
+	// I do need a measure
+	ocstats.RecordWithOptions(ctx /*is this the right context*/,
+		ocstats.WithTags(
+		// yeah this is client duh...this
+		tag.Upsert(keyClientMethod, removeLeadingSlash(method)), // do I need to pull the leading slash off method here...?
+		// This status dimension is handled by row iterations....status + method name in row...
+		tag.Upsert(keyClientStatus, st), // st is plumbed into data End...now you need to pull status from error...
+		),
+		ocstats.WithMeasurements(
+			// clientCallLatency.M(latency)
+			clientApiLatency.M(callLatency),
+		), // I think views aggregate automatically...s=and upload every interval or when you unregister
+	)
+
+	// return err <- this has status plumbed into it, so just needs to happen beforehand
+	return err
 }
 
 // streamInterceptor handles per RPC context management. It also handles per RPC
 // tracing and stats.
 func streamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	// only clause is "After the client application starts the RPC."
+
 	return streamer(ctx, desc, cc, method, opts...)
+	// When does this rpc end?...more important for things like precision for retry metrics
+	// clause for metric is "before the status of the rpc is delivered to the application"
+
+	// Convert status here as well...so maybe really make it a helper
+
 }
 
 type clientStatsHandler struct {
@@ -133,3 +184,6 @@ func (ssh *serverStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo
 func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	recordRPCData(ctx, rs)
 }
+
+
+// oh also need to switch o11y callsites to use this and write tests and hopefully Stanley's tests work too
