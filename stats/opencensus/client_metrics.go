@@ -127,3 +127,76 @@ var DefaultClientViews = []*view.View{
 	ClientCompletedRPCsView,
 	ClientStartedRPCsView,
 }
+
+// fixing import:
+// manually put changes into citc
+// fix the p2c diff
+// delete GOA exemption
+
+// you can run tests and stuff but you don't need to...run them through cl front end
+
+
+// then interop on call stuff
+
+// then per call latency stuff/design docs
+
+
+// filtering out will need a new pr with a client option to disable global
+// options - perhaps wait on import to go through?
+// then use that with my musings about filtering in that pr
+
+
+// Oh also have his tracing comments now
+
+// top level ctx population per package
+
+// o(2n) on every event, smaller you can make that the better
+// metrics stuff
+// traces stuff
+
+// think about it
+
+// md needs to be immutable...stores updates to md in the middle of context hierarchy
+// both grpc metadata, ctx value needs to be immutable
+// because of derived context logic, you don't want it to change for all of them
+
+// fill it out once at beginning
+
+// then repull it out of context
+// wrapper for
+//     span
+//     message id
+//     all the metrics data
+
+// how does the disableTrace boolean gate relate to this?
+// you only have to turn on one, but you can still reuse this memory
+
+
+// add the three bullet points for how to link traces/span
+
+// tagRPC
+//   info :=  statsTagRPC
+//   info :=  traceTagRPC
+//   concatanate info and store in context, return context
+
+
+
+
+// (how will this happen wrt aggregation between metrics and traces, return data
+// then aggregate at top level tagRPC call?)
+
+// handleRPC
+// pull Data out of context, if nil return
+// statsTagRPC
+// traceTagRPC
+
+// disableTrace just gate both tagRPC and handleRPC calls? (and eventually top
+// level interceptor)
+
+
+
+
+
+
+// note: traces disable trace bit done once traces pr merged
+// as part of filtering out calls to cloudops endpoints
