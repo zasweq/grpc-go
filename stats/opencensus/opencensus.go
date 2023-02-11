@@ -20,17 +20,17 @@ package opencensus
 
 import (
 	"context"
-	ocstats "go.opencensus.io/stats"
-	"go.opencensus.io/tag"
-	"google.golang.org/grpc/status"
 	"io"
 	"time"
 
+	ocstats "go.opencensus.io/stats"
+	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -83,119 +83,64 @@ func ServerOption(to TraceOptions) grpc.ServerOption {
 }
 
 // unaryInterceptor handles per RPC context management. It also handles per RPC
-// tracing and stats.
+// tracing and stats, and records the latency for the full RPC call.
 func unaryInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	// "Start timestamp - After the client application starts the RPC."
-	// record timestamp
 	startTime := time.Now()
-	// s to err := invoker...
 	err := invoker(ctx, method, req, reply, cc, opts...)
-	// record another timestamp
-	// record: timestamp - timestamp...should this record on an error...including e2e time...I think I should record even on an error
-	// "before the status of the rpc is delivered to the application" - so even errors...
-	// "End timestamp - Before the status of the RPC is delivered to the
-	// application."
-	// right even on errors, distribution with errors in it too allows you to see it
 	callLatency := float64(time.Since(startTime)) / float64(time.Millisecond)
 
-	// Do it before calculating
-	// errToCanonicalString
-	// st := errToCanonicalString
 	var st string
 	if err != nil {
-		s, _ := status.FromError(err)
+		s := status.Convert(err)
 		st = canonicalString(s.Code())
 	} else {
 		st = "OK"
 	}
-	// can we ignore here - yeah just returns a codes.Unknown if an error is plumbed
 
-	// I do need a measure
-	ocstats.RecordWithOptions(ctx /*is this the right context*/,
+	ocstats.RecordWithOptions(ctx,
 		ocstats.WithTags(
-		// yeah this is client duh...this
-		tag.Upsert(keyClientMethod, removeLeadingSlash(method)), // do I need to pull the leading slash off method here...?
-		// This status dimension is handled by row iterations....status + method name in row...
-		tag.Upsert(keyClientStatus, st), // st is plumbed into data End...now you need to pull status from error...
+		tag.Upsert(keyClientMethod, removeLeadingSlash(method)),
+		tag.Upsert(keyClientStatus, st),
 		),
 		ocstats.WithMeasurements(
-			// clientCallLatency.M(latency)
 			clientApiLatency.M(callLatency),
-		), // I think views aggregate automatically...s=and upload every interval or when you unregister
+		),
 	)
 
-	// return err <- this has status plumbed into it, so just needs to happen beforehand
 	return err
 }
 
-// just needs to know status
-
-// wrappedStream wraps a grpc.ClientStream to intercept the RecvMsg call to know when RPC ends?
+// wrappedStream wraps a grpc.ClientStream to intercept the RecvMsg call to take
+// latency measurements on RPC Completion.
 type wrappedStream struct {
 	grpc.ClientStream
-	// needs start time stamp persisted (or pass through context) in order to take the measure of the diff
-	// time after client started rpc
+	// The timestamp of when this stream started.
 	startTime time.Time
-	// persist method otherwise would need something like blocking on channel or something
-	// the method for this wrapped stream
+	// the method for this stream.
 	method string
 }
 
-// bw.Balancer = newBalancer
 func newWrappedStream(s grpc.ClientStream) grpc.ClientStream {
-	return &wrappedStream{ClientStream: s} // is this the correct/preferred way to embed? look at gsb
+	return &wrappedStream{ClientStream: s}
 }
 
-/*
-RecvMsg blocks until it receives a message into m or the stream is done. It
-returns io.EOF when the stream completes successfully. On any other error, the
-stream is aborted and the error contains the RPC status.
-*/
-
 func (ws *wrappedStream) RecvMsg(m interface{}) error {
-	// m gets populated need to populate
-
-	// blocks until:
-	// 1. receives a msg into m (I'm assuming err == nil)
-	// 2. returns io.EOF (stream completed successfully) is this handled by status.FromError, take timestamp and what is rpc status
-	// 3. On any other error, stream is aborted and error contains the RPC status. (this you have status for recording, take timestamp)
-
-	//
-
-	err := ws.ClientStream.RecvMsg(m) // this will either return err or nil + populate msg passed in
-	// this event/signal is when the interceptor knows the status
-
-	// two things can happen:
-	// err = nil: (rpc isn't over) early return
+	err := ws.ClientStream.RecvMsg(m)
 	if err == nil {
 		// RPC isn't over yet, no need to take measurement.
-		return nil // or just return err
+		return err
 	}
-
-	// either one of these errors needs to take latency
+	// RPC completed, record measurement for full call latency.
 	callLatency := float64(time.Since(ws.startTime)) / float64(time.Millisecond)
-
-	/*
-	if err != nil {
-			s, _ := status.FromError(err)
-			st = canonicalString(s.Code())
-		} else {
-			st = "OK"
-		}
-	*/
 	var st string
-	if err == io.EOF { // converting error -> status, but you still want to return this error
+	if err == io.EOF {
 		st = "OK"
 	} else {
-		s, _ := status.FromError(err)
+		s := status.Convert(err)
 		st = canonicalString(s.Code())
 	}
-	// err != nil: both types you need to record no matter what
-	//       io.EOF?, does this convert to status codes right status ok
-	//       other errors?
 
-	// status.FromError(err) // codes.Unknown if incompatible with status package
-	ocstats.RecordWithOptions(context.Background() /*this might be wrong...what context from the given options in context well just test it and see if it works, if not rearchitect system*/,
+	ocstats.RecordWithOptions(context.Background(),
 		ocstats.WithTags(
 			tag.Upsert(keyClientMethod, ws.method),
 			tag.Upsert(keyClientStatus, st),
@@ -208,52 +153,19 @@ func (ws *wrappedStream) RecvMsg(m interface{}) error {
 }
 
 // streamInterceptor handles per RPC context management. It also handles per RPC
-// tracing and stats.
+// tracing and stats, and records the latency for the full RPC call.
 func streamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	// only clause is "After the client application starts the RPC."
 	startTime := time.Now()
-
-	// stream, err := streamer(ctx, desc, cc, method, opts...) // how does this work again, this gives you a stream and err
-	// status comes from err?
-
-	// Return a wrapped stream that intercepts operations -
-	// operations block until something happens right - so stream.Recv receives error?
-
-	// operation is simply "before the status of the rpc is delivered to the application"
-
-	// finishes timestamp with closure
-	// Interceptor knows the status - so interception when this thing knows status
-	// stream.Context()
-	// stream.Header()
-	/*
-	RecvMsg blocks until it receives a message into m or the stream is done. It
-	returns io.EOF when the stream completes successfully. On any other error,
-	the stream is aborted and the error contains the RPC status.
-	*/
-	// what operations trigger this interceptor knowing the status of rpcs? I think just recv msg
-	// stream.RecvMsg() // receives a message into m and returns an error, need to handle error?
-	// stream.CloseSend() // does this thing call recv msg - closes send direction of stream
-	// stream.SendMsg() // you can check status by calling recv msg to make sure this was processed by server and rpc is complete
-	// stream.Trailer() // after recv has returned a non nil error (including io.EOF) or CloseAndRecv has returned
-	// which one of these plumbs status code? and how to intercept?
-
 	s, err := streamer(ctx, desc, cc, method, opts...)
 	if err != nil {
-		return nil, err // do we want this...
+		return nil, err
 	}
 
-	return &wrappedStream{ // I don't think we want a helper for heap construction unless it requires an extra layer
+	return &wrappedStream{
 		ClientStream: s,
 		startTime: startTime,
 		method: method,
 	}, nil
-
-	// return streamer(ctx, desc, cc, method, opts...)
-	// When does this rpc end?...more important for things like precision for retry metrics
-	// clause for metric is "before the status of the rpc is delivered to the application"
-
-	// Convert status here as well...so maybe really make it a helper
-
 }
 
 type clientStatsHandler struct {
@@ -300,6 +212,3 @@ func (ssh *serverStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo
 func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	recordRPCData(ctx, rs)
 }
-
-
-// oh also need to switch o11y callsites to use this and write tests and hopefully Stanley's tests work too

@@ -761,7 +761,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		},
 		// Per call metrics:
 		{
-			metric: ClientApiLatencyView, // method and status rows are handled by the distributionDataLatencyCount row iterations
+			metric: ClientApiLatencyView,
 		},
 	}
 	// Unregister all the views. Unregistering a view causes a synchronous

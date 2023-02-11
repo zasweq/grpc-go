@@ -177,7 +177,7 @@ func recordDataEnd(ctx context.Context, d *rpcData, e *stats.End) {
 	// fractions, thus need a float.
 	latency := float64(time.Since(d.startTime)) / float64(time.Millisecond)
 	var st string
-	if e.Error != nil { // pull out into helper err -> string
+	if e.Error != nil {
 		s, _ := status.FromError(e.Error)
 		st = canonicalString(s.Code())
 	} else {
