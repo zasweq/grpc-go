@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/internal/testutils"
 	"io"
 	"os"
 	"sync"
@@ -80,6 +81,8 @@ type fakeOpenCensusExporter struct {
 	// Number of spans
 	SeenSpans int
 
+	idCh *testutils.Channel
+
 	t  *testing.T
 	mu sync.RWMutex
 }
@@ -102,10 +105,34 @@ func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) {
 	}
 }
 
+type traceAndSpanID struct { // send this on a testutils.Channel...
+	traceID trace.TraceID
+	spanID trace.SpanID
+}
+
 func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) {
+	testutils.NewChannel() // returns a *testutils.Channel
+	// sync explicitly:
+	if fe.idCh != nil {
+		// it is checking if it correctly links exported data so I think this is correct to send it here
+		fe.idCh.Send(&traceAndSpanID{
+			traceID: vd.TraceID, // the scope of this just send, convert in other function
+			spanID: vd.SpanID,
+		})
+	}
+	vd.TraceID
+	vd.SpanID
+
+	// only a unary rpc, will only emit these two ^^^, pass this information somehow
+	// at runtime to want logging blobs
+	// wait for this send to happen (register another fake exporter that sends on channel maybe in closure)
+	// plumb this trace id/span id
+	// into logging gcpLogging entries want the same way we do now...
+	// format into lowercase hex, and then stick it as a part of the string
+
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
-	fe.SeenSpans++
+	fe.SeenSpans++ // this is sync with span.End right so you don't even need mutex lock, I gues if oyu read it
 	fe.t.Logf("Span[%v]", vd.Name)
 }
 
@@ -346,7 +373,7 @@ func (s) TestOpenCensusIntegration(t *testing.T) {
 			}
 		},
 	}
-	if err := ss.Start(nil); err != nil {
+	if err := ss.Start(nil); err != nil { // cc connected to this should work
 		t.Fatalf("Error starting endpoint server: %v", err)
 	}
 	defer ss.Stop()
@@ -484,3 +511,132 @@ func (s) TestStartErrorsThenEnd(t *testing.T) {
 	}
 	End()
 }
+
+// All tests should pass
+
+// Enable both
+
+// assign stuff to Easwar
+
+/*
+// enable both, somehow persist trace/span ID somewhere, and then see if this is written in the right
+// part of the schema...
+
+// read
+
+// logging things exported, but at the gcp logging entry level not the grpcLogEntry level
+
+// this is fake exporter...
+// we already check log entries exactly
+
+// need trace id/span id (mock tracing exporter || read spanContext from context, but this is only at client stream level)
+
+// I think you need to mock tracing exporter, have no access to span context
+// read trace/span id from mock exporter
+// need to send through same encoding scheme - base 16 lowercase (i.e. lowercase hex)
+
+// also project id field
+
+// check traceid field -- project id/trace id (pull project id off env?)
+// check spanid field -- span id
+
+*/
+
+// on master - triage why tests work/his tests work
+// when it shouldn'ttttt work
+
+
+// make sure tests pass on new pr
+
+// can do uncompressed bytes orthogonally, if need a change just take
+// the uncompressed and run it through compression algorithm and see if that works?
+// Idk though you don't have original data just bytes but still should be able to tell?
+
+
+// TestLoggingLinkedWithTrace tests that logging gets the trace and span id
+// corresponding to the RPC.
+func (s) TestLoggingLinkedWithTrace(t *testing.T) {
+	fle := &fakeLoggingExporter{
+		t: t,
+	}
+	defer func(ne func(ctx context.Context, config *config) (loggingExporter, error)) {
+		newLoggingExporter = ne
+	}(newLoggingExporter)
+
+	newLoggingExporter = func(ctx context.Context, config *config) (loggingExporter, error) {
+		return fle, nil
+	}
+
+	idCh := testutils.NewChannel()
+
+	fe := &fakeOpenCensusExporter{
+		t: t,
+		idCh: idCh,
+	}
+	defer func(ne func(config *config) (tracingMetricsExporter, error)) {
+		newExporter = ne
+	}(newExporter)
+
+	newExporter = func(config *config) (tracingMetricsExporter, error) {
+		return fe, nil
+	}
+
+	// turn on traces and logs, trace bool set causes tracing exporter
+	// to be set in global trace package
+	tracesAndLogsConfig := &config{
+		ProjectID:       "fake",
+		CloudLogging: &cloudLogging{
+			ClientRPCEvents: []clientRPCEvents{ // this is client side
+				{
+					Methods:          []string{"*"},
+					MaxMetadataBytes: 30,
+					MaxMessageBytes:  30,
+				},
+			},
+			// test server orthogonally or seperately?
+		},
+		CloudTrace: &cloudTrace{
+			SamplingRate: 1.0,
+		},
+	}
+	cleanup, err := setupObservabilitySystemWithConfig(openCensusOnConfig)
+	if err != nil {
+		t.Fatalf("error setting up observability %v", err)
+	}
+	defer cleanup()
+	// global options registered so no need to specify a client/server option
+	ss := &stubserver.StubServer{
+		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
+			return &grpc_testing.SimpleResponse{}, nil
+		},
+	}
+	if err := ss.Start(nil); err != nil { // cc connected to this should work
+		t.Fatalf("Error starting endpoint server: %v", err)
+	}
+	defer ss.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{Payload: &grpc_testing.Payload{Body: testOkPayload}}); err != nil {
+		t.Fatalf("Unexpected error from UnaryCall: %v", err)
+	}
+
+	// fuck, also need to test server side, that has it's own separate span (server events in logging config)
+	val, err := idCh.Receive(ctx);
+	if err != nil {
+
+	}
+
+	traceAndSpanIDs := val.(traceAndSpanID)
+
+	traceAndSpanIDs.traceID
+	traceAndSpanIDs.spanID // declare an inline []logEntryWant and figure it out that way
+
+}
+
+
+// Tasks:
+// so need to finish this (rebase off pr in flight?)
+// Yashes metric (with open question on the right uncompressed definition)
+// Figure out why master tests are passing
+// once everything's merged, Stanley's integration tests work

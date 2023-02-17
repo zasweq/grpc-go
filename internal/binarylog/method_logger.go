@@ -19,6 +19,7 @@
 package binarylog
 
 import (
+	"context"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -50,6 +51,11 @@ var idGen callIDGenerator
 // MethodLogger is the sub-logger for each method.
 type MethodLogger interface {
 	Log(LogEntryConfig)
+}
+
+// optional interface...
+type NewLogInterface interface {
+	NewLogInterface(context.Context, LogEntryConfig)
 }
 
 // TruncatingMethodLogger is a method logger that truncates headers and messages
