@@ -24,7 +24,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/stats/opencensus"
 	"strings"
 	"time"
 
@@ -38,6 +37,7 @@ import (
 	"google.golang.org/grpc/internal/binarylog"
 	iblog "google.golang.org/grpc/internal/binarylog"
 	"google.golang.org/grpc/internal/grpcutil"
+	"google.golang.org/grpc/stats/opencensus"
 )
 
 var lExporter loggingExporter
@@ -323,10 +323,10 @@ func (bml *binaryMethodLogger) helper(c iblog.LogEntryConfig) gcplogging.Entry {
 	return gcploggingEntry
 }
 
-// NewLogInterface...
+// MethodLoggerWithContext...
 // pulls spanContext out from context (seperate logic for client and server side due to how it's populated in gRPC on client vs. server)
 // same thing as previous logger except keeps track of trace/span id.
-func (bml *binaryMethodLogger) NewLogInterface(ctx context.Context, c iblog.LogEntryConfig) { // rename
+func (bml *binaryMethodLogger) LogWithContext(ctx context.Context, c iblog.LogEntryConfig) { // rename
 	print("new log interface called")
 	gcploggingEntry := bml.helper(c)
 

@@ -39,12 +39,6 @@ import (
 )
 
 func cmpLoggingEntryList(got []*grpcLogEntry, want []*grpcLogEntry) error {
-
-	// switch this to got.entry.Payload.(*grpcLogEntry)
-
-	// I like top level more too because if you persist and checkall need to
-	// figure out what trace and span id are for all of them...
-
 	if diff := cmp.Diff(got, want,
 		// For nondeterministic metadata iteration.
 		cmp.Comparer(func(a map[string]string, b map[string]string) bool {

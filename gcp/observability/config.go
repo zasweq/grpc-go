@@ -147,7 +147,7 @@ func ensureProjectIDInObservabilityConfig(ctx context.Context, config *config) e
 		if projectID == "" {
 			return fmt.Errorf("empty destination project ID")
 		}
-		config.ProjectID = projectID // so if you set in bml -> ml to log needs to be after this write so the read is guaranteed to read the write
+		config.ProjectID = projectID
 	}
 	return nil
 }

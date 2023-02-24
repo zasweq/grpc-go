@@ -22,7 +22,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/internal/grpcsync"
 	"io"
 	"os"
 	"sync"
@@ -33,6 +32,7 @@ import (
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
 	"google.golang.org/grpc/internal/envconfig"
+	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/leakcheck"
 	"google.golang.org/grpc/internal/stubserver"
@@ -107,20 +107,15 @@ func (fe *fakeOpenCensusExporter) ExportView(vd *view.Data) {
 	}
 }
 
-type traceAndSpanID struct { // send this on a testutils.Channel...
+type traceAndSpanID struct {
 	traceID trace.TraceID
 	spanID trace.SpanID
 }
 
-// should convert between the two successfully - hex 16 encoded I think is only consideration
 type traceAndSpanIDString struct {
 	traceID string
 	spanID string
 }
-
-// either call from exporter but I think test body better idea
-
-// helper to convert traceAndSpanID -> traceAndSpanIDString
 
 // idsToString is a helper that converts from generated trace and span IDs to
 // the string version stored in trace message events. (hex 16 lowercase encoded,
