@@ -334,7 +334,7 @@ func (bml *binaryMethodLogger) LogWithContext(ctx context.Context, c iblog.LogEn
 	}
 	// server side span, populated through our internal stats/opencensus
 	// package.
-	if tID, sID, ok := internal.GetTraceIDAndSpanID(ctx); ok {
+	if tID, sID, ok := internal.GetTraceIDAndSpanID.(func(context.Context) (trace.TraceID, trace.SpanID, bool))(ctx); ok {
 		gcploggingEntry.Trace = "projects/" + bml.projectID + "/traces/" + fmt.Sprintf("%x", tID)
 		gcploggingEntry.SpanID = fmt.Sprintf("%x", sID)
 	}

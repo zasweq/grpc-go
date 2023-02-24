@@ -24,8 +24,6 @@ import (
 	"context"
 	"time"
 
-	"go.opencensus.io/trace"
-
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/serviceconfig"
 )
@@ -49,7 +47,7 @@ var (
 	EqualServiceConfigForTesting func(a, b serviceconfig.Config) bool
 	// GetTraceAndSpanID returns the trace and span ID of the span in the
 	// context. Returns true if IDs present and false if IDs not present.
-	GetTraceIDAndSpanID func(ctx context.Context) (trace.TraceID, trace.SpanID, bool)
+	GetTraceIDAndSpanID interface{} // func(context.Context) (trace.TraceID, trace.SpanID, bool)
 	// GetCertificateProviderBuilder returns the registered builder for the
 	// given name. This is set by package certprovider for use from xDS
 	// bootstrap code while parsing certificate provider configs in the
