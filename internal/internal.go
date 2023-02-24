@@ -45,7 +45,7 @@ var (
 	// This function compares the config without rawJSON stripped, in case the
 	// there's difference in white space.
 	EqualServiceConfigForTesting func(a, b serviceconfig.Config) bool
-	// GetTraceAndSpanID returns the trace and span ID of the span in the
+	// GetTraceIDAndSpanID returns the trace and span ID of the span in the
 	// context. Returns true if IDs present and false if IDs not present.
 	GetTraceIDAndSpanID interface{} // func(context.Context) (trace.TraceID, trace.SpanID, bool)
 	// GetCertificateProviderBuilder returns the registered builder for the
