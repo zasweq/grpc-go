@@ -72,7 +72,7 @@ func Start(ctx context.Context) error {
 		return fmt.Errorf("failed to instrument OpenCensus: %v", err)
 	}
 
-	if err = startLogging(ctx, config); err != nil {
+	if err = startLogging(ctx, config); err != nil { // projectID is already set if not, is this global?
 		return fmt.Errorf("failed to start logging: %v", err)
 	}
 

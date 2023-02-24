@@ -28,23 +28,25 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// traceInfo is data used for recording traces.
-type traceInfo struct {
-	span         *trace.Span
+// TraceInfo is data used for recording traces.
+type TraceInfo struct {
+	Span         *trace.Span
 	countSentMsg uint32
 	countRecvMsg uint32
 }
 
 // traceTagRPC populates context with a new span, and serializes information
 // about this span into gRPC Metadata.
-func (csh *clientStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTagInfo) (context.Context, *traceInfo) {
+func (csh *clientStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTagInfo) (context.Context, *TraceInfo) {
 	// TODO: get consensus on whether this method name of "s.m" is correct.
 	mn := "Attempt." + strings.Replace(removeLeadingSlash(rti.FullMethodName), "/", ".", -1)
+	// Returned context is ignored because will populate context with data
+	// that wraps the span instead.
 	_, span := trace.StartSpan(ctx, mn, trace.WithSampler(csh.to.TS), trace.WithSpanKind(trace.SpanKindClient))
 
 	tcBin := propagation.Binary(span.SpanContext())
-	return stats.SetTrace(ctx, tcBin), &traceInfo{
-		span:         span,
+	return stats.SetTrace(ctx, tcBin), &TraceInfo{
+		Span:         span,
 		countSentMsg: 0, // msg events scoped to scope of context, per attempt client side
 		countRecvMsg: 0,
 	}
@@ -53,11 +55,11 @@ func (csh *clientStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTa
 // traceTagRPC populates context with new span data, with a parent based on the
 // spanContext deserialized from context passed in (wire data in gRPC metadata)
 // if present.
-func (ssh *serverStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTagInfo) (context.Context, *traceInfo) {
+func (ssh *serverStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTagInfo) (context.Context, *TraceInfo) {
 	mn := strings.Replace(removeLeadingSlash(rti.FullMethodName), "/", ".", -1)
 
 	var span *trace.Span
-	if sc, ok := propagation.FromBinary(stats.Trace(ctx)); ok {
+	if sc, ok := propagation.FromBinary(stats.Trace(ctx)); ok { // this has it's in it's context so starts span with remote parent
 		// Returned context is ignored because will populate context with data
 		// that wraps the span instead.
 		_, span = trace.StartSpanWithRemoteParent(ctx, mn, sc, trace.WithSpanKind(trace.SpanKindServer), trace.WithSampler(ssh.to.TS))
@@ -68,8 +70,8 @@ func (ssh *serverStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTa
 		_, span = trace.StartSpan(ctx, mn, trace.WithSpanKind(trace.SpanKindServer), trace.WithSampler(ssh.to.TS))
 	}
 
-	return ctx, &traceInfo{
-		span:         span,
+	return ctx, &TraceInfo{
+		Span:         span,
 		countSentMsg: 0,
 		countRecvMsg: 0,
 	}
@@ -78,14 +80,14 @@ func (ssh *serverStatsHandler) traceTagRPC(ctx context.Context, rti *stats.RPCTa
 // populateSpan populates span information based on stats passed in (invariants
 // of the RPC lifecycle), and also ends span which triggers the span to be
 // exported.
-func populateSpan(ctx context.Context, rs stats.RPCStats, ti *traceInfo) {
-	if ti == nil || ti.span == nil {
+func populateSpan(ctx context.Context, rs stats.RPCStats, ti *TraceInfo) {
+	if ti == nil || ti.Span == nil {
 		// Shouldn't happen, tagRPC call comes before this function gets called
 		// which populates this information.
 		logger.Error("ctx passed into stats handler tracing event handling has no span present")
 		return
 	}
-	span := ti.span
+	span := ti.Span
 
 	switch rs := rs.(type) {
 	case *stats.Begin:

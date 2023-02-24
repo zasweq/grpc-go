@@ -235,7 +235,8 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 // same lec
 func binlogLog(binLogger binarylog.MethodLogger, ctx context.Context, lec binarylog.LogEntryConfig) {
 	// if implement optional interface
-	if nli, ok := binLogger.(binarylog.NewLogInterface); !ok { // only want one
+	print("helper called")
+	if nli, ok := binLogger.(binarylog.NewLogInterface); ok { // only want one
 		// call optional interface
 		nli.NewLogInterface(ctx, lec)
 	} else {
@@ -809,6 +810,7 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged && !noHeader {
 		// Only log if binary log is on and header has not been logged, and
 		// there is actually headers to log.
+		print("logging server header client side")
 		logEntry := &binarylog.ServerHeader{
 			OnClientSide: true,
 			Header:       m,
@@ -1588,6 +1590,7 @@ func (ss *serverStream) SendHeader(md metadata.MD) error {
 		}
 		ss.serverHeaderBinlogged = true
 		for _, binlog := range ss.binlogs {
+			print("logging server header server side")
 			binlogLog(binlog, ss.ctx, sh) // ss I think gets the populated context in transport, transport.Stream
 			// binlog.Log(sh)
 		}
@@ -1657,6 +1660,7 @@ func (ss *serverStream) SendMsg(m interface{}) (err error) {
 	if len(ss.binlogs) != 0 {
 		if !ss.serverHeaderBinlogged {
 			h, _ := ss.s.Header()
+			print("logging server header server side")
 			sh := &binarylog.ServerHeader{
 				Header: h,
 			}

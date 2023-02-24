@@ -141,21 +141,21 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 	return s, nil
 }
 
-type rpcInfo struct {
-	mi *metricsInfo
-	ti *traceInfo
+type RpcInfo struct {
+	MI *metricsInfo
+	TI *TraceInfo
 }
 
 type rpcInfoKey struct{}
 
-func setRPCInfo(ctx context.Context, ri *rpcInfo) context.Context {
+func setRPCInfo(ctx context.Context, ri *RpcInfo) context.Context {
 	return context.WithValue(ctx, rpcInfoKey{}, ri)
 }
 
-// getSpanWithMsgCount returns the rpcInfo stored in the context, or nil
+// GetRPCInfo returns the RpcInfo stored in the context, or nil
 // if there isn't one.
-func getRPCInfo(ctx context.Context) *rpcInfo {
-	ri, _ := ctx.Value(rpcInfoKey{}).(*rpcInfo)
+func GetRPCInfo(ctx context.Context) *RpcInfo {
+	ri, _ := ctx.Value(rpcInfoKey{}).(*RpcInfo)
 	return ri
 }
 
@@ -174,26 +174,26 @@ func (csh *clientStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 // TagRPC implements per RPC attempt context management.
 func (csh *clientStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo) context.Context {
 	ctx, mi := csh.statsTagRPC(ctx, rti)
-	var ti *traceInfo
+	var ti *TraceInfo
 	if !csh.to.DisableTrace {
 		ctx, ti = csh.traceTagRPC(ctx, rti)
 	}
-	ri := &rpcInfo{
-		mi: mi,
-		ti: ti,
+	ri := &RpcInfo{
+		MI: mi,
+		TI: ti,
 	}
 	return setRPCInfo(ctx, ri)
 }
 
 func (csh *clientStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
-	ri := getRPCInfo(ctx)
+	ri := GetRPCInfo(ctx)
 	if ri == nil {
 		// Shouldn't happen because TagRPC populates this information.
 		return
 	}
-	recordRPCData(ctx, rs, ri.mi)
+	recordRPCData(ctx, rs, ri.MI)
 	if !csh.to.DisableTrace {
-		populateSpan(ctx, rs, ri.ti)
+		populateSpan(ctx, rs, ri.TI)
 	}
 }
 
@@ -212,26 +212,26 @@ func (ssh *serverStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 // TagRPC implements per RPC context management.
 func (ssh *serverStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo) context.Context {
 	ctx, mi := ssh.statsTagRPC(ctx, rti)
-	var ti *traceInfo
+	var ti *TraceInfo
 	if !ssh.to.DisableTrace {
 		ctx, ti = ssh.traceTagRPC(ctx, rti)
 	}
-	ri := &rpcInfo{
-		mi: mi,
-		ti: ti,
+	ri := &RpcInfo{
+		MI: mi,
+		TI: ti,
 	}
 	return setRPCInfo(ctx, ri)
 }
 
 // HandleRPC implements per RPC tracing and stats implementation.
 func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
-	ri := getRPCInfo(ctx)
+	ri := GetRPCInfo(ctx)
 	if ri == nil {
 		// Shouldn't happen because TagRPC populates this information.
 		return
 	}
-	recordRPCData(ctx, rs, ri.mi)
+	recordRPCData(ctx, rs, ri.MI)
 	if !ssh.to.DisableTrace {
-		populateSpan(ctx, rs, ri.ti)
+		populateSpan(ctx, rs, ri.TI)
 	}
 }

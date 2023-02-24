@@ -22,19 +22,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/internal/testutils"
+	"google.golang.org/grpc/internal/grpcsync"
 	"io"
 	"os"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/leakcheck"
 	"google.golang.org/grpc/internal/stubserver"
+	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/grpc_testing"
 )
@@ -110,29 +112,39 @@ type traceAndSpanID struct { // send this on a testutils.Channel...
 	spanID trace.SpanID
 }
 
+// should convert between the two successfully - hex 16 encoded I think is only consideration
+type traceAndSpanIDString struct {
+	traceID string
+	spanID string
+}
+
+// either call from exporter but I think test body better idea
+
+// helper to convert traceAndSpanID -> traceAndSpanIDString
+
+// idsToString is a helper that converts from generated trace and span IDs to
+// the string version stored in trace message events. (hex 16 lowercase encoded,
+// and extra data attached to trace id).
+func idsToString(tasi traceAndSpanID, projectID string) traceAndSpanIDString {
+	return traceAndSpanIDString{
+		traceID: "projects/" + projectID + "/traces/" + fmt.Sprintf("%x", tasi.traceID),
+		spanID: fmt.Sprintf("%x", tasi.spanID),
+	}
+}
+
 func (fe *fakeOpenCensusExporter) ExportSpan(vd *trace.SpanData) {
-	testutils.NewChannel() // returns a *testutils.Channel
-	// sync explicitly:
 	if fe.idCh != nil {
 		// it is checking if it correctly links exported data so I think this is correct to send it here
-		fe.idCh.Send(&traceAndSpanID{
+		// this is what this exporter gets, our code does conversion...
+		fe.idCh.Send(traceAndSpanID{
 			traceID: vd.TraceID, // the scope of this just send, convert in other function
 			spanID: vd.SpanID,
 		})
 	}
-	vd.TraceID
-	vd.SpanID
-
-	// only a unary rpc, will only emit these two ^^^, pass this information somehow
-	// at runtime to want logging blobs
-	// wait for this send to happen (register another fake exporter that sends on channel maybe in closure)
-	// plumb this trace id/span id
-	// into logging gcpLogging entries want the same way we do now...
-	// format into lowercase hex, and then stick it as a part of the string
 
 	fe.mu.Lock()
 	defer fe.mu.Unlock()
-	fe.SeenSpans++ // this is sync with span.End right so you don't even need mutex lock, I gues if oyu read it
+	fe.SeenSpans++ // this is sync with span.End right so you don't even need mutex lock, I gues if oyu read it, if it ain't broke don't fix it.
 	fe.t.Logf("Span[%v]", vd.Name)
 }
 
@@ -512,11 +524,7 @@ func (s) TestStartErrorsThenEnd(t *testing.T) {
 	End()
 }
 
-// All tests should pass
-
-// Enable both
-
-// assign stuff to Easwar
+// assign stuff to Easwar ** Done...
 
 /*
 // enable both, somehow persist trace/span ID somewhere, and then see if this is written in the right
@@ -531,7 +539,7 @@ func (s) TestStartErrorsThenEnd(t *testing.T) {
 
 // need trace id/span id (mock tracing exporter || read spanContext from context, but this is only at client stream level)
 
-// I think you need to mock tracing exporter, have no access to span context
+// I think you need to mock tracing exporter, have no access to span context, scoped to context within system
 // read trace/span id from mock exporter
 // need to send through same encoding scheme - base 16 lowercase (i.e. lowercase hex)
 
@@ -541,17 +549,6 @@ func (s) TestStartErrorsThenEnd(t *testing.T) {
 // check spanid field -- span id
 
 */
-
-// on master - triage why tests work/his tests work
-// when it shouldn'ttttt work
-
-
-// make sure tests pass on new pr
-
-// can do uncompressed bytes orthogonally, if need a change just take
-// the uncompressed and run it through compression algorithm and see if that works?
-// Idk though you don't have original data just bytes but still should be able to tell?
-
 
 // TestLoggingLinkedWithTrace tests that logging gets the trace and span id
 // corresponding to the RPC.
@@ -581,12 +578,21 @@ func (s) TestLoggingLinkedWithTrace(t *testing.T) {
 		return fe, nil
 	}
 
+	const projectID = "project-id"
+
 	// turn on traces and logs, trace bool set causes tracing exporter
 	// to be set in global trace package
 	tracesAndLogsConfig := &config{
-		ProjectID:       "fake",
+		ProjectID:       projectID,
 		CloudLogging: &cloudLogging{
 			ClientRPCEvents: []clientRPCEvents{ // this is client side
+				{
+					Methods:          []string{"*"},
+					MaxMetadataBytes: 30,
+					MaxMessageBytes:  30,
+				},
+			},
+			ServerRPCEvents: []serverRPCEvents{
 				{
 					Methods:          []string{"*"},
 					MaxMetadataBytes: 30,
@@ -599,7 +605,7 @@ func (s) TestLoggingLinkedWithTrace(t *testing.T) {
 			SamplingRate: 1.0,
 		},
 	}
-	cleanup, err := setupObservabilitySystemWithConfig(openCensusOnConfig)
+	cleanup, err := setupObservabilitySystemWithConfig(tracesAndLogsConfig)
 	if err != nil {
 		t.Fatalf("error setting up observability %v", err)
 	}
@@ -609,6 +615,13 @@ func (s) TestLoggingLinkedWithTrace(t *testing.T) {
 		UnaryCallF: func(ctx context.Context, in *grpc_testing.SimpleRequest) (*grpc_testing.SimpleResponse, error) {
 			return &grpc_testing.SimpleResponse{}, nil
 		},
+		FullDuplexCallF: func(stream grpc_testing.TestService_FullDuplexCallServer) error {
+			_, err := stream.Recv()
+			if err != io.EOF {
+				return err
+			}
+			return nil
+		},
 	}
 	if err := ss.Start(nil); err != nil { // cc connected to this should work
 		t.Fatalf("Error starting endpoint server: %v", err)
@@ -617,26 +630,323 @@ func (s) TestLoggingLinkedWithTrace(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
+
+	// fuck, also need to test server side, that has it's own separate span (server events in logging config)
+
+	// client and server side each do their own logging, will both emit spans from traceTagRpc client side emits a span
+	// server side emits span
+	// have same trace id, but different span ids
+	// server logs should have server span id, client should have client span id
+
+	// trace id is same is already tested...in stats/opencensus
+
+	// so need both span ids, both client and server, figure out which one comes first and if it's deterministic, add this to all log entries
+
+
+	// these need to be populated correctly in the log entry wants
+
+
+	// Spawn a goroutine to receive the ids received by the exporter.
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	readerErrCh := testutils.NewChannel()
+	unaryDone := grpcsync.NewEvent()
+	go func() {
+		defer wg.Done()
+		val, err := idCh.Receive(ctx); // should get one for client span
+		if err != nil {
+			readerErrCh.Send(fmt.Errorf("error while waiting for IDs: %v", err)) // problem it's solving is how to get data...
+		}
+
+		traceAndSpanIDs, ok := val.(traceAndSpanID)
+		if !ok {
+			fmt.Errorf("received wrong type from channel: %T", val) // or just let it panic?
+		}
+		tasiServer := idsToString(traceAndSpanIDs, projectID)
+
+		// Wait now it's going to get two client spans - should only use top level call span
+		// since that's the correct scope of the log entry
+		// traceIDClient := traceAndSpanIDs.traceID // should be same across both
+		// spanIDClient := traceAndSpanIDs.spanID // declare an inline []logEntryWant and figure it out that way
+		// could use prefix of Sent or Attempttttttt
+
+		// server || client span here
+		// if it's not deterministic can use the hasRemoteParent aspect of it to determine which one is
+		// client or server
+		val, err = idCh.Receive(ctx); // should get one for client span
+		if err != nil {
+			readerErrCh.Send(fmt.Errorf("error while waiting for IDs: %v", err)) // problem it's solving is how to get data...
+		}
+
+		traceAndSpanIDs, ok = val.(traceAndSpanID)
+		if !ok {
+			readerErrCh.Send(fmt.Errorf("received wrong type from channel: %T", val)) // or just let it panic?
+		}
+		// tasiAttempt := idsToString(traceAndSpanIDs, projectID) // still have problem of attempt span...
+
+		// last one is attempt span don't mind this...the spans exported are deterministic
+		/*_, err = idCh.Receive(ctx)
+		if err != nil {
+			readerErrCh.Send(fmt.Errorf("error while waiting for IDs: %v", err))
+		} // so successfully receives all 3*/
+
+
+		// test code
+		val, err = idCh.Receive(ctx)
+		if err != nil {
+			readerErrCh.Send(fmt.Errorf("error while waiting for IDs: %v", err))
+		} // so successfully receives all 3
+		traceAndSpanIDs, ok = val.(traceAndSpanID)
+		if !ok {
+			readerErrCh.Send(fmt.Errorf("received wrong type from channel: %T", val)) // or just let it panic?
+		}
+		tasiSent := idsToString(traceAndSpanIDs, projectID) // still have problem of attempt span...
+		// finish test code
+
+
+
+		// trace IDs work on all of them
+		// still need to persist project id in csh, then method logger
+		// spanIDs are all the same
+
+		// if server stream in transport comes before server stream operations on application
+		// shouldddd replace with it's own span, and not the sent span
+
+		// this is deterministic wrt ordering/events happening
+		<-unaryDone.Done()
+		idsWant := []*traceAndSpanIDString{
+			&tasiSent,
+			&tasiSent,
+			&tasiServer,
+			&tasiServer,
+			&tasiServer,
+			&tasiServer,
+			&tasiServer,
+			&tasiSent,
+			&tasiSent,
+			&tasiSent,
+		}
+		fle.mu.Lock()
+		/*if err := cmpLoggingEntryList(fle.entries, grpcLogEntriesWant); err != nil { // fuck this exists at a layer below ours...we need to wrap it
+			fle.mu.Unlock()
+			t.Fatalf("error in logging entry list comparison %v", err)
+		}*/
+		if diff := cmp.Diff(fle.idsSeen, idsWant, cmp.AllowUnexported(traceAndSpanIDString{})); diff != "" {
+			readerErrCh.Send(fmt.Errorf("got unexpected id list, diff (-got, +want): %v", diff))
+		}
+
+		fle.entries = nil
+		fle.mu.Unlock()
+		readerErrCh.Send(nil)
+	}()
+
+	// probably not right one due to attempt span but just use this var name
+	// traceIDServer := traceAndSpanIDs.traceID // should be same across both
+	// spanIDServer := traceAndSpanIDs.spanID // declare an inline []logEntryWant and figure it out that way
+
+	// logEntriesWant pulled from unary rpc expect with these trace/span ids added at the gcpLoggingEntry level
+	// gcpLogEntryWant // need to rename all to this
+	/*idsWant := []traceAndSpanIDString{
+		tasiClient,
+		tasiClient,
+		tasiServer,
+		tasiServer,
+		tasiServer,
+	}*/
+	// hoenstly streaming seems trivial, clear out both in between, just client and server which rest on top
+	// of these log entries...
+	/*grpcLogEntriesWant := []*grpcLogEntry{
+		{
+			Type:        eventTypeClientHeader,
+			Logger:      loggerClient,
+			ServiceName: "grpc.testing.TestService",
+			MethodName:  "UnaryCall",
+			Authority:   ss.Address,
+			SequenceID:  1,
+			Payload: payload{
+				Metadata: map[string]string{},
+			},
+		},
+		{
+			Type:        eventTypeClientMessage,
+			Logger:      loggerClient,
+			ServiceName: "grpc.testing.TestService",
+			MethodName:  "UnaryCall",
+			SequenceID:  2,
+			Authority:   ss.Address,
+			Payload: payload{
+				Message: []uint8{},
+			},
+		},
+		{
+			Type:        eventTypeServerHeader,
+			Logger:      loggerClient,
+			ServiceName: "grpc.testing.TestService",
+			MethodName:  "UnaryCall",
+			SequenceID:  3,
+			Authority:   ss.Address,
+			Payload: payload{
+				Metadata: map[string]string{},
+			},
+		},
+		{
+			Type:        eventTypeServerMessage,
+			Logger:      loggerClient,
+			ServiceName: "grpc.testing.TestService",
+			MethodName:  "UnaryCall",
+			Authority:   ss.Address,
+			SequenceID:  4,
+		},
+		{
+			Type:        eventTypeServerTrailer,
+			Logger:      loggerClient,
+			ServiceName: "grpc.testing.TestService",
+			MethodName:  "UnaryCall",
+			SequenceID:  5,
+			Authority:   ss.Address,
+			Payload: payload{
+				Metadata: map[string]string{},
+			},
+		},
+	}*/
+	/*fle.mu.Lock()
+	/*if err := cmpLoggingEntryList(fle.entries, grpcLogEntriesWant); err != nil { // fuck this exists at a layer below ours...we need to wrap it
+		fle.mu.Unlock()
+		t.Fatalf("error in logging entry list comparison %v", err)
+	}
+	if diff := cmp.Diff(fle.idsSeen, idsWant); diff != "" {
+		t.Fatalf("got unexpected id list, diff (-got, +want): %v", diff)
+	}
+
+	fle.entries = nil
+	fle.mu.Unlock()*/
 	if _, err := ss.Client.UnaryCall(ctx, &grpc_testing.SimpleRequest{Payload: &grpc_testing.Payload{Body: testOkPayload}}); err != nil {
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
 	}
+	unaryDone.Fire()
+	if chErr, err := readerErrCh.Receive(ctx); chErr != nil || err != nil {
+		if err != nil {
+			t.Fatalf("Should have received something from error channel: %v", err)
+		}
+		if chErr != nil {
+			t.Fatalf("Should have received a nil error from channel, instead received: %v", chErr)
+		}
+	}
+	// once you get unary working, can then do streaming downstream...
+	wg.Wait()
 
-	// fuck, also need to test server side, that has it's own separate span (server events in logging config)
-	val, err := idCh.Receive(ctx);
+	fle.mu.Lock()
+	fle.idsSeen = nil
+	fle.mu.Unlock()
+	// streaming flow
+
+
+	wg.Add(1)
+	readerErrCh = testutils.NewChannel()
+	streamDone := grpcsync.NewEvent()
+	go func() {
+		defer wg.Done()
+		val, err := idCh.Receive(ctx); // should get one for client span
+		if err != nil {
+			readerErrCh.Send(fmt.Errorf("error while waiting for IDs: %v", err)) // problem it's solving is how to get data...
+		}
+
+		traceAndSpanIDs, ok := val.(traceAndSpanID)
+		if !ok {
+			fmt.Errorf("received wrong type from channel: %T", val) // or just let it panic?
+		}
+		tasiServer := idsToString(traceAndSpanIDs, projectID)
+
+		// Wait now it's going to get two client spans - should only use top level call span
+		// since that's the correct scope of the log entry
+		// traceIDClient := traceAndSpanIDs.traceID // should be same across both
+		// spanIDClient := traceAndSpanIDs.spanID // declare an inline []logEntryWant and figure it out that way
+		// could use prefix of Sent or Attempttttttt
+
+		// server || client span here
+		// if it's not deterministic can use the hasRemoteParent aspect of it to determine which one is
+		// client or server
+		val, err = idCh.Receive(ctx); // should get one for client span
+		if err != nil {
+			readerErrCh.Send(fmt.Errorf("error while waiting for IDs: %v", err)) // problem it's solving is how to get data...
+		}
+
+		traceAndSpanIDs, ok = val.(traceAndSpanID)
+		if !ok {
+			readerErrCh.Send(fmt.Errorf("received wrong type from channel: %T", val)) // or just let it panic?
+		}
+		tasiAttempt := idsToString(traceAndSpanIDs, projectID) // still have problem of attempt span...
+
+		// last one is attempt span don't mind this...the spans exported are deterministic
+		/*_, err = idCh.Receive(ctx)
+		if err != nil {
+			readerErrCh.Send(fmt.Errorf("error while waiting for IDs: %v", err))
+		} // so successfully receives all 3*/
+
+
+		// test code
+		val, err = idCh.Receive(ctx)
+		if err != nil {
+			readerErrCh.Send(fmt.Errorf("error while waiting for IDs: %v", err))
+		} // so successfully receives all 3
+		traceAndSpanIDs, ok = val.(traceAndSpanID)
+		if !ok {
+			readerErrCh.Send(fmt.Errorf("received wrong type from channel: %T", val)) // or just let it panic?
+		}
+		tasiSent := idsToString(traceAndSpanIDs, projectID) // still have problem of attempt span...
+		// finish test code
+
+		print("tasiServer SpanID:", tasiServer.spanID)
+		print("tasiAttempt SpanID:", tasiAttempt.spanID)
+		print("tasiSent SpanID:", tasiSent.spanID)
+
+		// trace IDs work on all of them
+		// still need to persist project id in csh, then method logger
+		// spanIDs are all the same
+
+		// if server stream in transport comes before server stream operations on application
+		// shouldddd replace with it's own span, and not the sent span
+
+		// this is deterministic wrt ordering/events happening
+		idsWant := []*traceAndSpanIDString{
+			&tasiAttempt,
+			&tasiAttempt,
+			&tasiServer,
+			&tasiServer,
+			&tasiServer,
+			&tasiAttempt,
+		} // also need to fix exported data
+		fle.mu.Lock()
+		<-streamDone.Done()
+		if diff := cmp.Diff(fle.idsSeen, idsWant, cmp.AllowUnexported(traceAndSpanIDString{})); diff != "" {
+			readerErrCh.Send(fmt.Errorf("got unexpected id list, diff (-got, +want): %v", diff))
+		}
+
+		fle.entries = nil
+		fle.mu.Unlock()
+		readerErrCh.Send(nil)
+	}()
+
+	stream, err := ss.Client.FullDuplexCall(ctx)
 	if err != nil {
-
+		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
 	}
 
-	traceAndSpanIDs := val.(traceAndSpanID)
+	stream.CloseSend()
+	if _, err = stream.Recv(); err != io.EOF {
+		t.Fatalf("unexpected error: %v, expected an EOF error", err)
+	}
+	streamDone.Fire()
 
-	traceAndSpanIDs.traceID
-	traceAndSpanIDs.spanID // declare an inline []logEntryWant and figure it out that way
+	if chErr, err := readerErrCh.Receive(ctx); chErr != nil || err != nil {
+		if err != nil {
+			t.Fatalf("Should have received something from error channel: %v", err)
+		}
+		if chErr != nil {
+			t.Fatalf("Should have received a nil error from channel, instead received: %v", chErr)
+		}
+	}
+	wg.Wait()
+} // only logs half of the logs sometime even though both are configured, is this the flake on master too? need a sync point
 
-}
-
-
-// Tasks:
-// so need to finish this (rebase off pr in flight?)
-// Yashes metric (with open question on the right uncompressed definition)
-// Figure out why master tests are passing
-// once everything's merged, Stanley's integration tests work
+// talk about rationale behind opencensus API in opencensus rewrite design doc tomorrow

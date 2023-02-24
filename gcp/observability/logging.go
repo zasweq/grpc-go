@@ -24,13 +24,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"go.opencensus.io/trace/propagation"
-	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/stats/opencensus"
 	"strings"
 	"time"
 
 	gcplogging "cloud.google.com/go/logging"
 	"github.com/google/uuid"
+	"go.opencensus.io/trace"
 
 	"google.golang.org/grpc"
 	binlogpb "google.golang.org/grpc/binarylog/grpc_binarylog_v1"
@@ -239,21 +239,14 @@ type methodLoggerBuilder interface {
 }
 
 type binaryMethodLogger struct {
-	callID, serviceName, methodName, authority string
+	callID, serviceName, methodName, authority, projectID string
 
 	mlb      methodLoggerBuilder
 	exporter loggingExporter
 }
-// Hopefully you'll already be there, if not try again in 8 months, write
-// expectations at L4 Can't have it, so just stop. He's still supportive, but
-// has reservations with everyone for any promo...you gotta mature with communication stuff...
 
-// helper which builds log entry as Log did
-
-// helper...
-
-// returns built thingy and timestamp of built thingy
-func (bml *binaryMethodLogger) helper(c iblog.LogEntryConfig) gcplogging.Entry {
+// helper converts the binary log log entry into a gcp logging entry.
+func (bml *binaryMethodLogger) helper(c iblog.LogEntryConfig) gcplogging.Entry { // rename
 	binLogEntry := bml.mlb.Build(c)
 
 	grpcLogEntry := &grpcLogEntry{
@@ -321,7 +314,7 @@ func (bml *binaryMethodLogger) helper(c iblog.LogEntryConfig) gcplogging.Entry {
 	grpcLogEntry.MethodName = bml.methodName
 	grpcLogEntry.Authority = bml.authority
 
-	gcploggingEntry := gcplogging.Entry{ // is this not slow to keep copying?
+	gcploggingEntry := gcplogging.Entry{ // is this not slow to keep copying keeps creating this struct and passing it around?
 		Timestamp: binLogEntry.GetTimestamp().AsTime(),
 		Severity:  100,
 		Payload:   grpcLogEntry,
@@ -330,131 +323,94 @@ func (bml *binaryMethodLogger) helper(c iblog.LogEntryConfig) gcplogging.Entry {
 	return gcploggingEntry
 }
 
-func (bml *binaryMethodLogger) NewLogInterface(ctx context.Context, c iblog.LogEntryConfig) { // do it at this layer not the helper layer pulling out span context
-	// the thing is emits
-	// logEntry := helper
+// NewLogInterface...
+// pulls spanContext out from context (seperate logic for client and server side due to how it's populated in gRPC on client vs. server)
+// same thing as previous logger except keeps track of trace/span id.
+func (bml *binaryMethodLogger) NewLogInterface(ctx context.Context, c iblog.LogEntryConfig) { // rename
+	print("new log interface called")
 	gcploggingEntry := bml.helper(c)
 
-	// pull sc (I think has trace and span id) out from context...see trace for example
-	// if no sc no-op just log as normally wold
-
-	/*gcploggingEntry := gcplogging.Entry{
-		Timestamp: ts,
-		Severity:  100,
-		Payload:   grpcLogEntry,
-	} // switch to building this whole thing in helper*/
-
-	// if ok
-	if sc, ok := propagation.FromBinary(stats.Trace(ctx)); ok {
+	// call -> attempt -> server
+	// 3       2          uploaded 1
+	if span := trace.FromContext(ctx); span != nil { // adds two if and an O(n) search to every logging call, negligible?
+		sc := span.SpanContext()
 		// pull project id from env (Google Cloud Project ID)
 
 		// trace id - lowercase base 16 encoding (big endian) of trace identifier
-		gcploggingEntry.Trace = "projects/" + "project_id"/*project id here - how do we get this in other places, do we need to persist this?*/ + "/traces/" + fmt.Sprintf("%x", sc.TraceID)
 
-		// trace field should be: projects/{PROJECT_ID}/traces/{TRACE_ID}
-		 // "projects/" + /*project id here - how do we get this in other places, do we need to persist this?*/ + "/traces/" + sc.TraceID
+		// oh will test this too wrt project id (gcp concept like client libraries)
+		// {PROJECT_ID} is the Google Cloud Project ID - it's set it config...
 
-		//grpcLogEntry.
+		// need to persist this in bml and pull it off here
 
+		// is project id from the config or pulled from the enviornment?
 
-		// logEntry.fieldTraceID = sc.TraceID
-
-		// lowercase base16 encoding (big endian) of span id
-
-		// Add Yash and Eric to peer reviewers
-
-		gcploggingEntry.SpanID = fmt.Sprintf("%x", sc.SpanID) // does this automatically convert to hex? if I just use it as string, Doug thinks so
-		// logEntry.fieldSpanID = sc.SpanID
+		// "ProjectID is the destinaiton GCP project identifier for uploading log entries (this one)
+		// if not set it pulls it form the env
+		gcploggingEntry.Trace = "projects/" + bml.projectID + "/traces/" + fmt.Sprintf("%x", sc.TraceID)
+		gcploggingEntry.SpanID = fmt.Sprintf("%x", sc.SpanID)
 	}
-	// export log entry
-	/*gcploggingEntry := gcplogging.Entry{
-		Timestamp: ts,
-		Severity:  100,
-		Payload:   grpcLogEntry,
-	}*/ // build this thing in helper, than add to it
 
-	// gcploggingEntry.SpanID = // does this automatically convert to hex? if I just use it as string, Doug thinks so
+	// this gets set on both client and server side. Client side logs happen
+	// with a context that's only populated with trace.NewContext (the top level
+	// call span). The corresponding populating of this client side in TagRPC happens at the attempt level,
+	// which happens at the layer below log calls, which happen at the call level. Thus, if this hits,
+
+	// wait what about hops? Same context server and client, which one.
+	// I feel like in hops you can get both of these populated, need to have the right precedence
+	// wrt the most "recent" span generated, I don't think you can logically tell if both of these are set.
+
+	// let's get this working first, and then we can do streaming, mention in PR description worried about precedence here
+
+	// *** talk to Doug
+	// if it comes in with both in a hop will always take rpc info if if after
+	// if an else if if both come in first will always take precedence...
+	// ***
+
+	// However, if you get this on server side it takes precedence. I don't think it will hit first anyway. Orthogonal
+	if ri := opencensus.GetRPCInfo(ctx); ri != nil { // the problem is now you have an 0(n) pass here
+		sc := ri.TI.Span.SpanContext() // brute force it by pulling all the way down
+		gcploggingEntry.Trace = "projects/" + bml.projectID + "/traces/" + fmt.Sprintf("%x", sc.TraceID)
+		gcploggingEntry.SpanID = fmt.Sprintf("%x", sc.SpanID)
+	}
+
+	// streaming test comes after you fix this
+
+	// tomorrow: on call stuff like looking at tap and asking for reviews for import, look at all my prs I'm assigned to
+	// this task: get this brute force thing working (need to link through go.mod) GetRPCInfo and should I just export everything or just partial?
+	// once I get this working, add streaming call, should work in similar fashion (goes through server stream.go)
+
+	// pulling stuff out O(n) context for every logging call, but only if bin
+	// logger specified but man that's slow
+
+	// then persist project id from config -> bin logger -> method logger -> log entry
+
+
+	/*if sc, ok := propagation.FromBinary(stats.Trace(ctx)); ok { // adds an if to every logging call, negligible?
+		print("successufuly pulled entry from bianry")
+		// pull project id from env (Google Cloud Project ID)
+
+		// trace id - lowercase base 16 encoding (big endian) of trace identifier
+
+		// oh will test this too wrt project id (gcp concept like client libraries)
+		// {PROJECT_ID} is the Google Cloud Project ID - it's set it config...
+
+		// need to persist this in bml and pull it off here
+
+		// need to persist this too
+
+	}*/
+
 
 
 
 	bml.exporter.EmitGcpLoggingEntry(gcploggingEntry)
 }
 
-// just leave this as is - switch to call helper, call exporter with that
 func (bml *binaryMethodLogger) Log(c iblog.LogEntryConfig) {
-	/*binLogEntry := bml.mlb.Build(c)
-
-	grpcLogEntry := &grpcLogEntry{
-		CallID:     bml.callID,
-		SequenceID: binLogEntry.GetSequenceIdWithinCall(),
-		Logger:     loggerTypeToEventLogger[binLogEntry.Logger],
-	}
-
-	switch binLogEntry.GetType() {
-	case binlogpb.GrpcLogEntry_EVENT_TYPE_UNKNOWN:
-		grpcLogEntry.Type = eventTypeUnknown
-	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_HEADER:
-		grpcLogEntry.Type = eventTypeClientHeader
-		if binLogEntry.GetClientHeader() != nil {
-			methodName := binLogEntry.GetClientHeader().MethodName
-			// Example method name: /grpc.testing.TestService/UnaryCall
-			if strings.Contains(methodName, "/") {
-				tokens := strings.Split(methodName, "/")
-				if len(tokens) == 3 {
-					// Record service name and method name for all events.
-					bml.serviceName = tokens[1]
-					bml.methodName = tokens[2]
-				} else {
-					logger.Infof("Malformed method name: %v", methodName)
-				}
-			}
-			bml.authority = binLogEntry.GetClientHeader().GetAuthority()
-			grpcLogEntry.Payload.Timeout = binLogEntry.GetClientHeader().GetTimeout().AsDuration()
-			grpcLogEntry.Payload.Metadata = translateMetadata(binLogEntry.GetClientHeader().GetMetadata())
-		}
-		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
-		setPeerIfPresent(binLogEntry, grpcLogEntry)
-	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_HEADER:
-		grpcLogEntry.Type = eventTypeServerHeader
-		if binLogEntry.GetServerHeader() != nil {
-			grpcLogEntry.Payload.Metadata = translateMetadata(binLogEntry.GetServerHeader().GetMetadata())
-		}
-		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
-		setPeerIfPresent(binLogEntry, grpcLogEntry)
-	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_MESSAGE:
-		grpcLogEntry.Type = eventTypeClientMessage
-		grpcLogEntry.Payload.Message = binLogEntry.GetMessage().GetData()
-		grpcLogEntry.Payload.MessageLength = binLogEntry.GetMessage().GetLength()
-		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
-	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_MESSAGE:
-		grpcLogEntry.Type = eventTypeServerMessage
-		grpcLogEntry.Payload.Message = binLogEntry.GetMessage().GetData()
-		grpcLogEntry.Payload.MessageLength = binLogEntry.GetMessage().GetLength()
-		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
-	case binlogpb.GrpcLogEntry_EVENT_TYPE_CLIENT_HALF_CLOSE:
-		grpcLogEntry.Type = eventTypeClientHalfClose
-	case binlogpb.GrpcLogEntry_EVENT_TYPE_SERVER_TRAILER:
-		grpcLogEntry.Type = eventTypeServerTrailer
-		grpcLogEntry.Payload.Metadata = translateMetadata(binLogEntry.GetTrailer().Metadata)
-		grpcLogEntry.Payload.StatusCode = binLogEntry.GetTrailer().GetStatusCode()
-		grpcLogEntry.Payload.StatusMessage = binLogEntry.GetTrailer().GetStatusMessage()
-		grpcLogEntry.Payload.StatusDetails = binLogEntry.GetTrailer().GetStatusDetails()
-		grpcLogEntry.PayloadTruncated = binLogEntry.GetPayloadTruncated()
-		setPeerIfPresent(binLogEntry, grpcLogEntry)
-	case binlogpb.GrpcLogEntry_EVENT_TYPE_CANCEL:
-		grpcLogEntry.Type = eventTypeCancel
-	default:
-		logger.Infof("Unknown event type: %v", binLogEntry.Type)
-		return
-	}
-	grpcLogEntry.ServiceName = bml.serviceName
-	grpcLogEntry.MethodName = bml.methodName
-	grpcLogEntry.Authority = bml.authority*/
 	gcploggingEntry := bml.helper(c)
-	bml.exporter.EmitGcpLoggingEntry(gcploggingEntry) // tests at this level, so just add the two fields
+	bml.exporter.EmitGcpLoggingEntry(gcploggingEntry) // tests at this level, so just add the two fields to test case
 }
-
-// I have testing musings somewhere...
 
 type eventConfig struct {
 	// ServiceMethod has /s/m syntax for fast matching.
@@ -470,22 +426,9 @@ type eventConfig struct {
 
 type binaryLogger struct {
 	EventConfigs []eventConfig
+	projectID    string
 	exporter     loggingExporter
 }
-
-/*
-// need to do optional binary logger stuff as well downstream of this...
-
-// optional binary logging method:
-// call logic already there (refactor to a common place)
-// add trace ID and span ID to context
-
-// how to test:
-// enable both, somehow persist trace/span ID somewhere, and then see if this is written in the right
-// part of the schema...
-*/
-
-// I've mused about logging calls...
 
 // I think interceptor -> client streams ctx, because it worked for callouts to
 // Handle for child traces (interceptor -> client stream -> csAttempt -> handle)
@@ -493,25 +436,6 @@ type binaryLogger struct {
 // different accesses for ctx
 // client side: client streams context (call level stream)
 // server side: bottom level transports streams context -> I think this gets to server stream (see notebook diagrams to confirm)
-
-// helper at these callsites:
-// binlog, ctx, logEntry
-// if binlog implements
-//       call implemented method
-// if not
-//       call log
-
-// actual logger implementation
-// pull common logic here
-
-// new interface
-//        common logic
-//        attach the extra stuff (trace/span ID) here
-
-// or just have new interface call old Log call
-
-// old interface
-//       common logic
 
 
 // so all callsites out to Log happen in
@@ -540,6 +464,7 @@ func (bl *binaryLogger) GetMethodLogger(methodName string) iblog.MethodLogger {
 				exporter: bl.exporter,
 				mlb:      iblog.NewTruncatingMethodLogger(eventConfig.HeaderBytes, eventConfig.MessageBytes),
 				callID:   uuid.NewString(),
+				projectID: bl.projectID,
 			}
 		}
 	}
@@ -557,7 +482,8 @@ func parseMethod(method string) (string, string, error) {
 	return method[:pos], method[pos+1:], nil
 }
 
-func registerClientRPCEvents(clientRPCEvents []clientRPCEvents, exporter loggingExporter) {
+func registerClientRPCEvents(config *config, exporter loggingExporter) {
+	clientRPCEvents := config.CloudLogging.ClientRPCEvents
 	if len(clientRPCEvents) == 0 {
 		return
 	}
@@ -590,11 +516,13 @@ func registerClientRPCEvents(clientRPCEvents []clientRPCEvents, exporter logging
 	clientSideLogger := &binaryLogger{
 		EventConfigs: eventConfigs,
 		exporter:     exporter,
+		projectID: config.ProjectID,
 	}
 	internal.AddGlobalDialOptions.(func(opt ...grpc.DialOption))(internal.WithBinaryLogger.(func(bl binarylog.Logger) grpc.DialOption)(clientSideLogger))
 }
 
-func registerServerRPCEvents(serverRPCEvents []serverRPCEvents, exporter loggingExporter) {
+func registerServerRPCEvents(config *config, exporter loggingExporter) {
+	serverRPCEvents := config.CloudLogging.ServerRPCEvents
 	if len(serverRPCEvents) == 0 {
 		return
 	}
@@ -627,6 +555,7 @@ func registerServerRPCEvents(serverRPCEvents []serverRPCEvents, exporter logging
 	serverSideLogger := &binaryLogger{
 		EventConfigs: eventConfigs,
 		exporter:     exporter,
+		projectID:    config.ProjectID,
 	}
 	internal.AddGlobalServerOptions.(func(opt ...grpc.ServerOption))(internal.BinaryLogger.(func(bl binarylog.Logger) grpc.ServerOption)(serverSideLogger))
 }
@@ -641,9 +570,8 @@ func startLogging(ctx context.Context, config *config) error {
 		return fmt.Errorf("unable to create CloudLogging exporter: %v", err)
 	}
 
-	cl := config.CloudLogging
-	registerClientRPCEvents(cl.ClientRPCEvents, lExporter)
-	registerServerRPCEvents(cl.ServerRPCEvents, lExporter)
+	registerClientRPCEvents(config, lExporter)
+	registerServerRPCEvents(config, lExporter)
 	return nil
 }
 
