@@ -69,7 +69,7 @@ type fakeLoggingExporter struct {
 	mu      sync.Mutex
 	entries []*grpcLogEntry
 
-	idsSeen []*traceAndSpanIDString // cmp.Diff same way I do in traces...
+	idsSeen []*traceAndSpanIDString
 }
 
 func (fle *fakeLoggingExporter) EmitGcpLoggingEntry(entry gcplogging.Entry) {
@@ -79,12 +79,9 @@ func (fle *fakeLoggingExporter) EmitGcpLoggingEntry(entry gcplogging.Entry) {
 		fle.t.Errorf("entry.Severity is not 100, this should be hardcoded")
 	}
 
-	// the partition lays on client vs. server
-	// I feel like it's important to couple them, so switch all the knobs and
-	// callsites to an extra layer? eh coupled implicity from determinism could perhaps comment the corresponding log entry
 	ids := &traceAndSpanIDString{
 		traceID: entry.Trace,
-		spanID: entry.SpanID,
+		spanID:  entry.SpanID,
 	}
 	fle.idsSeen = append(fle.idsSeen, ids)
 

@@ -599,7 +599,6 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 	}
 	s.ctx = traceCtx(s.ctx, s.method)
 	for _, sh := range t.stats {
-		print("tag rpc called server side")
 		s.ctx = sh.TagRPC(s.ctx, &stats.RPCTagInfo{FullMethodName: s.method})
 		inHeader := &stats.InHeader{
 			FullMethod:  s.method,

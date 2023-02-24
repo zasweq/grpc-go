@@ -1511,7 +1511,7 @@ func (s *Server) processStreamingRPC(t transport.ServerTransport, stream *transp
 	}
 	ctx := NewContextWithServerTransportStream(stream.Context(), stream)
 	ss := &serverStream{
-		ctx:                   ctx, // server streams context derives from transports stream so transport.Stream() should have it
+		ctx:                   ctx,
 		t:                     t,
 		s:                     stream,
 		p:                     &parser{r: stream},

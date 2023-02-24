@@ -33,6 +33,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func init() {
+	internal.GetTraceIDAndSpanID = getTraceAndSpanID
+}
+
 var (
 	joinDialOptions = internal.JoinDialOptions.(func(...grpc.DialOption) grpc.DialOption)
 )
@@ -141,22 +145,33 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 	return s, nil
 }
 
-type RpcInfo struct {
-	MI *metricsInfo
-	TI *TraceInfo
+type rpcInfo struct {
+	mi *metricsInfo
+	ti *traceInfo
 }
 
 type rpcInfoKey struct{}
 
-func setRPCInfo(ctx context.Context, ri *RpcInfo) context.Context {
+func setRPCInfo(ctx context.Context, ri *rpcInfo) context.Context {
 	return context.WithValue(ctx, rpcInfoKey{}, ri)
 }
 
-// GetRPCInfo returns the RpcInfo stored in the context, or nil
+// getRPCInfo returns the rpcInfo stored in the context, or nil
 // if there isn't one.
-func GetRPCInfo(ctx context.Context) *RpcInfo {
-	ri, _ := ctx.Value(rpcInfoKey{}).(*RpcInfo)
+func getRPCInfo(ctx context.Context) *rpcInfo {
+	ri, _ := ctx.Value(rpcInfoKey{}).(*rpcInfo)
 	return ri
+}
+
+// getTraceAndSpanID returns the trace and span ID of the span in the context.
+// Returns true if IDs present and false if IDs not present.
+func getTraceAndSpanID(ctx context.Context) (trace.TraceID, trace.SpanID, bool) {
+	ri, ok := ctx.Value(rpcInfoKey{}).(*rpcInfo)
+	if !ok {
+		return [16]byte{}, [8]byte{}, false
+	}
+	sc := ri.ti.span.SpanContext()
+	return sc.TraceID, sc.SpanID, true
 }
 
 type clientStatsHandler struct {
@@ -174,26 +189,26 @@ func (csh *clientStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 // TagRPC implements per RPC attempt context management.
 func (csh *clientStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo) context.Context {
 	ctx, mi := csh.statsTagRPC(ctx, rti)
-	var ti *TraceInfo
+	var ti *traceInfo
 	if !csh.to.DisableTrace {
 		ctx, ti = csh.traceTagRPC(ctx, rti)
 	}
-	ri := &RpcInfo{
-		MI: mi,
-		TI: ti,
+	ri := &rpcInfo{
+		mi: mi,
+		ti: ti,
 	}
 	return setRPCInfo(ctx, ri)
 }
 
 func (csh *clientStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
-	ri := GetRPCInfo(ctx)
+	ri := getRPCInfo(ctx)
 	if ri == nil {
 		// Shouldn't happen because TagRPC populates this information.
 		return
 	}
-	recordRPCData(ctx, rs, ri.MI)
+	recordRPCData(ctx, rs, ri.mi)
 	if !csh.to.DisableTrace {
-		populateSpan(ctx, rs, ri.TI)
+		populateSpan(ctx, rs, ri.ti)
 	}
 }
 
@@ -212,26 +227,26 @@ func (ssh *serverStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 // TagRPC implements per RPC context management.
 func (ssh *serverStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo) context.Context {
 	ctx, mi := ssh.statsTagRPC(ctx, rti)
-	var ti *TraceInfo
+	var ti *traceInfo
 	if !ssh.to.DisableTrace {
 		ctx, ti = ssh.traceTagRPC(ctx, rti)
 	}
-	ri := &RpcInfo{
-		MI: mi,
-		TI: ti,
+	ri := &rpcInfo{
+		mi: mi,
+		ti: ti,
 	}
 	return setRPCInfo(ctx, ri)
 }
 
 // HandleRPC implements per RPC tracing and stats implementation.
 func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
-	ri := GetRPCInfo(ctx)
+	ri := getRPCInfo(ctx)
 	if ri == nil {
 		// Shouldn't happen because TagRPC populates this information.
 		return
 	}
-	recordRPCData(ctx, rs, ri.MI)
+	recordRPCData(ctx, rs, ri.mi)
 	if !ssh.to.DisableTrace {
-		populateSpan(ctx, rs, ri.TI)
+		populateSpan(ctx, rs, ri.ti)
 	}
 }

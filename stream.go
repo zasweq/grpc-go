@@ -309,7 +309,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	if !cc.dopts.disableRetry {
 		cs.retryThrottler = cc.retryThrottler.Load().(*retryThrottler)
 	}
-	if ml := binarylog.GetMethodLogger(method); ml != nil { // one high level and one for client/server
+	if ml := binarylog.GetMethodLogger(method); ml != nil {
 		cs.binlogs = append(cs.binlogs, ml)
 	}
 	if cc.dopts.binaryLogger != nil {
@@ -790,7 +790,6 @@ func (cs *clientStream) Header() (metadata.MD, error) {
 	if len(cs.binlogs) != 0 && !cs.serverHeaderBinlogged && !noHeader {
 		// Only log if binary log is on and header has not been logged, and
 		// there is actually headers to log.
-		print("logging server header client side")
 		logEntry := &binarylog.ServerHeader{
 			OnClientSide: true,
 			Header:       m,
@@ -1632,7 +1631,6 @@ func (ss *serverStream) SendMsg(m interface{}) (err error) {
 	if len(ss.binlogs) != 0 {
 		if !ss.serverHeaderBinlogged {
 			h, _ := ss.s.Header()
-			print("logging server header server side")
 			sh := &binarylog.ServerHeader{
 				Header: h,
 			}

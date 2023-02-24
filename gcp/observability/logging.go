@@ -37,7 +37,6 @@ import (
 	"google.golang.org/grpc/internal/binarylog"
 	iblog "google.golang.org/grpc/internal/binarylog"
 	"google.golang.org/grpc/internal/grpcutil"
-	"google.golang.org/grpc/stats/opencensus"
 )
 
 var lExporter loggingExporter
@@ -245,8 +244,9 @@ type binaryMethodLogger struct {
 	exporter loggingExporter
 }
 
-// helper converts the binary log log entry into a gcp logging entry.
-func (bml *binaryMethodLogger) helper(c iblog.LogEntryConfig) gcplogging.Entry { // rename
+// buildGCPLoggingEntry converts the binary log log entry into a gcp logging
+// entry.
+func (bml *binaryMethodLogger) buildGCPLoggingEntry(c iblog.LogEntryConfig) gcplogging.Entry {
 	binLogEntry := bml.mlb.Build(c)
 
 	grpcLogEntry := &grpcLogEntry{
@@ -308,13 +308,12 @@ func (bml *binaryMethodLogger) helper(c iblog.LogEntryConfig) gcplogging.Entry {
 		setPeerIfPresent(binLogEntry, grpcLogEntry)
 	case binlogpb.GrpcLogEntry_EVENT_TYPE_CANCEL:
 		grpcLogEntry.Type = eventTypeCancel
-		// I think no-op is fine you can't get this anyway, I think you'd still want entry
 	}
 	grpcLogEntry.ServiceName = bml.serviceName
 	grpcLogEntry.MethodName = bml.methodName
 	grpcLogEntry.Authority = bml.authority
 
-	gcploggingEntry := gcplogging.Entry{ // is this not slow to keep copying keeps creating this struct and passing it around?
+	gcploggingEntry := gcplogging.Entry{
 		Timestamp: binLogEntry.GetTimestamp().AsTime(),
 		Severity:  100,
 		Payload:   grpcLogEntry,
@@ -323,93 +322,28 @@ func (bml *binaryMethodLogger) helper(c iblog.LogEntryConfig) gcplogging.Entry {
 	return gcploggingEntry
 }
 
-// MethodLoggerWithContext...
-// pulls spanContext out from context (seperate logic for client and server side due to how it's populated in gRPC on client vs. server)
-// same thing as previous logger except keeps track of trace/span id.
-func (bml *binaryMethodLogger) LogWithContext(ctx context.Context, c iblog.LogEntryConfig) { // rename
-	print("new log interface called")
-	gcploggingEntry := bml.helper(c)
-
-	// call -> attempt -> server
-	// 3       2          uploaded 1
-	if span := trace.FromContext(ctx); span != nil { // adds two if and an O(n) search to every logging call, negligible?
+// LogWithContext logs the same as the normal Log call, but also takes pulls
+// span and trace information from the context and attaches that to log entry.
+func (bml *binaryMethodLogger) LogWithContext(ctx context.Context, c iblog.LogEntryConfig) {
+	gcploggingEntry := bml.buildGCPLoggingEntry(c)
+	// client side span, populated through opencensus trace package.
+	if span := trace.FromContext(ctx); span != nil {
 		sc := span.SpanContext()
-		// pull project id from env (Google Cloud Project ID)
-
-		// trace id - lowercase base 16 encoding (big endian) of trace identifier
-
-		// oh will test this too wrt project id (gcp concept like client libraries)
-		// {PROJECT_ID} is the Google Cloud Project ID - it's set it config...
-
-		// need to persist this in bml and pull it off here
-
-		// is project id from the config or pulled from the enviornment?
-
-		// "ProjectID is the destinaiton GCP project identifier for uploading log entries (this one)
-		// if not set it pulls it form the env
 		gcploggingEntry.Trace = "projects/" + bml.projectID + "/traces/" + fmt.Sprintf("%x", sc.TraceID)
 		gcploggingEntry.SpanID = fmt.Sprintf("%x", sc.SpanID)
 	}
-
-	// this gets set on both client and server side. Client side logs happen
-	// with a context that's only populated with trace.NewContext (the top level
-	// call span). The corresponding populating of this client side in TagRPC happens at the attempt level,
-	// which happens at the layer below log calls, which happen at the call level. Thus, if this hits,
-
-	// wait what about hops? Same context server and client, which one.
-	// I feel like in hops you can get both of these populated, need to have the right precedence
-	// wrt the most "recent" span generated, I don't think you can logically tell if both of these are set.
-
-	// let's get this working first, and then we can do streaming, mention in PR description worried about precedence here
-
-	// *** talk to Doug
-	// if it comes in with both in a hop will always take rpc info if if after
-	// if an else if if both come in first will always take precedence...
-	// ***
-
-	// However, if you get this on server side it takes precedence. I don't think it will hit first anyway. Orthogonal
-	if ri := opencensus.GetRPCInfo(ctx); ri != nil { // the problem is now you have an 0(n) pass here
-		sc := ri.TI.Span.SpanContext() // brute force it by pulling all the way down
-		gcploggingEntry.Trace = "projects/" + bml.projectID + "/traces/" + fmt.Sprintf("%x", sc.TraceID)
-		gcploggingEntry.SpanID = fmt.Sprintf("%x", sc.SpanID)
+	// server side span, populated through our internal stats/opencensus
+	// package.
+	if tID, sID, ok := internal.GetTraceIDAndSpanID(ctx); ok {
+		gcploggingEntry.Trace = "projects/" + bml.projectID + "/traces/" + fmt.Sprintf("%x", tID)
+		gcploggingEntry.SpanID = fmt.Sprintf("%x", sID)
 	}
-
-	// streaming test comes after you fix this
-
-	// tomorrow: on call stuff like looking at tap and asking for reviews for import, look at all my prs I'm assigned to
-	// this task: get this brute force thing working (need to link through go.mod) GetRPCInfo and should I just export everything or just partial?
-	// once I get this working, add streaming call, should work in similar fashion (goes through server stream.go)
-
-	// pulling stuff out O(n) context for every logging call, but only if bin
-	// logger specified but man that's slow
-
-	// then persist project id from config -> bin logger -> method logger -> log entry
-
-
-	/*if sc, ok := propagation.FromBinary(stats.Trace(ctx)); ok { // adds an if to every logging call, negligible?
-		print("successufuly pulled entry from bianry")
-		// pull project id from env (Google Cloud Project ID)
-
-		// trace id - lowercase base 16 encoding (big endian) of trace identifier
-
-		// oh will test this too wrt project id (gcp concept like client libraries)
-		// {PROJECT_ID} is the Google Cloud Project ID - it's set it config...
-
-		// need to persist this in bml and pull it off here
-
-		// need to persist this too
-
-	}*/
-
-
-
-
 	bml.exporter.EmitGcpLoggingEntry(gcploggingEntry)
 }
 
 func (bml *binaryMethodLogger) Log(c iblog.LogEntryConfig) {
-	gcploggingEntry := bml.helper(c)
-	bml.exporter.EmitGcpLoggingEntry(gcploggingEntry) // tests at this level, so just add the two fields to test case
+	gcploggingEntry := bml.buildGCPLoggingEntry(c)
+	bml.exporter.EmitGcpLoggingEntry(gcploggingEntry)
 }
 
 type eventConfig struct {
@@ -430,19 +364,6 @@ type binaryLogger struct {
 	exporter     loggingExporter
 }
 
-// I think interceptor -> client streams ctx, because it worked for callouts to
-// Handle for child traces (interceptor -> client stream -> csAttempt -> handle)
-
-// different accesses for ctx
-// client side: client streams context (call level stream)
-// server side: bottom level transports streams context -> I think this gets to server stream (see notebook diagrams to confirm)
-
-
-// so all callsites out to Log happen in
-// client stream/server stream
-// sooooooooo just do cs.ctx/ss.ctx
-
-
 func (bl *binaryLogger) GetMethodLogger(methodName string) iblog.MethodLogger {
 	// Prevent logging from logging, traces, and metrics API calls.
 	if strings.HasPrefix(methodName, "/google.logging.v2.LoggingServiceV2/") || strings.HasPrefix(methodName, "/google.monitoring.v3.MetricService/") ||
@@ -461,9 +382,9 @@ func (bl *binaryLogger) GetMethodLogger(methodName string) iblog.MethodLogger {
 			}
 
 			return &binaryMethodLogger{
-				exporter: bl.exporter,
-				mlb:      iblog.NewTruncatingMethodLogger(eventConfig.HeaderBytes, eventConfig.MessageBytes),
-				callID:   uuid.NewString(),
+				exporter:  bl.exporter,
+				mlb:       iblog.NewTruncatingMethodLogger(eventConfig.HeaderBytes, eventConfig.MessageBytes),
+				callID:    uuid.NewString(),
 				projectID: bl.projectID,
 			}
 		}
@@ -516,7 +437,7 @@ func registerClientRPCEvents(config *config, exporter loggingExporter) {
 	clientSideLogger := &binaryLogger{
 		EventConfigs: eventConfigs,
 		exporter:     exporter,
-		projectID: config.ProjectID,
+		projectID:    config.ProjectID,
 	}
 	internal.AddGlobalDialOptions.(func(opt ...grpc.DialOption))(internal.WithBinaryLogger.(func(bl binarylog.Logger) grpc.DialOption)(clientSideLogger))
 }
