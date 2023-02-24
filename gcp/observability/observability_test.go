@@ -611,7 +611,7 @@ func (s) TestLoggingLinkedWithTrace(t *testing.T) {
 
 		traceAndSpanIDs, ok := val.(traceAndSpanID)
 		if !ok {
-			fmt.Errorf("received wrong type from channel: %T", val)
+			readerErrCh.Send(fmt.Errorf("received wrong type from channel: %T", val))
 		}
 		tasiServer := idsToString(traceAndSpanIDs, projectID)
 
@@ -698,7 +698,7 @@ func (s) TestLoggingLinkedWithTrace(t *testing.T) {
 
 		traceAndSpanIDs, ok := val.(traceAndSpanID)
 		if !ok {
-			fmt.Errorf("received wrong type from channel: %T", val)
+			readerErrCh.Send(fmt.Errorf("received wrong type from channel: %T", val))
 		}
 		tasiServer := idsToString(traceAndSpanIDs, projectID)
 		val, err = idCh.Receive(ctx)
