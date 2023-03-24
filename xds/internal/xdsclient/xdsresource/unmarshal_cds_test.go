@@ -18,18 +18,23 @@
 package xdsresource
 
 import (
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	v3discoverypb "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/pretty"
+	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/internal/xds/matcher"
+	"google.golang.org/grpc/xds/internal/balancer/ringhash"
+	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -39,6 +44,7 @@ import (
 	v3endpointpb "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	v3aggregateclusterpb "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/aggregate/v3"
 	v3tlspb "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	v3discoverypb "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	anypb "github.com/golang/protobuf/ptypes/any"
 )
@@ -154,8 +160,14 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 			wantUpdate: emptyUpdate,
 			wantErr:    true,
 		},
+		// ^^^ xds client assertions should hold true
+
+		// vvv validations in the balancer, but they still shoulddd cause nack
+		// even though we moved it at some layer, as xds clients job is to
+		// validate the prepared configuration. So perhaps we need to move it to
+		// some layer that represents the "validate" /nack thing of this.
 		{
-			name: "ring-hash-min-bound-greater-than-max",
+			name: "ring-hash-min-bound-greater-than-max", // example of an error condition - copy this?
 			cluster: &v3clusterpb.Cluster{
 				LbPolicy: v3clusterpb.Cluster_RING_HASH,
 				LbConfig: &v3clusterpb.Cluster_RingHashLbConfig_{
@@ -410,9 +422,75 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 					},
 				},
 			},
+			// and got:
+			// proto -> balancer config I prepare -> (marshal) -> json
+
+			// (in test) json.Unmarshal (takes away the non determinism) into balancer config
+
+			// easwars point: declare the want as a balancer config
 			wantUpdate: ClusterUpdate{
+
+
+				// irrregardless of what the struct you use to marshal
+
+				// explicitly just set/populated in xds_wrr_locality_experimental
+				// create a rh config and stick it as value of internalserviceconfig.BalancerConfig
+				// json ends up being fmt.Sprintf(`[{%q: %s}]`, bc.Name, c)
+
+				// Thus, unmarshal into a balancer config and declare name and config
+				// config has to be the correct type - i.e. a round robin config
+				// or xds_wrr_locality_config - should I add this?
+
+				// balancer.Get will get the type and builder and parse config - so I think you need
+				// to a. add xds_wrr_locality_config and also ParseConfig() method (then add tests for that) as part of this PR
+				// and b. for the custom lb proto, need to declare a mock builder and balancer
+				// that the any proto will point to
+
+
+
+				//
+
+				// wb testing converters?
+
+				// will test validations - but should be a valid config regardless
+
+
+				// represents emissions anyway...and that is how it will be used
+
+
 				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf,
+				// Oh right because it's nil otherwise...so this is only place ring hash json
+				//
+
+				// got (initial -> json) 1 2 are done
+
+				// for want we have 1 2 3 (need to prepare on both codepaths) and stick data at 1 2 or 3
+				// into the want
+
+				// 3 step process for each got and want
+
+				// all the other places it's nil - weighted_target_experimental: round robin child
+				// switch this to ring hash json (through preparation (or struct)) what do I put here for
+				// type now that it's a two step process
+
+				// Yeah and def the emission of JSON from the client should be valid - one of it's responsibiities is to validate.
+
+				// for all, because also needed for round robin emissions so no check here
+				// Thus if err := json.Unmarshal(balancer config object); err != nil {
+				//   "emitted json from the xds client should be valid configuration: %v", err
+				// }
 				LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: defaultRingHashMinSize, MaximumRingSize: defaultRingHashMaxSize},
+
+				// unmarshal and compare those with a different struct
+				// declare balancer config inline and compare it to that json.Unmarshal from emitted
+
+
+				// What is the type of go struct we want to unmarshal the arbitrary json string into?
+				// internalserviceconfig.BalancerConfig?
+
+				// marshal it into same thing you prepare?
+				// is there an overarching go struct that handles and encapsualtes all the possibilites here?
+
 			},
 		},
 		{
@@ -443,8 +521,52 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			},
 			wantUpdate: ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf,
+
 				LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: 10, MaximumRingSize: 100},
 			},
+			// LBPolicy above - ring hash, not set to nil
+			wantLBPolicy2: internalserviceconfig.BalancerConfig{
+				Name: "ring_hash", // is it _experimental?
+				Config: ringhash.LBConfig{
+					MinRingSize: 10,
+					MaxRingSize: 100,
+				},
+			},
+
+			// this is for the normal case where LBPolicy used to be nil - put this everywhere it used to be nil
+			wantLBPolicy: internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental", // gets this type, unmarshals/verifies config
+				// ChildPolicy can be arbitrary type
+				Config: wrrlocality.LBConfig{
+					// what is the round robin policy type? Can I just declare it as such
+					ChildPolicy: internalserviceconfig.BalancerConfig{
+						Name: "round_robin", // in the unmarshaling/verification phase above, calls into wrrlocality ParseConfig(), gets this name, verifies
+						// No configuration - an empty json object is returned, just leave as such? this will be used as below too.
+						/*Config: roundrobin.LBConfig{
+
+						},*/
+					},
+				},
+			},
+
+			// for the wants: declare a internalserviceconfig.BalancerConfig,
+			// than MarshalJSON into that struct this will trigger it to marshal
+			// that type
+
+
+			// I think it's better to do this first to see if this flow works well with the unmarshaling...
+			// for the converter (separate test):
+			// what's the api you're testing at?
+			// ring hash same thing as above
+
+			// round robin - an empty json object is returned, perhaps as above, excpet don't have a config
+
+			// wrr_locality - child rr - perhaps point it to round robin and also any struct/json
+
+			// custom_lb lmao
+
+			// wrr_locality with child as the custom_lb ^^^ (need to declare a mock balancer builder in test to pull it off what the any corresponds to)
+
 		},
 	}
 
@@ -466,6 +588,27 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 		})
 	}
 }
+
+// error cases for validation:
+/*
+
+xDS LB policy registry cannot convert the configuration and returns an error
+so same error cases as the xDS LB policy registry
+
+gRPC LB policy registry cannot parse the converted configuration.
+(invalid balancer configuration - again, need a mock type here)
+
+move test for that ring hash validation I moved to the balancer to there
+
+
+Configurations that require more than 16 levels of recursion are considered
+invalid and should result in a NACK response.
+
+Should result in a NACK response from the highest layer logically - so test at this layer
+
+
+
+*/
 
 func (s) TestValidateClusterWithSecurityConfig_EnvVarOff(t *testing.T) {
 	// Turn off the env var protection for client-side security.
@@ -1566,7 +1709,7 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 					},
 				},
 			},
-			LbPolicy:         v3clusterpb.Cluster_ROUND_ROBIN,
+			LbPolicy:         v3clusterpb.Cluster_ROUND_ROBIN, // proto is the branch conditional, we want to set the new field
 			OutlierDetection: od,
 		}
 	}
@@ -1700,4 +1843,124 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 			}
 		})
 	}
+}
+
+// this will break all the tests even outside this package...just fix the ones in this package
+
+// validating emitted = inline (created)
+
+// json doesn't match 1:1 (serialization format like proto)
+
+// unmarshal (takes away the non determinism of the exact bytes of json)
+
+// unmarshaling produces same output - the expected output from the unit test -
+// but who knows if this is "correct" until e2e
+
+
+// "deserialize"
+// emitted json from client
+// json -> struct
+
+
+// Note: the marshaling to produce this json has knobs plumbed in through xDS protos,
+// either set these knobs inline in tests or set to be configurable
+// inline declared json want - "valid json string and you can always unmarshal it"
+// json -> struct
+
+// perhaps a helper to plumb in json and build it out with arbitrary child type?
+// var for json representation of wrr locality: round robin
+
+// var for ringhash json configuration
+
+
+// prepares same thing as registry?
+
+
+// emissions from validateClusterAndConstructClusterUpdate - all these switch to JSON
+// switch all tests to have the internal struct (any others in codebase)?
+// Fix tests already there: internal struct inline config -> json.RawMessage (wrr_locality: round_robin for nil), ringhash config in json for ringhash
+
+// converter tests orthogonal - test all at that layer to but test a single
+// converter called from validateCluster - basic
+
+// (newField || field) ->    lbConfig switch to JSON here
+// proto               ->           internal struct
+
+// the population of the JSON is where we want to call into converter library
+
+// ^^^ oh test all with env var set to true
+
+
+func helper() json.RawMessage {
+	// knobs for this first thing
+	bc := internalserviceconfig.BalancerConfig{
+		Name: roundrobin.Name,
+	}
+
+	// rr doesn't need a knob is a constant
+	rrLBCfgJSON, err := json.Marshal(bc)
+	if err != nil { // Shouldn't happen, prepared now.
+		// Fail test...?
+	}
+	// test created json - rr
+	lbCfgJSON := []byte(fmt.Sprintf(`[{%q: %s}]`, "xds_wrr_locality_experimental", rrLBCfgJSON))
+
+
+	// test created json - ring hash
+	// knob from management server are the min and max size in proto
+
+
+	// need knobs on minSize and maxSize
+	rhLBCfg := ringhash.LBConfig{
+		MinRingSize: /*knob for min ring size here*/,
+		MaxRingSize: /*knob for max ring size here*/,
+	}
+
+	bc := internalserviceconfig.BalancerConfig{
+		Name: "ring_hash_experimental",
+		Config: rhLBCfg,
+	}
+
+	// preparing it same way will validate, same with cluster specifier test
+	// this is to get rid of the inline json needed to prepare
+	rhLBCfgJSON, err := json.Marshal(bc)
+	if err != nil {
+		// Fail test...?
+	}
+
+
+	// emitted from the client:
+	// []byte -> marshal into struct? Balancer config?
+
+	// marshal []byte into a struct just like the other side
+	// if you marshal into go struct and take away the non determinism for
+	// the byte preparation, what does it marshal into
+
+
+	// the rest - the primitives represented by the root of interface{}
+	// bool for json booleans
+	// float64 for json numbers
+	// string for json strings
+
+	// so the config layering
+	// {rr_hash: primitive primitive primitive}
+	// map[
+	//      "rr_hash": {}
+	// ]
+
+	// but if you unmarshal and compare this is a black box
+	// and if you reflect.DeepEqual on it with cmp.Diff it's also a black box
+
+	// nil for null
+	// []interface{} json array
+	// map[string]interface{} json object
+	// unmarshal stores json key value pairs into the map?
+	// The map's key type must either be any string type, an integer, implement
+	// json.Unmarshaler, or implement encoding.TextUnmarshaler.
+	json.Unmarshal()
+
+	// honestly just treat this as a black box,
+	// unmarshal and cmp.Diff
+	// you can a. see if it works and b. see what the map output is
+
 }
