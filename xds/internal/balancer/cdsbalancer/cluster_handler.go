@@ -17,6 +17,7 @@
 package cdsbalancer
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 
@@ -45,6 +46,8 @@ type clusterHandlerUpdate struct {
 	// is ringhash. In the future, if we support more policies, we can make this
 	// an interface, and set it to config of the other policies.
 	lbPolicy *xdsresource.ClusterLBPolicyRingHash
+
+	lbPolicyJSON json.RawMessage
 
 	// updates is a list of ClusterUpdates from all the leaf clusters.
 	updates []xdsresource.ClusterUpdate
@@ -123,10 +126,11 @@ func (ch *clusterHandler) constructClusterUpdate() {
 	case <-ch.updateChannel:
 	default:
 	}
+
 	ch.updateChannel <- clusterHandlerUpdate{
 		securityCfg: ch.createdClusters[ch.rootClusterName].clusterUpdate.SecurityCfg,
-		lbPolicy:    ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicy,
-		updates:     clusterUpdate,
+		lbPolicyJSON: ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicyJSON,
+		updates:      clusterUpdate,
 	}
 }
 
