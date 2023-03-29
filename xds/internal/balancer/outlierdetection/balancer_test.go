@@ -71,7 +71,7 @@ func (s) TestParseConfig(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		wantCfg serviceconfig.LoadBalancingConfig // Opaque data type repreenting a load balancign config - returned from ParseConfig and also what our channel prepares to send to balancer?
+		wantCfg serviceconfig.LoadBalancingConfig
 		wantErr string
 	}{
 		{
@@ -86,7 +86,7 @@ func (s) TestParseConfig(t *testing.T) {
 				}
 				]
 			}`,
-			wantCfg: &LBConfig{ // this type is a Load Balancing Config
+			wantCfg: &LBConfig{
 				Interval: math.MaxInt64,
 				ChildPolicy: &internalserviceconfig.BalancerConfig{
 					Name: "xds_cluster_impl_experimental",

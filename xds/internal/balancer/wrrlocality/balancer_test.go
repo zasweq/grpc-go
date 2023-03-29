@@ -27,7 +27,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/internal/balancer/stub"
-	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/grpctest"
 	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/serviceconfig"
@@ -42,13 +41,6 @@ func Test(t *testing.T) {
 }
 
 func (s) TestParseConfig(t *testing.T) {
-	// switch this env var set to registerXXXfor testing plumbed through internal
-	oldXDSCustomLBPolicy := envconfig.XDSCustomLBPolicy
-	envconfig.XDSCustomLBPolicy = true
-	defer func() {
-		envconfig.XDSCustomLBPolicy = oldXDSCustomLBPolicy
-	}()
-	// ugh, needs a register for testing hook plumbed through internal/
 
 	const errParseConfigName = "errParseConfigBalancer"
 	stub.Register(errParseConfigName, stub.BalancerFuncs{

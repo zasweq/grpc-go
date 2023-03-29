@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2022 gRPC authors.
+ * Copyright 2023 gRPC authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -67,21 +67,23 @@ func ConvertToServiceConfig(policy *v3clusterpb.LoadBalancingPolicy, depth int) 
 			}
 			return convertRingHash(rhProto) // the only thing about this return is you can't wrap error with correct log (i.e. log the proto list)
 		case "type.googleapis.com/envoy.extensions.load_balancing_policies.round_robin.v3.RoundRobin":
-			return convertRoundRobin(/*you honestly don't even need to pass anything it, have it build config inline right? or does this need some sort of validation that round robin is in struct?*/)
+			return convertRoundRobin() // rename to generate round_robin?
 		case "type.googleapis.com/envoy.extensions.load_balancing_policies.wrr_locality.v3.WrrLocality":
 			wrrlProto := &wrr_localityv3.WrrLocality{}
 			if err := proto.Unmarshal(plcy.GetTypedExtensionConfig().GetTypedConfig().GetValue(), wrrlProto); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal resource: %v", err)
 			}
-			return convertWrrLocality(wrrlProto, depth + 1) // depth + 1 right?
-		// Any entry not in the above list is unsupported and will be skipped. Aka Least Request as well, since grpc-go does not support this.
-		case "type.googleapis.com/xds.type.v3.TypedStruct": // is there a prefix to this?
+			return convertWrrLocality(wrrlProto, depth)
+		// Any entry not in the above list is unsupported and will be skipped.
+		// This includes Least Request as well, since grpc-go does not support
+		// the Least Request Load Balancing Policy.
+		case "type.googleapis.com/xds.type.v3.TypedStruct":
 			tsProto := &v3.TypedStruct{}
 			if err := proto.Unmarshal(plcy.GetTypedExtensionConfig().GetTypedConfig().GetValue(), tsProto); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal resource: %v", err)
 			}
 			return convertCustomPolicyV3(tsProto)
-		case "type.googleapis.com/udpa.type.v1.TypedStruct": // same question here, is there a prefix to this?
+		case "type.googleapis.com/udpa.type.v1.TypedStruct":
 			tsProto := &v1.TypedStruct{}
 			if err := proto.Unmarshal(plcy.GetTypedExtensionConfig().GetTypedConfig().GetValue(), tsProto); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal resource: %v", err)

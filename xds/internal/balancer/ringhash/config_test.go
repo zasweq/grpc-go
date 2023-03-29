@@ -82,7 +82,6 @@ func (s) TestParseConfig(t *testing.T) {
 			envConfigCap: 8000,
 			want:         &LBConfig{MinRingSize: 8000, MaxRingSize: 8000},
 		},
-		// Fix the test in the client I'm sure that we had one
 		{
 			name: "min greater than upper bound",
 			js:   `{"minRingSize": 8388610, "maxRingSize": 10}`,
@@ -130,11 +129,13 @@ xds/internal/balancer/wrrlocality/config.go (what's the scope of parse config)
 
 xds/internal/xdsclient/xdslbregistry/converter.go
 xds/internal/xdsclient/xdslbregistry/converter_test.go
+(done outside cleanup)
 
 // vvv depends on ^^^, uses converter registry to emit json, test that this json is valid
 
 xds/internal/xdsclient/xdsresource/type_cds.go
 xds/internal/xdsclient/xdsresource/unmarshal_cds.go
 xds/internal/xdsclient/xdsresource/unmarshal_cds_test.go
+(done outside cleanup)
 
 */

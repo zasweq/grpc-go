@@ -80,7 +80,7 @@ func (bc *BalancerConfig) UnmarshalJSON(b []byte) error {
 
 	var names []string
 	for i, lbcfg := range ir {
-		if len(lbcfg) != 1 { // name value1 value 2 would hit this
+		if len(lbcfg) != 1 {
 			return fmt.Errorf("invalid loadBalancingConfig: entry %v does not contain exactly 1 policy/config pair: %q", i, lbcfg)
 		}
 
@@ -112,7 +112,7 @@ func (bc *BalancerConfig) UnmarshalJSON(b []byte) error {
 		}
 
 		cfg, err := parser.ParseConfig(jsonCfg)
-		if err != nil { // errParseConfig hits htis
+		if err != nil {
 			return fmt.Errorf("error parsing loadBalancingConfig for policy %q: %v", name, err)
 		}
 		bc.Config = cfg
@@ -122,7 +122,7 @@ func (bc *BalancerConfig) UnmarshalJSON(b []byte) error {
 	// return. This means we had a loadBalancingConfig slice but did not
 	// encounter a registered policy. The config is considered invalid in this
 	// case.
-	return fmt.Errorf("invalid loadBalancingConfig: no supported policies found in %v", names) // I think no child hits this, empty string hits this (empty names as name), name = "" sticks that as name, or sticks "not-found-balancer" as name if it's empty
+	return fmt.Errorf("invalid loadBalancingConfig: no supported policies found in %v", names)
 }
 
 // MethodConfig defines the configuration recommended by the service providers for a

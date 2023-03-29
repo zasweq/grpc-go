@@ -33,10 +33,7 @@ import (
 const Name = "xds_wrr_locality_experimental" // use this instead at callsites
 
 func init() {
-	/*if envconfig.XDSCustomLBPolicy {
-		balancer.Register(bb{})
-	}*/ // this won't pick up the write in wrrlocality/balancer_test.go, so need a hook through internal to register only for testing
-	balancer.Register(bb{}) // can't I just register unconditionally?
+	balancer.Register(bb{})
 }
 
 type bb struct{}
@@ -45,9 +42,11 @@ func (bb) Name() string {
 	return Name
 }
 
-// What does build do again?
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
-// comment here about 1:1 assumption as to why we can hardcode this child to xds_wrr_locality_experimental
+
+
+	// this comment below is also UpdateClientConnState operation
+	// comment here about 1:1 assumption as to why we can hardcode this child to xds_wrr_locality_experimental
 	/*
 	builder := balancer.Get(weightedtarget.Name)
 	if builder == nil {
@@ -63,6 +62,8 @@ return nil
 	// ^^^ this whole codeblock move to UpdateClientConnState() - getting from registry and building child - validated mulitple times at this point in the client and in the construction of this balancer
 
 
+
+
 	/*wrr := &wrrLocalityExperimental{
 		// data structures here you need
 	}
@@ -74,12 +75,10 @@ return nil
 		child: wtb/*hardcoded to weighted target - this will handle graceful switch for you in balancer group,
 	}*/ // in order to return this neeeds to implement all the operations
 
-	// top level lb of the channel
+	// top level lb of the channel for testing, can you even do this, will need
+	// to populate the API calls with certain vars etc.
 
 	return nil
-
-	// the scope of this is to build data structures and fork goroutines corresponding to the component
-	// the child balancer will actually get built in UpdateClientConnState
 }
 
 // balancer.Get as in test is called in cluster resolver orrrrrr
@@ -150,19 +149,6 @@ return lbCfg, nil*/
 	return lbCfg, nil
 
 }
-
-/*
-Contains a LoadBalancingPolicy field that has a list of endpoint picking
-policies. This field will be processed by recursively calling the xDS LB policy
-registry, and the result will be used in the child_policy field in the
-configuration for the xds_wrr_locality_experimental policy (see the “xDS WRR
-Locality Load Balancer” sections for details on the config format).
-
-we prepare this wrr_locality: round_robin
-config string in client for round_robin case
-
-so yeah shiuld be a valid config
-*/
 
 type wrrLocalityExperimental struct {
 
