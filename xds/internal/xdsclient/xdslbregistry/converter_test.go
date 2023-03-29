@@ -20,25 +20,41 @@ package xdslbregistry
 
 import (
 	"encoding/json"
+	"google.golang.org/grpc/internal/balancer/stub"
+	"google.golang.org/grpc/internal/grpctest"
+	"google.golang.org/grpc/serviceconfig"
+	"strings"
+	"testing"
+
 	v1 "github.com/cncf/xds/go/udpa/type/v1"
 	v3 "github.com/cncf/xds/go/xds/type/v3"
-	xdspb "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	least_requestv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/least_request/v3"
 	v3ringhashpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/ring_hash/v3"
 	v3roundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/round_robin/v3"
 	wrr_localityv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
 	"github.com/golang/protobuf/proto"
 	structpb "github.com/golang/protobuf/ptypes/struct"
-	"google.golang.org/api/content/v2"
+	"github.com/google/go-cmp/cmp"
+	_ "google.golang.org/grpc/balancer/roundrobin"
 	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
-	"testing"
 )
+
+type s struct {
+	grpctest.Tester
+}
+
+func Test(t *testing.T) {
+	grpctest.RunSubTests(t, s{})
+}
+
+// I feel like I need to scale up these tests
 
 // run this test within this package first, then continue
 
@@ -49,13 +65,23 @@ import (
 
 // same concept of unmarshaling into a balancer config
 
+type customLBConfig struct {
+	serviceconfig.LoadBalancingConfig
+} // just marshals into empty json - if you put a field here could use it for equality check in unmarshal JSON...
 
 func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
+
+	const customLBPolicyName = "myorg.MyCustomLeastRequestPolicy"
+	stub.Register(customLBPolicyName, stub.BalancerFuncs{
+		ParseConfig: func(json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
+			return customLBConfig{}, nil
+		},
+	})
 
 	tests := []struct {
 		name string
 		policy *v3clusterpb.LoadBalancingPolicy
-		wantConfig internalserviceconfig.BalancerConfig // json marshaled into this - see if flow works
+		wantConfig *internalserviceconfig.BalancerConfig // json marshaled into this - see if flow works
 	}{
 		// ring hash same thing as above
 		{
@@ -65,28 +91,25 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 					{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name: "what is this used for?", // This typed_config field is used to determine both the name of a policy, do we need validations on this or is this used somewhere?
-							// testutils.MarshalAny(&v3listenerpb.Listener)
 							TypedConfig: testutils.MarshalAny(&v3ringhashpb.RingHash{ // this shouldddd correctly unmarshal as expected
-								HashFunction: /*proto value equivalent of xx_hash here*/,
+								HashFunction: v3ringhashpb.RingHash_XX_HASH,
 								MinimumRingSize: wrapperspb.UInt64(10),
 								MaximumRingSize: wrapperspb.UInt64(100),
 							}),
-						}/*is this an arbitrary proto field? Just plug in anything?*/,
+						},
 					},
 
 					// should I test that the next node in list doesn't get hit, I don't think I should
 				},
-			}/*ring hash policy in a cluster pb here*/,
-			// ring_hash: lbconfig json here?
-			wantConfig: internalserviceconfig.BalancerConfig{
-				Name: "ring_hash_experimental",
-				Config: &ringhash.LBConfig{ // but it implements the serviceconfig.BalancerConfig...
-					MinRingSize: 10/*corresponding min ring size here*/,
-					MaxRingSize: 100/*corresponding max ring size here*/,
-				},
 			},
+			wantConfig: &internalserviceconfig.BalancerConfig{
+				Name: "ring_hash_experimental",
+				Config: &ringhash.LBConfig{
+					MinRingSize: 10,
+					MaxRingSize: 100,
+				},
+			}, // moved ring hash validation you can check in client unmarshaling tests
 		},
-		// round robin - an empty json object is returned, perhaps as above, excpet don't have a config
 		{
 			name: "round_robin",
 			policy: &v3clusterpb.LoadBalancingPolicy{
@@ -99,36 +122,12 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 						},
 					},
 
-					// should I test that the next node in list doesn't get hit, I don't think I should
+					// should I test that the next node in list doesn't get hit, I don't think I should, maybe just like test to the end of recursion...
 				},
 			},
-			wantConfig: internalserviceconfig.BalancerConfig{
+			wantConfig: &internalserviceconfig.BalancerConfig{
 				Name: "round_robin",
-				// I think this is just empty json...
 			}, // json is {round robin: {}} - what does that unmarshal into, I think
-		},
-		// wrr_locality - child rr - perhaps point it to round robin and also any struct/json
-		{
-			name: "wrr_locality_child_round_robin",
-			policy: &v3clusterpb.LoadBalancingPolicy{
-				Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
-					{
-						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
-							Name: "what is this used for?",
-							TypedConfig: wrrLocality(&v3roundrobinpb.RoundRobin{}),
-						},
-					},
-				},
-			},
-			wantConfig: internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
-				Config: wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
-						Name: "round_robin",
-						// empty json?
-					},
-				},
-			},
 		},
 		// custom_lb:
 		// custom lb configured through xds.type.v3.TypedStruct
@@ -160,19 +159,23 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 							// returned as-is as the configuration JSON object.
 
 							TypedConfig: testutils.MarshalAny(&v3.TypedStruct{
-								TypeUrl: "balancer-type",
-								Value: &structpb.Struct{}, // probably just marshals into empty json
+								TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy",
+								Value: &structpb.Struct{}, // probably just marshals into empty json, does go struct -> json
 							}),
-							// {"balancer-type": {}}
+							// {"myorg.MyCustomLeastRequestPolicy": {}}
 						},
 					},
 					// should I test that the next node in list doesn't get hit, I don't think I should, not found case is tested, but maybe I should test just to be sure
 				},
 			},
-			wantConfig: internalserviceconfig.BalancerConfig{
-				Name: "balancer-type",
+			wantConfig: &internalserviceconfig.BalancerConfig{
+				Name: "myorg.MyCustomLeastRequestPolicy",
+				Config: customLBConfig{},
 			},
 		},
+		// for the name , use the type name part of the value of the type_url field, after the last / character - so rewrite the names
+		// marshals struct value into json
+		// for ^^^ and vvv, prepares a json name: value
 
 		// custom lb configured through udpa.type.v1.TypedStruct
 		{
@@ -183,19 +186,71 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name: "not supported",
 							TypedConfig: testutils.MarshalAny(&v1.TypedStruct{
-								TypeUrl: "balancer-type",
+								TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy",
 								Value: &structpb.Struct{},
 							}),
 						},
 					},
 				},
 			},
-			wantConfig: internalserviceconfig.BalancerConfig{
-				Name: "balancer-type",
+			wantConfig: &internalserviceconfig.BalancerConfig{
+				Name: "myorg.MyCustomLeastRequestPolicy", // I think if we use internal balancer config type this needs to be registered otherwise validation will fail
+				// leave empty (from {}? empty struct) and see how it works...if not fix later
+				// config: what you return from parse config here
+				Config: customLBConfig{},
 			},
 		}, // this gets prepares it? validated in client (including presence?) yes presence validated in client
 		// this is howwww it should be used best practice as per Mark's chat vvv
 		// wrr_locality with child as the custom_lb ^^^ (need to declare a mock balancer builder in test to pull it off what the any corresponds to)
+		// wrr_locality - child rr - perhaps point it to round robin and also any struct/json
+		{
+			name: "wrr_locality_child_round_robin",
+			policy: &v3clusterpb.LoadBalancingPolicy{
+				Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+					{
+						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+							Name: "what is this used for?",
+							TypedConfig: wrrLocalityAny(&v3roundrobinpb.RoundRobin{}),
+						},
+					},
+				},
+			},
+			wantConfig: &internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental",
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "round_robin",
+					},
+				},
+			},
+		},
+		// custom lb configured as a child of wrr_locality experimental - this is the normal case of how custom lbs are deployed
+		{
+			name: "wrr_locality_child_custom_lb_type_v3_struct", // ^^^ dependent on the v3 type struct thingy correctly working, as this uses as a child
+			policy: &v3clusterpb.LoadBalancingPolicy{
+				Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+					{
+						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+							Name: "what is this used for?",
+							TypedConfig: wrrLocalityAny(&v3.TypedStruct{
+								TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy",
+								Value: &structpb.Struct{}, // probably just marshals into empty json, does go struct -> json
+							}),
+						},
+					},
+				},
+			},
+			wantConfig: &internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental",
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "myorg.MyCustomLeastRequestPolicy", // I think this needs to be registered in balancer registry to be pulled off stack
+						// empty config like above empty struct
+						Config: customLBConfig{},
+					},
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -204,7 +259,7 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 			if err != nil { // all of these tests are passing tests
 				t.Fatalf("unwanted error in ConvertToServiceConfig: %v", err)
 			}
-			bc := internalserviceconfig.BalancerConfig{}
+			bc := &internalserviceconfig.BalancerConfig{}
 			// json.Marshal into above
 			// argh this will a. unmarshal it
 			// and b. check if the unmarshaled config is valid
@@ -253,14 +308,33 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 			// in case we switch validations over time. Also, once we partion
 			// this Unmarshal into Unmarshal vs. Validation in seperate
 			// operations, the brittleness of this will go away.
-			if err := json.Unmarshal(rawJSON, bc); err != nil {
+			if err := json.Unmarshal(rawJSON, bc); err != nil { // converter_test.go:295: failed to unmarshal JSON: json: cannot unmarshal object into Go value of type serviceconfig.intermediateBalancerConfig - why can't I json.Unmarshal, this has a function on it UnmarshalJSON...
 				// as per the todo above, shouldn't happen
 				t.Fatalf("failed to unmarshal JSON: %v", err)
 			}
 			// Unmarshalling into balancer config makes it easier to validate
 			// returns an opaque type representing parsed json - externalserviceconfig.LoadBalancingConfig
-
+			/*
+			{
+			   "xds_wrr_locality_experimental": {
+			     "child_policy": [{
+			          "myorg.MyCustomLeastRequestPolicy" : {
+			            "choiceCount" : 2
+			          },
+			      }]
+			   }
+			}
+			*/
+			// This is I think verbatim what you get emitted ^^^
 			// On the equals do I need to typecast downward?
+
+			// I don't know if equals() methods are defined on this balancer config type, try it and see what happens
+			// I don't know if this assertion is working in the slightest
+			if diff := cmp.Diff(bc, test.wantConfig); diff != "" {
+				t.Fatalf("ConvertToServiceConfig() got unexpected output, diff (-got +want): %v", diff)
+			}
+
+			// example emission:
 
 		})
 	}
@@ -288,9 +362,8 @@ func (s) TestConvertToServiceConfigFailure(t *testing.T) {
 					{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name: "what is this used for?",
-							// testutils.MarshalAny(&v3listenerpb.Listener)
 							TypedConfig: testutils.MarshalAny(&v3ringhashpb.RingHash{ // this shouldddd correctly unmarshal as expected
-								HashFunction: /*proto value equivalent of a thing that isn't xx hash here*/,
+								HashFunction: v3ringhashpb.RingHash_MURMUR_HASH_2,
 								MinimumRingSize: wrapperspb.UInt64(10),
 								MaximumRingSize: wrapperspb.UInt64(100),
 							}),
@@ -310,54 +383,69 @@ func (s) TestConvertToServiceConfigFailure(t *testing.T) {
 					{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name: "unsupported proto type",
-							TypedConfig: testutils.MarshalAny(/*proto that isn't part of the list*/),
+							// Branches on the type url string, so can break the switch by arbitarty proto type - maybe something like least request?
+							TypedConfig: testutils.MarshalAny(&least_requestv3.LeastRequest{}), // might be because of the any string
 						},
 					},
-					{
+					/*{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name: "unsupported proto type",
-							TypedConfig: testutils.MarshalAny(/*second type of proto that isn't part of the list*/),
+							TypedConfig: testutils.MarshalAny(/*second type of proto that isn't part of the list),
 						},
-					},
+					},*/
 				},
 			},
 			wantErr: "no supported policy found in policy list",
 		},
+		// I could also test right on the boundary of recursion - i.e. 15 levels or w/e
 		{
 			name: "too much recursion",
 			policy: &v3clusterpb.LoadBalancingPolicy{
 				Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
-					// hits this first one, keeps on recursing downward
 					{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name: "first level",
-							TypedConfig: testutils.MarshalAny(),
+							// wrrLocality(&v3roundrobinpb.RoundRobin{})
+							// the only any is the typed config, the next parameters in the chain get converted to any in helper
+							// and get marshaled as a child
+							TypedConfig: wrrLocalityAny(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(&v3roundrobinpb.RoundRobin{}))))))))))))))))))))))),
 						},
 					},
 				},
 			},
+			wantErr: "exceeds max depth",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err :=ConvertToServiceConfig(test.policy, 0)
-			if err
+			_, gotErr := ConvertToServiceConfig(test.policy, 0)
+			if gotErr == nil || !strings.Contains(gotErr.Error(), test.wantErr) {
+				t.Fatalf("ConvertToServiceConfig() = %v, wantErr %v", gotErr, test.wantErr)
+			}
 		})
 	}
 }
 
-func wrrLocality(m proto.Message) *anypb.Any {
-	testutils.MarshalAny(&wrr_localityv3.WrrLocality{
+// wrrLocality is a helper that takes a proto message, marshals it into an any
+// proto, and returns a wrr locality proto (marshaled into an any) with it's
+// child as the marshaled passed in proto message. *** Split comments into 2
+
+func wrrLocality(m proto.Message) *wrr_localityv3.WrrLocality {
+	return &wrr_localityv3.WrrLocality{
 		EndpointPickingPolicy: &v3clusterpb.LoadBalancingPolicy{
 			Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
 				{
 					TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 						Name: "what is this used for?",
-						TypedConfig: testutils.MarshalAny(m),
+						TypedConfig: testutils.MarshalAny(m), // does it not keep the type_url?
 					},
 				},
 			},
 		},
-	})
+	}
+}
+
+func wrrLocalityAny(m proto.Message) *anypb.Any {
+	return testutils.MarshalAny(wrrLocality(m))
 }
