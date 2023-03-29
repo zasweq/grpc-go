@@ -19,7 +19,6 @@ package xdsresource
 
 import (
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -27,7 +26,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"google.golang.org/grpc/balancer/roundrobin"
+	_ "google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/pretty"
 	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
@@ -35,6 +34,7 @@ import (
 	"google.golang.org/grpc/internal/xds/matcher"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
+	_ "google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -167,33 +167,6 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 		// validate the prepared configuration. So perhaps we need to move it to
 		// some layer that represents the "validate" /nack thing of this.
 		{
-			name: "ring-hash-min-bound-greater-than-max", // example of an error condition - copy this?
-			cluster: &v3clusterpb.Cluster{
-				LbPolicy: v3clusterpb.Cluster_RING_HASH,
-				LbConfig: &v3clusterpb.Cluster_RingHashLbConfig_{
-					RingHashLbConfig: &v3clusterpb.Cluster_RingHashLbConfig{
-						MinimumRingSize: wrapperspb.UInt64(100),
-						MaximumRingSize: wrapperspb.UInt64(10),
-					},
-				},
-			},
-			wantUpdate: emptyUpdate,
-			wantErr:    true,
-		},
-		{
-			name: "ring-hash-min-bound-greater-than-upper-bound",
-			cluster: &v3clusterpb.Cluster{
-				LbPolicy: v3clusterpb.Cluster_RING_HASH,
-				LbConfig: &v3clusterpb.Cluster_RingHashLbConfig_{
-					RingHashLbConfig: &v3clusterpb.Cluster_RingHashLbConfig{
-						MinimumRingSize: wrapperspb.UInt64(ringHashSizeUpperBound + 1),
-					},
-				},
-			},
-			wantUpdate: emptyUpdate,
-			wantErr:    true,
-		},
-		{
 			name: "ring-hash-max-bound-greater-than-upper-bound",
 			cluster: &v3clusterpb.Cluster{
 				LbPolicy: v3clusterpb.Cluster_RING_HASH,
@@ -256,10 +229,18 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 }
 
 func (s) TestValidateCluster_Success(t *testing.T) {
+	oldCustomLBSupport := envconfig.XDSCustomLBPolicy
+	envconfig.XDSCustomLBPolicy = true
+	defer func() {
+		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
+	}()
+	// set env var here - not testing so we're good, fuck also register balacner for testing
+	// nothing about gating balancer registration in A52, will make it easier, will just register irregardless and if Easwar says I will say gates at xds client level
 	tests := []struct {
 		name       string
 		cluster    *v3clusterpb.Cluster
-		wantUpdate ClusterUpdate
+		wantUpdate ClusterUpdate // ignore json here
+		wantLBConfig *internalserviceconfig.BalancerConfig // take json and in cluster update unmarshal into wantLBConfig
 	}{
 		{
 			name: "happy-case-logical-dns",
@@ -293,6 +274,14 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				ClusterType: ClusterTypeLogicalDNS,
 				DNSHostName: "dns_host:8080",
 			},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental",
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "round_robin",
+					},
+				},
+			},
 		},
 		{
 			name: "happy-case-aggregate-v3",
@@ -312,6 +301,14 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				ClusterName: clusterName, LRSServerConfig: ClusterLRSOff, ClusterType: ClusterTypeAggregate,
 				PrioritizedClusterNames: []string{"a", "b", "c"},
 			},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental",
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "round_robin",
+					},
+				},
+			},
 		},
 		{
 			name: "happy-case-no-service-name-no-lrs",
@@ -328,6 +325,14 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				LbPolicy: v3clusterpb.Cluster_ROUND_ROBIN,
 			},
 			wantUpdate: emptyUpdate,
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental",
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "round_robin",
+					},
+				},
+			},
 		},
 		{
 			name: "happy-case-no-lrs",
@@ -345,6 +350,14 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				LbPolicy: v3clusterpb.Cluster_ROUND_ROBIN,
 			},
 			wantUpdate: ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSOff},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental",
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "round_robin",
+					},
+				},
+			},
 		},
 		{
 			name: "happiest-case",
@@ -367,6 +380,14 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				},
 			},
 			wantUpdate: ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental",
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "round_robin",
+					},
+				},
+			},
 		},
 		{
 			name: "happiest-case-with-circuitbreakers",
@@ -401,6 +422,14 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				},
 			},
 			wantUpdate: ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf, MaxRequests: func() *uint32 { i := uint32(512); return &i }()},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "xds_wrr_locality_experimental",
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "round_robin",
+					},
+				},
+			},
 		},
 		{
 			name: "happiest-case-with-ring-hash-lb-policy-with-default-config",
@@ -479,7 +508,8 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				// Thus if err := json.Unmarshal(balancer config object); err != nil {
 				//   "emitted json from the xds client should be valid configuration: %v", err
 				// }
-				LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: defaultRingHashMinSize, MaximumRingSize: defaultRingHashMaxSize},
+				// LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: defaultRingHashMinSize, MaximumRingSize: defaultRingHashMaxSize},
+				// ignore the JSON string somehow
 
 				// unmarshal and compare those with a different struct
 				// declare balancer config inline and compare it to that json.Unmarshal from emitted
@@ -491,6 +521,13 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				// marshal it into same thing you prepare?
 				// is there an overarching go struct that handles and encapsualtes all the possibilites here?
 
+			},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "ring_hash_experimental",
+				Config: &ringhash.LBConfig{
+					MinRingSize: 1024, // perhaps check if this follows gRFCs. This feels off
+					MaxRingSize: 4096,
+				},
 			},
 		},
 		{
@@ -522,19 +559,27 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			wantUpdate: ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf,
 
-				LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: 10, MaximumRingSize: 100},
+				// LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: 10, MaximumRingSize: 100},
+			},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "ring_hash_experimental",
+				Config: &ringhash.LBConfig{
+					MinRingSize: 10,
+					MaxRingSize: 100,
+				},
 			},
 			// LBPolicy above - ring hash, not set to nil
-			wantLBPolicy2: internalserviceconfig.BalancerConfig{
+			/*wantLBPolicy2: internalserviceconfig.BalancerConfig{
 				Name: "ring_hash", // is it _experimental?
 				Config: ringhash.LBConfig{
 					MinRingSize: 10,
 					MaxRingSize: 100,
 				},
-			},
+			},*/
+
 
 			// this is for the normal case where LBPolicy used to be nil - put this everywhere it used to be nil
-			wantLBPolicy: internalserviceconfig.BalancerConfig{
+			/*wantLBPolicy: internalserviceconfig.BalancerConfig{
 				Name: "xds_wrr_locality_experimental", // gets this type, unmarshals/verifies config
 				// ChildPolicy can be arbitrary type
 				Config: wrrlocality.LBConfig{
@@ -544,10 +589,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 						// No configuration - an empty json object is returned, just leave as such? this will be used as below too.
 						/*Config: roundrobin.LBConfig{
 
-						},*/
+						},
 					},
 				},
-			},
+			},*/
 
 			// for the wants: declare a internalserviceconfig.BalancerConfig,
 			// than MarshalJSON into that struct this will trigger it to marshal
@@ -582,9 +627,23 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			if err != nil {
 				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) failed: %v", test.cluster, err)
 			}
-			if diff := cmp.Diff(update, test.wantUpdate, cmpopts.EquateEmpty()); diff != "" {
+			// mention why we ignore json, ignore due to stuff like non
+			// deterministic white spaces etc. and also how the tests of this
+			// json -> LB Config are sufficient and map to whole testing file
+			// since all round robin set elsewhere, and this sufficient tests
+			// the json through the lb config below.
+			if diff := cmp.Diff(update, test.wantUpdate, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" { // maybe make this top level helper if failing a lot
 				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) got diff: %v (-got, +want)", test.cluster, diff)
 			}
+			// Same flow, read update.JSON (will always be set anyway)
+			// update.LBPolicy // json.RawMessage
+			bc := &internalserviceconfig.BalancerConfig{}
+			if err := json.Unmarshal(update.LBPolicy, bc); err != nil {
+				t.Fatalf("failed to unmarshal JSON: %v", err)
+			}
+			if diff := cmp.Diff(bc, test.wantLBConfig); diff != "" {
+				t.Fatalf("update.LBConfig got unexpected output, diff (-got +want): %v", diff)
+			} // child policy field must be set
 		})
 	}
 }
@@ -653,7 +712,7 @@ func (s) TestValidateClusterWithSecurityConfig_EnvVarOff(t *testing.T) {
 	if err != nil {
 		t.Errorf("validateClusterAndConstructClusterUpdate() failed: %v", err)
 	}
-	if diff := cmp.Diff(wantUpdate, gotUpdate); diff != "" {
+	if diff := cmp.Diff(wantUpdate, gotUpdate, cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" {
 		t.Errorf("validateClusterAndConstructClusterUpdate() returned unexpected diff (-want, got):\n%s", diff)
 	}
 }
@@ -1546,7 +1605,7 @@ func (s) TestValidateClusterWithSecurityConfig(t *testing.T) {
 			if (err != nil) != test.wantErr {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned err %v wantErr %v)", err, test.wantErr)
 			}
-			if diff := cmp.Diff(test.wantUpdate, update, cmpopts.EquateEmpty(), cmp.AllowUnexported(regexp.Regexp{})); diff != "" {
+			if diff := cmp.Diff(test.wantUpdate, update, cmpopts.EquateEmpty(), cmp.AllowUnexported(regexp.Regexp{}), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned unexpected diff (-want, +got):\n%s", diff)
 			}
 		})
@@ -1688,7 +1747,7 @@ func (s) TestUnmarshalCluster(t *testing.T) {
 			if name != test.wantName {
 				t.Errorf("unmarshalClusterResource(%s), got name: %s, want: %s", pretty.ToJSON(test.resource), name, test.wantName)
 			}
-			if diff := cmp.Diff(update, test.wantUpdate, cmpOpts); diff != "" {
+			if diff := cmp.Diff(update, test.wantUpdate, cmpOpts, cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" {
 				t.Errorf("unmarshalClusterResource(%s), got unexpected update, diff (-got +want): %v", pretty.ToJSON(test.resource), diff)
 			}
 		})
@@ -1838,7 +1897,7 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 			if (err != nil) != test.wantErr {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned err %v wantErr %v)", err, test.wantErr)
 			}
-			if diff := cmp.Diff(test.wantUpdate, update, cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(test.wantUpdate, update, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned unexpected diff (-want, +got):\n%s", diff)
 			}
 		})
@@ -1890,7 +1949,7 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 
 // ^^^ oh test all with env var set to true
 
-
+/*
 func helper() json.RawMessage {
 	// knobs for this first thing
 	bc := internalserviceconfig.BalancerConfig{
@@ -1912,8 +1971,8 @@ func helper() json.RawMessage {
 
 	// need knobs on minSize and maxSize
 	rhLBCfg := ringhash.LBConfig{
-		MinRingSize: /*knob for min ring size here*/,
-		MaxRingSize: /*knob for max ring size here*/,
+		MinRingSize: /*knob for min ring size here,
+		MaxRingSize: /*knob for max ring size here,
 	}
 
 	bc := internalserviceconfig.BalancerConfig{
@@ -1964,3 +2023,19 @@ func helper() json.RawMessage {
 	// you can a. see if it works and b. see what the map output is
 
 }
+
+// unmarshal correct irregardless into internalserviceconfig.LBConfig <-
+
+// new system:
+// env var set and new fields set
+// new field sent to xDS Config registry, emission of json and then internal service config Balancer Config so logically equivalent
+
+// so old system:
+// ring hash -> ring hash JSON (do this test first)
+// nil ring hash config -> wrr locality with round robin as child (pull internalbalancerconfig declaration of this from the xds registry test)
+
+
+// read the possibilities of error case
+// error case 1 - test case 1, test case 2
+// error case 2 - test case 1, test case 2
+ */

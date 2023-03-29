@@ -31,9 +31,7 @@ import (
 	v3tlspb "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc/balancer"
-	"google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/internal/envconfig"
-	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/internal/xds/matcher"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdslbregistry"
@@ -149,49 +147,51 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 	} else {
 		switch cluster.GetLbPolicy() {
 		case v3clusterpb.Cluster_ROUND_ROBIN:
-			bc := internalserviceconfig.BalancerConfig{
+			/*bc := internalserviceconfig.BalancerConfig{
 				Name: roundrobin.Name,
 			}
 
-			rrLBCfgJSON, err := json.Marshal(bc)
-			if err != nil { // Shouldn't happen, prepared now.
+			rrLBCfgJSON, err := json.Marshal(bc)*/
+			rrLBCfgJSON := []byte(`[{"round_robin": {}}]`)
+			/*if err != nil { // Shouldn't happen, prepared now.
 				return ClusterUpdate{}, fmt.Errorf("error marshaling rrJSON: %v", err)
-			}
-			lbCfgJSON = []byte(fmt.Sprintf(`[{%q: %s}]`, "xds_wrr_locality_experimental", rrLBCfgJSON))
+			}*/
+			// same problem here, need childPolicy layr, this sticks the value of childPolicy field as value of ring hash
+			wrrCfgJSON := []byte(fmt.Sprintf(`{"childPolicy": %s}`, rrLBCfgJSON))
+			lbCfgJSON = []byte(fmt.Sprintf(`[{%q: %s}]`, "xds_wrr_locality_experimental", wrrCfgJSON))
 		case v3clusterpb.Cluster_RING_HASH:
 			if !envconfig.XDSRingHash {
 				return ClusterUpdate{}, fmt.Errorf("unexpected lbPolicy %v in response: %+v", cluster.GetLbPolicy(), cluster)
 			}
 			rhc := cluster.GetRingHashLbConfig()
+			print("rhc == nil:", rhc == nil)
 			if rhc.GetHashFunction() != v3clusterpb.Cluster_RingHashLbConfig_XX_HASH {
 				return ClusterUpdate{}, fmt.Errorf("unsupported ring_hash hash function %v in response: %+v", rhc.GetHashFunction(), cluster)
 			}
 
 			// Also move the validation error check from here to balancer test, either min or max past upper bound***
-			var minSize, maxSize uint64 = defaultRingHashMaxSize, defaultRingHashMaxSize
+			var minSize, maxSize uint64 = defaultRingHashMinSize, defaultRingHashMaxSize
 			if min := rhc.GetMinimumRingSize(); min != nil {
+				print("min != nil block")
 				minSize = min.GetValue()
 			}
 			if max := rhc.GetMaximumRingSize(); max != nil {
+				print("max != nil block")
 				maxSize = max.GetValue()
 			}
+			print("minSize: ", minSize)
+			print("maxSize: ", maxSize)
 
 			rhLBCfg := ringhash.LBConfig{
 				MinRingSize: minSize,
 				MaxRingSize: maxSize,
 			}
-			bc := internalserviceconfig.BalancerConfig{
-				Name: "ring_hash_experimental",
-				Config: rhLBCfg,
+			rhLBCfgJSON, err := json.Marshal(rhLBCfg)
+			// Shouldn't happen
+			if err != nil {
+				return ClusterUpdate{}, fmt.Errorf("error marshalling prepared rh config json: %v", err)
 			}
-
-			// should I split this out eh a lot of work just get it to where
-			// it's reviewable
-			rhLBCfgJSON, err := json.Marshal(bc) // rest of validations moved here - just make note in pr move validations (mainly the ringhash ones) there so they can be reuse validations in converter
-			if err != nil { // Shouldn't happen
-				return ClusterUpdate{}, fmt.Errorf("error marshaling rhLBCfgJSON: %v", err)
-			}
-			lbCfgJSON = rhLBCfgJSON
+			lbCfgJSON = []byte(fmt.Sprintf(`[{%q: %s}]`, "ring_hash_experimental", rhLBCfgJSON))
 		default:
 			return ClusterUpdate{}, fmt.Errorf("unexpected lbPolicy %v in response: %+v", cluster.GetLbPolicy(), cluster)
 		}
