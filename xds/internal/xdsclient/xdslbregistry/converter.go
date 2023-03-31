@@ -21,7 +21,6 @@ package xdslbregistry
 import (
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"strings"
 
 	v1 "github.com/cncf/xds/go/udpa/type/v1"
@@ -33,6 +32,7 @@ import (
 	structpb "github.com/golang/protobuf/ptypes/struct"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
+	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 )
 
 const (
@@ -40,6 +40,10 @@ const (
 	defaultRingHashMaxSize = 8 * 1024 * 1024 // 8M
 )
 
+// ConvertToServiceConfig converts a proto Load Balancing Policy configuration
+// into a json string. Returns an error if no supported policy found, or if
+// there is more than 16 layers of recursion in the configuration, or a failure
+// to convert the policy.
 func ConvertToServiceConfig(policy *v3clusterpb.LoadBalancingPolicy, depth int) (json.RawMessage, error) {
 	// "Configurations that require more than 16 levels of recursion are
 	// considered invalid and should result in a NACK response." - A51
@@ -56,7 +60,6 @@ func ConvertToServiceConfig(policy *v3clusterpb.LoadBalancingPolicy, depth int) 
 		// uses an Any typed typed_config field to store policy configuration of any
 		// type. This typed_config field is used to determine both the name of a
 		// policy and the configuration for it, depending on its type:
-		print("typeurl at switch: ", plcy.GetTypedExtensionConfig().GetTypedConfig().GetTypeUrl())
 		switch plcy.GetTypedExtensionConfig().GetTypedConfig().GetTypeUrl() {
 		case "type.googleapis.com/envoy.extensions.load_balancing_policies.ring_hash.v3.RingHash":
 			if !envconfig.XDSRingHash {
@@ -95,12 +98,11 @@ func ConvertToServiceConfig(policy *v3clusterpb.LoadBalancingPolicy, depth int) 
 	return nil, fmt.Errorf("no supported policy found in policy list +%v", policy)
 }
 
-
 // "the registry will maintain a set of converters that are able to map
 // from the xDS LoadBalancingPolicy to the internal gRPC JSON format"
 func convertRingHash(rhCfg *ring_hashv3.RingHash) (json.RawMessage, error) {
 	if rhCfg.GetHashFunction() != ring_hashv3.RingHash_XX_HASH {
-		return nil, fmt.Errorf("unsupported ring_hash hash function %v", rhCfg.GetHashFunction()) // how do I add the cluster message to this? Needs to log at call site - log the proto at callsite
+		return nil, fmt.Errorf("unsupported ring_hash hash function %v", rhCfg.GetHashFunction())
 	}
 
 	var minSize, maxSize uint64 = defaultRingHashMinSize, defaultRingHashMaxSize
@@ -121,8 +123,9 @@ func convertRingHash(rhCfg *ring_hashv3.RingHash) (json.RawMessage, error) {
 	}
 	return makeJSONValueOfName(ringhash.Name, rhLBCfgJSON), nil
 }
+
 func convertWrrLocality(wrrlCfg *wrr_localityv3.WrrLocality, depth int) (json.RawMessage, error) {
-	epJSON, err := ConvertToServiceConfig(wrrlCfg.GetEndpointPickingPolicy(), depth + 1)
+	epJSON, err := ConvertToServiceConfig(wrrlCfg.GetEndpointPickingPolicy(), depth+1)
 	if err != nil {
 		return nil, fmt.Errorf("error converting endpoint picking policy: %v for %+v", err, wrrlCfg)
 	}
@@ -149,7 +152,7 @@ func convertCustomPolicy(typeUrl string, s *structpb.Struct) (json.RawMessage, e
 	// type_url field in the TypedStruct. We get this by using the part after
 	// the last / character. Can assume a valid type_url from the control plane.
 	urlsSplt := strings.Split(typeUrl, "/")
-	plcyName := urlsSplt[len(urlsSplt) - 1]
+	plcyName := urlsSplt[len(urlsSplt)-1]
 
 	rawJSON, err := json.Marshal(s)
 	if err != nil {

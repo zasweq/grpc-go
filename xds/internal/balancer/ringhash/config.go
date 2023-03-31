@@ -35,8 +35,8 @@ type LBConfig struct {
 }
 
 const (
-	defaultMinSize = 1024
-	defaultMaxSize = 4096
+	defaultMinSize         = 1024
+	defaultMaxSize         = 4096
 	ringHashSizeUpperBound = 8 * 1024 * 1024 // 8M
 )
 
@@ -52,7 +52,6 @@ func parseConfig(c json.RawMessage) (*LBConfig, error) {
 		return nil, fmt.Errorf("unexpected ring_hash maximum ring size %v", cfg.MaxRingSize)
 	}
 	if cfg.MinRingSize == 0 {
-		print("setting cfg.MinRingSize to default min size")
 		cfg.MinRingSize = defaultMinSize
 	}
 	if cfg.MaxRingSize == 0 {

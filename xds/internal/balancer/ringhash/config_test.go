@@ -83,15 +83,15 @@ func (s) TestParseConfig(t *testing.T) {
 			want:         &LBConfig{MinRingSize: 8000, MaxRingSize: 8000},
 		},
 		{
-			name: "min greater than upper bound",
-			js:   `{"minRingSize": 8388610, "maxRingSize": 10}`,
-			want: nil,
+			name:    "min greater than upper bound",
+			js:      `{"minRingSize": 8388610, "maxRingSize": 10}`,
+			want:    nil,
 			wantErr: true,
 		},
 		{
-			name: "max greater than upper bound",
-			js: `{"minRingSize": 10, "maxRingSize": 8388610}`,
-			want: nil,
+			name:    "max greater than upper bound",
+			js:      `{"minRingSize": 10, "maxRingSize": 8388610}`,
+			want:    nil,
 			wantErr: true,
 		},
 	}

@@ -50,20 +50,14 @@ func (s) TestParseConfig(t *testing.T) {
 
 	parser := bb{}
 	tests := []struct {
-		name string
-		input string
+		name    string
+		input   string
 		wantCfg serviceconfig.LoadBalancingConfig
 		wantErr string
 	}{
 		{
-			name: "happy-case-round robin-child",
-			input: `{
-						"childPolicy": [
-						{
-							"round_robin": {}
-						}
-					]
-					}`,
+			name:  "happy-case-round robin-child",
+			input: `{"childPolicy": [{"round_robin": {}}]}`,
 			wantCfg: &LBConfig{
 				ChildPolicy: &internalserviceconfig.BalancerConfig{
 					Name: roundrobin.Name,
@@ -71,71 +65,45 @@ func (s) TestParseConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid-json",
-			input: "{{invalidjson{{",
+			name:    "invalid-json",
+			input:   "{{invalidjson{{",
 			wantErr: "invalid character",
 		},
 
 		{
-			name: "child-policy-field-isn't-set",
-			input: `{}`,
+			name:    "child-policy-field-isn't-set",
+			input:   `{}`,
 			wantErr: "child policy field must be set",
 		},
 		{
-			name: "child-policy-type-is-empty",
-			input: `{"childPolicy": []}`,
+			name:    "child-policy-type-is-empty",
+			input:   `{"childPolicy": []}`,
 			wantErr: "invalid loadBalancingConfig: no supported policies found in []",
 		},
 		{
-			name: "child-policy-empty-config",
-			input: `{
-						"childPolicy": [
-						{
-							"": {}
-						}
-					]
-					}`,
+			name:    "child-policy-empty-config",
+			input:   `{"childPolicy": [{"": {}}]}`,
 			wantErr: "invalid loadBalancingConfig: no supported policies found in []",
 		},
 		{
-			name: "child-policy-type-isn't-registered",
-			input: `{
-						"childPolicy": [
-						{
-							"doesNotExistBalancer": {
-								"cluster": "test_cluster"
-							}
-						}
-					]
-					}`,
+			name:    "child-policy-type-isn't-registered",
+			input:   `{"childPolicy": [{"doesNotExistBalancer": {"cluster": "test_cluster"}}]}`,
 			wantErr: "invalid loadBalancingConfig: no supported policies found in [doesNotExistBalancer]",
 		},
 		{
-			name: "child-policy-config-is-invalid",
-			input: `{
-						"childPolicy": [
-						{
-							"errParseConfigBalancer": {
-								"cluster": "test_cluster"
-							}
-						}
-					]
-					}`,
+			name:    "child-policy-config-is-invalid",
+			input:   `{"childPolicy": [{"errParseConfigBalancer": {"cluster": "test_cluster"}}]}`,
 			wantErr: "error parsing loadBalancingConfig for policy \"errParseConfigBalancer\"",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// add comment as to why we we do substring
-
-			// substring match would make this very tightly coupled to the
-			// balancer configuration - but you do want same errors still so I
-			// think it's fine. Important to know even though a brittle test
-			// also tests successfully unmarshals into internalserviceconfig.BalancerConfig
-
-			// ^^^ Reword into better comment
-
-			gotCfg, gotErr := parser.ParseConfig(json.RawMessage(test.input)) // we only have exported
+			gotCfg, gotErr := parser.ParseConfig(json.RawMessage(test.input))
+			// Substring match makes this very tightly coupled to the
+			// internalserviceconfig.BalancerConfig error strings. However, it
+			// is important to distinguish the different types of error messages
+			// possible as the parser has a few defined buckets of ways it can
+			// error out.
 			if gotErr != nil && !strings.Contains(gotErr.Error(), test.wantErr) {
 				t.Fatalf("ParseConfig(%v) = %v, wantErr %v", test.input, gotErr, test.wantErr)
 			}
