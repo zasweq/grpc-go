@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/serviceconfig"
 )
 
+// Name is the name of wrr_locality balancer.
 const Name = "xds_wrr_locality_experimental"
 
 func init() {

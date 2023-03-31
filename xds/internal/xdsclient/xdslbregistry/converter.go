@@ -147,16 +147,16 @@ func convertCustomPolicyV1(typedStruct *v1.TypedStruct) (json.RawMessage, error)
 	return convertCustomPolicy(typedStruct.GetTypeUrl(), typedStruct.GetValue())
 }
 
-func convertCustomPolicy(typeUrl string, s *structpb.Struct) (json.RawMessage, error) {
+func convertCustomPolicy(typeURL string, s *structpb.Struct) (json.RawMessage, error) {
 	// The gRPC policy name will be the "type name" part of the value of the
 	// type_url field in the TypedStruct. We get this by using the part after
 	// the last / character. Can assume a valid type_url from the control plane.
-	urlsSplt := strings.Split(typeUrl, "/")
+	urlsSplt := strings.Split(typeURL, "/")
 	plcyName := urlsSplt[len(urlsSplt)-1]
 
 	rawJSON, err := json.Marshal(s)
 	if err != nil {
-		return nil, fmt.Errorf("error converting custom lb policy %v: %v for %+v", err, typeUrl, s)
+		return nil, fmt.Errorf("error converting custom lb policy %v: %v for %+v", err, typeURL, s)
 	}
 	// The Struct contained in the TypedStruct will be returned as-is as the
 	// configuration JSON object.
