@@ -54,23 +54,13 @@ func Test(t *testing.T) {
 	grpctest.RunSubTests(t, s{})
 }
 
-// I feel like I need to scale up these tests
-
-// run this test within this package first, then continue
-
-// Error details - with details proto message attached to message
-// details from server
-
-// ConvertToServiceConfig(policy *v3clusterpb.LoadBalancingPolicy, depth int) (json.RawMessage, error)
-
-// same concept of unmarshaling into a balancer config
+// I feel like I need to scale up these tests (add more edge cases)
 
 type customLBConfig struct {
 	serviceconfig.LoadBalancingConfig
 } // just marshals into empty json - if you put a field here could use it for equality check in unmarshal JSON...
 
 func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
-
 	const customLBPolicyName = "myorg.MyCustomLeastRequestPolicy"
 	stub.Register(customLBPolicyName, stub.BalancerFuncs{
 		ParseConfig: func(json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
@@ -81,7 +71,7 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 	tests := []struct {
 		name string
 		policy *v3clusterpb.LoadBalancingPolicy
-		wantConfig *internalserviceconfig.BalancerConfig // json marshaled into this - see if flow works
+		wantConfig *internalserviceconfig.BalancerConfig // json marshaled into this - see if flow works give an explanation for why I tested as such
 	}{
 		// ring hash same thing as above
 		{
@@ -129,8 +119,6 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 				Name: "round_robin",
 			}, // json is {round robin: {}} - what does that unmarshal into, I think
 		},
-		// custom_lb:
-		// custom lb configured through xds.type.v3.TypedStruct
 		{
 			name: "custom_lb_type_v3_struct",
 			policy: &v3clusterpb.LoadBalancingPolicy{
@@ -160,12 +148,10 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 
 							TypedConfig: testutils.MarshalAny(&v3.TypedStruct{
 								TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy",
-								Value: &structpb.Struct{}, // probably just marshals into empty json, does go struct -> json
+								Value: &structpb.Struct{},
 							}),
-							// {"myorg.MyCustomLeastRequestPolicy": {}}
 						},
 					},
-					// should I test that the next node in list doesn't get hit, I don't think I should, not found case is tested, but maybe I should test just to be sure
 				},
 			},
 			wantConfig: &internalserviceconfig.BalancerConfig{
@@ -173,11 +159,6 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 				Config: customLBConfig{},
 			},
 		},
-		// for the name , use the type name part of the value of the type_url field, after the last / character - so rewrite the names
-		// marshals struct value into json
-		// for ^^^ and vvv, prepares a json name: value
-
-		// custom lb configured through udpa.type.v1.TypedStruct
 		{
 			name: "custom_lb_type_v1_struct",
 			policy: &v3clusterpb.LoadBalancingPolicy{
@@ -194,15 +175,10 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 				},
 			},
 			wantConfig: &internalserviceconfig.BalancerConfig{
-				Name: "myorg.MyCustomLeastRequestPolicy", // I think if we use internal balancer config type this needs to be registered otherwise validation will fail
-				// leave empty (from {}? empty struct) and see how it works...if not fix later
-				// config: what you return from parse config here
+				Name: "myorg.MyCustomLeastRequestPolicy",
 				Config: customLBConfig{},
 			},
-		}, // this gets prepares it? validated in client (including presence?) yes presence validated in client
-		// this is howwww it should be used best practice as per Mark's chat vvv
-		// wrr_locality with child as the custom_lb ^^^ (need to declare a mock balancer builder in test to pull it off what the any corresponds to)
-		// wrr_locality - child rr - perhaps point it to round robin and also any struct/json
+		},
 		{
 			name: "wrr_locality_child_round_robin",
 			policy: &v3clusterpb.LoadBalancingPolicy{
@@ -216,7 +192,7 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 				},
 			},
 			wantConfig: &internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
+				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
 						Name: "round_robin",
@@ -231,7 +207,7 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 				Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
 					{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
-							Name: "what is this used for?",
+							Name: "what is this used for?", // delete this and see if it still works
 							TypedConfig: wrrLocalityAny(&v3.TypedStruct{
 								TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy",
 								Value: &structpb.Struct{}, // probably just marshals into empty json, does go struct -> json
@@ -241,11 +217,10 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 				},
 			},
 			wantConfig: &internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
+				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
-						Name: "myorg.MyCustomLeastRequestPolicy", // I think this needs to be registered in balancer registry to be pulled off stack
-						// empty config like above empty struct
+						Name: "myorg.MyCustomLeastRequestPolicy",
 						Config: customLBConfig{},
 					},
 				},
@@ -340,13 +315,17 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 	}
 }
 
+// TestConvertToServiceConfigFailure tests failure cases of the xDS LB registry
+// of converting protos to internal JSON. As per the gRFC, the failure cases
+// are:
+// 1. The function finds a supported policy but fails to convert the config to
+// gRPC form.
+// 2. The function does not find any supported policy in the list.
 func (s) TestConvertToServiceConfigFailure(t *testing.T) {
 	tests := []struct {
 		name string
 		policy *v3clusterpb.LoadBalancingPolicy
-		// Tightly couple this with
-		//
-		wantErr string // json marshaled into this - see if flow works
+		wantErr string // write a comment about how substring is ok, we don't mind becasue we control error cases and it helps make errors distinct
 	}{
 		// what other error cases can trigger here?
 
@@ -377,14 +356,13 @@ func (s) TestConvertToServiceConfigFailure(t *testing.T) {
 
 		// 2. The function does not find any supported policy in the list
 		{
-			name: "no-supported-policy-in-list",
+			name: "no-supported-policy",
 			policy: &v3clusterpb.LoadBalancingPolicy{
 				Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
 					{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name: "unsupported proto type",
-							// Branches on the type url string, so can break the switch by arbitarty proto type - maybe something like least request?
-							TypedConfig: testutils.MarshalAny(&least_requestv3.LeastRequest{}), // might be because of the any string
+							TypedConfig: testutils.MarshalAny(&least_requestv3.LeastRequest{}),
 						},
 					},
 					/*{
@@ -405,9 +383,6 @@ func (s) TestConvertToServiceConfigFailure(t *testing.T) {
 					{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name: "first level",
-							// wrrLocality(&v3roundrobinpb.RoundRobin{})
-							// the only any is the typed config, the next parameters in the chain get converted to any in helper
-							// and get marshaled as a child
 							TypedConfig: wrrLocalityAny(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(wrrLocality(&v3roundrobinpb.RoundRobin{}))))))))))))))))))))))),
 						},
 					},
@@ -438,7 +413,7 @@ func wrrLocality(m proto.Message) *wrr_localityv3.WrrLocality {
 				{
 					TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 						Name: "what is this used for?",
-						TypedConfig: testutils.MarshalAny(m), // does it not keep the type_url?
+						TypedConfig: testutils.MarshalAny(m),
 					},
 				},
 			},

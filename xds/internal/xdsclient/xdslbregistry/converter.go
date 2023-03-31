@@ -16,11 +16,12 @@
  *
  */
 
-package xdslbregistry // can I just put this in the same package as xdsclient?
+package xdslbregistry
 
 import (
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"strings"
 
 	v1 "github.com/cncf/xds/go/udpa/type/v1"
@@ -43,7 +44,7 @@ func ConvertToServiceConfig(policy *v3clusterpb.LoadBalancingPolicy, depth int) 
 	// "Configurations that require more than 16 levels of recursion are
 	// considered invalid and should result in a NACK response." - A51
 	if depth > 15 {
-		return nil, fmt.Errorf("lb policy %v exceeds max depth", policy) // return something here?
+		return nil, fmt.Errorf("lb policy %v exceeds max depth supported: 16 layers", policy)
 	}
 
 	// "This function iterate over the list of policy messages in
@@ -65,9 +66,9 @@ func ConvertToServiceConfig(policy *v3clusterpb.LoadBalancingPolicy, depth int) 
 			if err := proto.Unmarshal(plcy.GetTypedExtensionConfig().GetTypedConfig().GetValue(), rhProto); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal resource: %v", err)
 			}
-			return convertRingHash(rhProto) // the only thing about this return is you can't wrap error with correct log (i.e. log the proto list)
+			return convertRingHash(rhProto)
 		case "type.googleapis.com/envoy.extensions.load_balancing_policies.round_robin.v3.RoundRobin":
-			return convertRoundRobin() // rename to generate round_robin?
+			return makeJSONValueOfName("round_robin", json.RawMessage("{}")), nil
 		case "type.googleapis.com/envoy.extensions.load_balancing_policies.wrr_locality.v3.WrrLocality":
 			wrrlProto := &wrr_localityv3.WrrLocality{}
 			if err := proto.Unmarshal(plcy.GetTypedExtensionConfig().GetTypedConfig().GetValue(), wrrlProto); err != nil {
@@ -98,13 +99,9 @@ func ConvertToServiceConfig(policy *v3clusterpb.LoadBalancingPolicy, depth int) 
 // "the registry will maintain a set of converters that are able to map
 // from the xDS LoadBalancingPolicy to the internal gRPC JSON format"
 func convertRingHash(rhCfg *ring_hashv3.RingHash) (json.RawMessage, error) {
-	// the only thing validated here is the XX_HASH conversion algorithm, move
-	// the other validations to the lb policy ParseConfig(), keep it consistent
-	// with what Terry had to say.
 	if rhCfg.GetHashFunction() != ring_hashv3.RingHash_XX_HASH {
-		// return nil, fmt.Errorf("unsupported ring_hash hash function %v in response: %+v", rhCfg.GetHashFunction()/*, cluster*/) // readd this cluster log to call site?
-		return nil, fmt.Errorf("unsupported ring_hash hash function %v", rhCfg.GetHashFunction()) // how do I add the cluster message to this? Needs to log at call site
-	} // validate here or in client?
+		return nil, fmt.Errorf("unsupported ring_hash hash function %v", rhCfg.GetHashFunction()) // how do I add the cluster message to this? Needs to log at call site - log the proto at callsite
+	}
 
 	var minSize, maxSize uint64 = defaultRingHashMinSize, defaultRingHashMaxSize
 	if min := rhCfg.GetMinimumRingSize(); min != nil {
@@ -123,76 +120,35 @@ func convertRingHash(rhCfg *ring_hashv3.RingHash) (json.RawMessage, error) {
 		return nil, fmt.Errorf("error unmarshaling json in ring hash converter: %v", err)
 	}
 	return makeJSONValueOfName(ringhash.Name, rhLBCfgJSON), nil
-	// "The gRPC policy name will be ring_hash_experimental."
-	/*bc := internalserviceconfig.BalancerConfig{ // do I need to use this balancerconfig thing?
-		Name: ringhash.Name, // better to use the name here?
-		Config: rhLBCfg,
-	}
-	lbCfgJSON, err := json.Marshal(bc)
-	if err != nil { // shouldn't happen
-		return nil, fmt.Errorf("error unmarshaling json in ring hash converter: %v", err)
-	}
-	return lbCfgJSON, nil*/
 }
-
-func convertRoundRobin() (json.RawMessage, error) {
-	// is this the right config type to return?
-	/*bc := internalserviceconfig.BalancerConfig{
-		Name: roundrobin.Name,
-		// nil pointer encodes a null json object, but ours puts an empty string there
-		// Config: /*something that maps to an empty json object, // interface isLoadBalancingConfig(), config preparation in configbuilder leaves this field empty, I thinkkkk that should be ok?
-	}
-	lbCfgJSON, err := json.Marshal(bc) // clean because puts empty object already - inconsistencies though but I don't mind
-	if err != nil {
-		return nil, err
-	}
-	return lbCfgJSON, nil*/
-	return makeJSONValueOfName("round_robin", json.RawMessage("{}")), nil
-}
-
 func convertWrrLocality(wrrlCfg *wrr_localityv3.WrrLocality, depth int) (json.RawMessage, error) {
 	epJSON, err := ConvertToServiceConfig(wrrlCfg.GetEndpointPickingPolicy(), depth + 1)
 	if err != nil {
 		return nil, fmt.Errorf("error converting endpoint picking policy: %v for %+v", err, wrrlCfg)
 	}
-	// [{xds_wrr_locality_experimental: endpoint picking policy}]
-
-	// this is missing
-	// what I have
-	// [{xds_wrr_locality_experimental: [{"myorg.MyCustomLeastRequestPolicy": {}}]
-	// needs "{childpolicy:" [{"myorg.MyCustomLeastRequestPolicy": {}}]"}"
-
-	// epJSON = createWRRConfig (so parameter you pass into makeJSONValueOfName inline config changes)
 	wrrCfgJSON := createWRRConfig(epJSON)
-	return makeJSONValueOfName("xds_wrr_locality_experimental" /*<- maybe switch this to something declared in package*/, wrrCfgJSON), nil
+	return makeJSONValueOfName(wrrlocality.Name, wrrCfgJSON), nil
 }
 
-// add todos to use subchannel rather than channel
-// create an isue, create a list of what we need to convert over when we have a
-// facility to log at subchannel level
 func createWRRConfig(epCfgJSON json.RawMessage) json.RawMessage {
-	/*the config of xds_wrr_locality_experimental*/
-
-	// [{xds_wrr_locality_experimental: [{"myorg.MyCustomLeastRequestPolicy": {}}]
-	// needs "{childpolicy:" [{"myorg.MyCustomLeastRequestPolicy": {}}]"}"
 	return []byte(fmt.Sprintf(`{"childPolicy": %s}`, epCfgJSON))
 }
 
-// A52 defines a LeastRequest converter but grpc-go does not support least_request
+// A52 defines a LeastRequest converter but grpc-go does not support least_request.
 
 func convertCustomPolicyV3(typedStruct *v3.TypedStruct) (json.RawMessage, error) {
 	return convertCustomPolicy(typedStruct.GetTypeUrl(), typedStruct.GetValue())
 }
 
-func convertCustomPolicyV1(typedStruct *v1.TypedStruct /*is this the right type? i.e. import path*/) (json.RawMessage, error) {
+func convertCustomPolicyV1(typedStruct *v1.TypedStruct) (json.RawMessage, error) {
 	return convertCustomPolicy(typedStruct.GetTypeUrl(), typedStruct.GetValue())
 }
 
 func convertCustomPolicy(typeUrl string, s *structpb.Struct) (json.RawMessage, error) {
 	// The gRPC policy name will be the "type name" part of the value of the
 	// type_url field in the TypedStruct. We get this by using the part after
-	// the last / character.
-	urlsSplt := strings.Split(typeUrl, "/") // is there a validation here? Does this need to have this / structure? If this returns the string as is do you error?
+	// the last / character. Can assume a valid type_url from the control plane.
+	urlsSplt := strings.Split(typeUrl, "/")
 	plcyName := urlsSplt[len(urlsSplt) - 1]
 
 	rawJSON, err := json.Marshal(s)
@@ -205,13 +161,5 @@ func convertCustomPolicy(typeUrl string, s *structpb.Struct) (json.RawMessage, e
 }
 
 func makeJSONValueOfName(name string, value json.RawMessage) []byte {
-	// the scope of this thing is just to prepare the emitted json, not validate or use it.
-	// this errors when:
-
-	// 1. The function finds a supported policy but fails to convert the config to gRPC form
-	// 2. The function does not find any supported policy in the list
-
-	// the client errors when:
-	// "gRPC LB policy registry cannot parse the converted configuration."
 	return []byte(fmt.Sprintf(`[{%q: %s}]`, name, value))
 }

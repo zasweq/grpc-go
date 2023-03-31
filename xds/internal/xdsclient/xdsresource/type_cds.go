@@ -156,10 +156,13 @@ type ClusterUpdate struct {
 	//
 	// When we add more support policies, this can be made an interface, and
 	// will be set to different types based on the policy type.
-
-	// LBPolicy represents the locality and endpoint picking policy in JSON,
-	// which will be the child policy of xds_cluster_impl.
-	LBPolicy json.RawMessage
+	LBPolicy *ClusterLBPolicyRingHash
+	// LBPolicyJSON represents the locality and endpoint picking policy in JSON,
+	// which will be the child policy of xds_cluster_impl. Once full support for
+	// this field across the system, the LBPolicy field will switch to this
+	// field. Right now we keep both to keep the system working even though
+	// downstream has not added support for this JSON field.
+	LBPolicyJSON json.RawMessage
 
 	// OutlierDetection is the outlier detection configuration for this cluster.
 	// If nil, it means this cluster does not use the outlier detection feature.

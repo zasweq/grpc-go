@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"net"
 	"strconv"
 	"time"
@@ -30,10 +31,10 @@ import (
 	v3aggregateclusterpb "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/aggregate/v3"
 	v3tlspb "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"github.com/golang/protobuf/proto"
-	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/xds/matcher"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
+	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdslbregistry"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -75,6 +76,40 @@ const (
 type intermediateBalancerConfig []map[string]json.RawMessage
 
 func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (ClusterUpdate, error) { // test at this level and the lb policy level for unit tests
+	var lbPolicy *ClusterLBPolicyRingHash
+	switch cluster.GetLbPolicy() {
+	case v3clusterpb.Cluster_ROUND_ROBIN:
+		lbPolicy = nil // The default is round_robin, and there's no config to set.
+	case v3clusterpb.Cluster_RING_HASH:
+		if !envconfig.XDSRingHash {
+			return ClusterUpdate{}, fmt.Errorf("unexpected lbPolicy %v in response: %+v", cluster.GetLbPolicy(), cluster)
+		}
+		rhc := cluster.GetRingHashLbConfig()
+		if rhc.GetHashFunction() != v3clusterpb.Cluster_RingHashLbConfig_XX_HASH {
+			return ClusterUpdate{}, fmt.Errorf("unsupported ring_hash hash function %v in response: %+v", rhc.GetHashFunction(), cluster)
+		}
+		// Minimum defaults to 1024 entries, and limited to 8M entries Maximum
+		// defaults to 8M entries, and limited to 8M entries
+		var minSize, maxSize uint64 = defaultRingHashMinSize, defaultRingHashMaxSize
+		if min := rhc.GetMinimumRingSize(); min != nil {
+			if min.GetValue() > ringHashSizeUpperBound {
+				return ClusterUpdate{}, fmt.Errorf("unexpected ring_hash mininum ring size %v in response: %+v", min.GetValue(), cluster)
+			}
+			minSize = min.GetValue()
+		}
+		if max := rhc.GetMaximumRingSize(); max != nil {
+			if max.GetValue() > ringHashSizeUpperBound {
+				return ClusterUpdate{}, fmt.Errorf("unexpected ring_hash maxinum ring size %v in response: %+v", max.GetValue(), cluster)
+			}
+			maxSize = max.GetValue()
+		}
+		if minSize > maxSize {
+			return ClusterUpdate{}, fmt.Errorf("ring_hash config min size %v is greater than max %v", minSize, maxSize)
+		}
+		lbPolicy = &ClusterLBPolicyRingHash{MinimumRingSize: minSize, MaximumRingSize: maxSize}
+	default:
+		return ClusterUpdate{}, fmt.Errorf("unexpected lbPolicy %v in response: %+v", cluster.GetLbPolicy(), cluster)
+	}
 	// Process security configuration received from the control plane iff the
 	// corresponding environment variable is set.
 	var sc *SecurityConfig
@@ -95,15 +130,9 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 		}
 	}
 
-
-	// if env var is set or not, change emission to JSON, if not set just change
-	// emission to logically equivalent functionality with wrr_locality with
-	// endpoint picking as a child as it was before...so I think branch is correct here although I think I can make it cleaner
-
 	var lbCfgJSON json.RawMessage
 	var err error
-	// only one of four permutations, one of them needs to be set both needs to happen env var set and new field set otherwise just use old
-	if cluster.GetLoadBalancingPolicy() != nil && envconfig.XDSCustomLBPolicy {
+	if cluster.GetLoadBalancingPolicy() != nil && envconfig.XDSCustomLBPolicy { // only triggered through balancer.Get
 		lbCfgJSON, err = xdslbregistry.ConvertToServiceConfig(cluster.GetLoadBalancingPolicy(), 0)
 		if err != nil {
 			return ClusterUpdate{}, fmt.Errorf("error converting %v", cluster.GetLoadBalancingPolicy())
@@ -111,8 +140,21 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 		// "It will be the responsibility of the XdsClient to validate the
 		// converted configuration. It will do this by having the gRPC LB policy
 		// registry parse the configuration." - A52
-		var ir intermediateBalancerConfig // Can't use internalserviceconfig.BalnacerCOnfig since that doesn't error where the xdsClient wants to - this variable is used solely for validation purposes using the gRPC LB Policy registry
-		err = json.Unmarshal(lbCfgJSON, &ir)
+		// needs to be valid configuration emitted anyway
+		// var ir intermediateBalancerConfig // Can't use internalserviceconfig.BalnacerCOnfig since that doesn't error where the xdsClient wants to - this variable is used solely for validation purposes using the gRPC LB Policy registry
+
+
+		// emited json correctly marshals to internalserviceconfig.BalancerConfig?
+		bc := &internalserviceconfig.BalancerConfig{}
+		if err := json.Unmarshal(lbCfgJSON, bc); err != nil {
+			// This includes validation errors etc. better error message?
+			return ClusterUpdate{},	fmt.Errorf("failed to unmarshal JSON: %v", err)
+		}
+
+
+		// *** This code block feels weird - it's also wrong. this is the same thing as just unmarshaling into internalserviceconfig.BalancerConfig
+
+		/*err = json.Unmarshal(lbCfgJSON, &ir)
 		if err != nil {
 			// Shouldn't happen, since the xDS LB policy registry prepared config.
 			return ClusterUpdate{}, fmt.Errorf("error unmarshaling JSON returned from xDS LB Policy registry: %v", err)
@@ -143,7 +185,9 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 			if err != nil {
 				return ClusterUpdate{}, fmt.Errorf("error parsing loadBalancingConfig %v for policy %q: %v", jsonCfg, name, err)
 			}
-		}
+		}*/
+		// *** end code block feeling weird
+
 	} else {
 		switch cluster.GetLbPolicy() {
 		case v3clusterpb.Cluster_ROUND_ROBIN:
@@ -158,7 +202,7 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 			}*/
 			// same problem here, need childPolicy layr, this sticks the value of childPolicy field as value of ring hash
 			wrrCfgJSON := []byte(fmt.Sprintf(`{"childPolicy": %s}`, rrLBCfgJSON))
-			lbCfgJSON = []byte(fmt.Sprintf(`[{%q: %s}]`, "xds_wrr_locality_experimental", wrrCfgJSON))
+			lbCfgJSON = []byte(fmt.Sprintf(`[{%q: %s}]`, wrrlocality.Name, wrrCfgJSON))
 		case v3clusterpb.Cluster_RING_HASH:
 			if !envconfig.XDSRingHash {
 				return ClusterUpdate{}, fmt.Errorf("unexpected lbPolicy %v in response: %+v", cluster.GetLbPolicy(), cluster)
@@ -169,7 +213,6 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 				return ClusterUpdate{}, fmt.Errorf("unsupported ring_hash hash function %v in response: %+v", rhc.GetHashFunction(), cluster)
 			}
 
-			// Also move the validation error check from here to balancer test, either min or max past upper bound***
 			var minSize, maxSize uint64 = defaultRingHashMinSize, defaultRingHashMaxSize
 			if min := rhc.GetMinimumRingSize(); min != nil {
 				print("min != nil block")
@@ -203,7 +246,8 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 		ClusterName:      cluster.GetName(),
 		SecurityCfg:      sc,
 		MaxRequests:      circuitBreakersFromCluster(cluster),
-		LBPolicy:         lbCfgJSON,
+		LBPolicy: lbPolicy,
+		LBPolicyJSON:         lbCfgJSON,
 		OutlierDetection: od,
 	}
 

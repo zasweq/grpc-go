@@ -113,29 +113,3 @@ func (s) TestParseConfig(t *testing.T) {
 		})
 	}
 }
-
-/*
-First commit:
-internal/envconfig/xds.go (env var is good)
-xds/internal/balancer/ringhash/config.go (move validations and extra tests are good here)
-xds/internal/balancer/ringhash/config_test.go
-// (done including cleanup I think)
-
-xds/internal/balancer/wrrlocality/balancer.go (this balancer config type is needed to successfully validate in the client)
-xds/internal/balancer/wrrlocality/config.go (what's the scope of parse config)
-// (done outside cleanup)
-
-// vvv depends on ^^^, uses ParseConfig to prepare config
-
-xds/internal/xdsclient/xdslbregistry/converter.go
-xds/internal/xdsclient/xdslbregistry/converter_test.go
-(done outside cleanup)
-
-// vvv depends on ^^^, uses converter registry to emit json, test that this json is valid
-
-xds/internal/xdsclient/xdsresource/type_cds.go
-xds/internal/xdsclient/xdsresource/unmarshal_cds.go
-xds/internal/xdsclient/xdsresource/unmarshal_cds_test.go
-(done outside cleanup)
-
-*/

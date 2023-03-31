@@ -24,21 +24,9 @@ import (
 	"google.golang.org/grpc/serviceconfig"
 )
 
-// takes child endpoint config and wraps it with locality weights is all this balancer is
-
 // LBConfig is the config for the wrr locality balancer.
 type LBConfig struct {
 	serviceconfig.LoadBalancingConfig
-
-	// Why is this repeated in the design? I think i remember
-	// ServiceConfig contains a list of loadBalancingConfigs
-	// and UnmarshalJSON iterates through that list so logically equivalent
-	// to a "list" of lb configs as repeated in design.
-
-	// do we want the child to be an internalserviceconfig.BalancerConfig or just the serviceconfig.LoadBalancingConfig?
-
-	// Why did I declare this as a pointer? should this jsut be a value?
-
 	// ChildPolicy is the config for the child policy.
 	ChildPolicy *internalserviceconfig.BalancerConfig `json:"childPolicy,omitempty"`
 }

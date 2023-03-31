@@ -41,7 +41,6 @@ func Test(t *testing.T) {
 }
 
 func (s) TestParseConfig(t *testing.T) {
-
 	const errParseConfigName = "errParseConfigBalancer"
 	stub.Register(errParseConfigName, stub.BalancerFuncs{
 		ParseConfig: func(json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
@@ -54,7 +53,7 @@ func (s) TestParseConfig(t *testing.T) {
 		name string
 		input string
 		wantCfg serviceconfig.LoadBalancingConfig
-		wantErr string // do we want this? substring? couples the test with the error string implementation plumbed back
+		wantErr string
 	}{
 		{
 			name: "happy-case-round robin-child",
@@ -71,10 +70,6 @@ func (s) TestParseConfig(t *testing.T) {
 				},
 			},
 		},
-
-		// this is just regurgitating validations already there right?
-
-		// error cases:
 		{
 			name: "invalid-json",
 			input: "{{invalidjson{{",
@@ -100,7 +95,7 @@ func (s) TestParseConfig(t *testing.T) {
 						}
 					]
 					}`,
-			wantErr: "invalid loadBalancingConfig: no supported policies found in []",/*same error as below, except maybe with an empty string in balancer.Get() error message*/
+			wantErr: "invalid loadBalancingConfig: no supported policies found in []",
 		},
 		{
 			name: "child-policy-type-isn't-registered",
@@ -131,9 +126,12 @@ func (s) TestParseConfig(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			// add comment as to why we we do substring
+
 			// substring match would make this very tightly coupled to the
 			// balancer configuration - but you do want same errors still so I
 			// think it's fine. Important to know even though a brittle test
+			// also tests successfully unmarshals into internalserviceconfig.BalancerConfig
 
 			// ^^^ Reword into better comment
 

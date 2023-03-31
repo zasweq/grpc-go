@@ -19,6 +19,15 @@ package xdsresource
 
 import (
 	"encoding/json"
+	v3 "github.com/cncf/xds/go/xds/type/v3"
+	least_requestv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/least_request/v3"
+	v3ringhashpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/ring_hash/v3"
+	v3roundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/round_robin/v3"
+	wrr_localityv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
+	"github.com/golang/protobuf/proto"
+	structpb "github.com/golang/protobuf/ptypes/struct"
+	"google.golang.org/grpc/internal/balancer/stub"
+	"google.golang.org/grpc/serviceconfig"
 	"regexp"
 	"strings"
 	"testing"
@@ -57,6 +66,11 @@ const (
 var emptyUpdate = ClusterUpdate{ClusterName: clusterName, LRSServerConfig: ClusterLRSOff}
 
 func (s) TestValidateCluster_Failure(t *testing.T) {
+	oldCustomLBSupport := envconfig.XDSCustomLBPolicy // gates the client layer kasi
+	envconfig.XDSCustomLBPolicy = true
+	defer func() {
+		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
+	}()
 	tests := []struct {
 		name       string
 		cluster    *v3clusterpb.Cluster
@@ -147,6 +161,10 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 			wantUpdate: emptyUpdate,
 			wantErr:    true,
 		},
+
+
+
+		// should still error, just (make note in pr?) due to ParseConfig
 		{
 			name: "ring-hash-hash-function-not-xx-hash",
 			cluster: &v3clusterpb.Cluster{
@@ -160,7 +178,11 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 			wantUpdate: emptyUpdate,
 			wantErr:    true,
 		},
-		// ^^^ xds client assertions should hold true
+		// ^^^ xds client assertions should hold true (should I readd back the
+		// validation failure, except have it at the nack level still errors but
+		// at the validation step in the client calling into lb policy registry.
+
+		// comment below vvv
 
 		// vvv validations in the balancer, but they still shoulddd cause nack
 		// even though we moved it at some layer, as xds clients job is to
@@ -179,6 +201,82 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 			wantUpdate: emptyUpdate,
 			wantErr:    true,
 		},
+
+		// ring hash configured as above through new field which breaks validation
+		{
+			name: "ring-hash-max-bound-greater-than-upper-bound-load-balancing-policy",
+			cluster: &v3clusterpb.Cluster{
+				Name:                 clusterName,
+				ClusterDiscoveryType: &v3clusterpb.Cluster_Type{Type: v3clusterpb.Cluster_EDS},
+				EdsClusterConfig: &v3clusterpb.Cluster_EdsClusterConfig{
+					EdsConfig: &v3corepb.ConfigSource{
+						ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{
+							Ads: &v3corepb.AggregatedConfigSource{},
+						},
+					},
+					ServiceName: serviceName,
+				},
+				// the value of this gets passed verbatim to my converter library
+				LoadBalancingPolicy: &v3clusterpb.LoadBalancingPolicy{
+					Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+						{
+							TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+								Name: "what happens if this isn't set?", // This typed_config field is used to determine both the name of a policy, do we need validations on this or is this used somewhere?
+								TypedConfig: testutils.MarshalAny(&v3ringhashpb.RingHash{ // this shouldddd correctly unmarshal as expected
+									HashFunction: v3ringhashpb.RingHash_XX_HASH,
+									MinimumRingSize: wrapperspb.UInt64(10),
+									MaximumRingSize: wrapperspb.UInt64(ringHashSizeUpperBound + 1),
+								}),
+							},
+						},
+						// should I test that the next node in list doesn't get hit, I don't think I should
+					},
+				},
+				LrsServer: &v3corepb.ConfigSource{
+					ConfigSourceSpecifier: &v3corepb.ConfigSource_Self{
+						Self: &v3corepb.SelfConfigSource{},
+					},
+				},
+			},
+			wantUpdate: emptyUpdate,
+			wantErr: true,
+		},
+		// Least request configured - should not find it in policy registry
+		{
+			name: "least-request-unsupported-in-converter",
+			cluster: &v3clusterpb.Cluster{
+				Name:                 clusterName,
+				ClusterDiscoveryType: &v3clusterpb.Cluster_Type{Type: v3clusterpb.Cluster_EDS},
+				EdsClusterConfig: &v3clusterpb.Cluster_EdsClusterConfig{
+					EdsConfig: &v3corepb.ConfigSource{
+						ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{
+							Ads: &v3corepb.AggregatedConfigSource{},
+						},
+					},
+					ServiceName: serviceName,
+				},
+				// the value of this gets passed verbatim to my converter library
+				LoadBalancingPolicy: &v3clusterpb.LoadBalancingPolicy{
+					Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+						{
+							TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+								Name: "unsupported proto type",
+								TypedConfig: testutils.MarshalAny(&least_requestv3.LeastRequest{}),
+							},
+						},
+						// should I test that the next node in list doesn't get hit, I don't think I should
+					},
+				},
+				LrsServer: &v3corepb.ConfigSource{
+					ConfigSourceSpecifier: &v3corepb.ConfigSource_Self{
+						Self: &v3corepb.SelfConfigSource{},
+					},
+				},
+			},
+			wantUpdate: emptyUpdate,
+			wantErr: true,
+		},
+
 		{
 			name: "aggregate-nil-clusters",
 			cluster: &v3clusterpb.Cluster{
@@ -228,19 +326,48 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 	}
 }
 
+func wrrLocality(m proto.Message) *wrr_localityv3.WrrLocality {
+	return &wrr_localityv3.WrrLocality{
+		EndpointPickingPolicy: &v3clusterpb.LoadBalancingPolicy{
+			Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+				{
+					TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+						Name: "what is this used for?",
+						TypedConfig: testutils.MarshalAny(m),
+					},
+				},
+			},
+		},
+	}
+}
+
+func wrrLocalityAny(m proto.Message) *anypb.Any {
+	return testutils.MarshalAny(wrrLocality(m))
+}
+
+
+type customLBConfig struct {
+	serviceconfig.LoadBalancingConfig
+}
+
 func (s) TestValidateCluster_Success(t *testing.T) {
-	oldCustomLBSupport := envconfig.XDSCustomLBPolicy
+	const customLBPolicyName = "myorg.MyCustomLeastRequestPolicy"
+	stub.Register(customLBPolicyName, stub.BalancerFuncs{
+		ParseConfig: func(json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
+			return customLBConfig{}, nil
+		},
+	})
+
+	oldCustomLBSupport := envconfig.XDSCustomLBPolicy // gates the client layer kasi
 	envconfig.XDSCustomLBPolicy = true
 	defer func() {
 		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
 	}()
-	// set env var here - not testing so we're good, fuck also register balacner for testing
-	// nothing about gating balancer registration in A52, will make it easier, will just register irregardless and if Easwar says I will say gates at xds client level
 	tests := []struct {
 		name       string
 		cluster    *v3clusterpb.Cluster
-		wantUpdate ClusterUpdate // ignore json here
-		wantLBConfig *internalserviceconfig.BalancerConfig // take json and in cluster update unmarshal into wantLBConfig
+		wantUpdate ClusterUpdate
+		wantLBConfig *internalserviceconfig.BalancerConfig // take json in cluster update unmarshal into wantLBConfig - write comment explaining reasoning here
 	}{
 		{
 			name: "happy-case-logical-dns",
@@ -275,7 +402,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				DNSHostName: "dns_host:8080",
 			},
 			wantLBConfig: &internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
+				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
 						Name: "round_robin",
@@ -302,7 +429,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				PrioritizedClusterNames: []string{"a", "b", "c"},
 			},
 			wantLBConfig: &internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
+				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
 						Name: "round_robin",
@@ -326,7 +453,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			},
 			wantUpdate: emptyUpdate,
 			wantLBConfig: &internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
+				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
 						Name: "round_robin",
@@ -351,7 +478,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			},
 			wantUpdate: ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSOff},
 			wantLBConfig: &internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
+				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
 						Name: "round_robin",
@@ -381,7 +508,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			},
 			wantUpdate: ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf},
 			wantLBConfig: &internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
+				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
 						Name: "round_robin",
@@ -423,7 +550,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			},
 			wantUpdate: ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf, MaxRequests: func() *uint32 { i := uint32(512); return &i }()},
 			wantLBConfig: &internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental",
+				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
 					ChildPolicy: &internalserviceconfig.BalancerConfig{
 						Name: "round_robin",
@@ -451,81 +578,14 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 					},
 				},
 			},
-			// and got:
-			// proto -> balancer config I prepare -> (marshal) -> json
-
-			// (in test) json.Unmarshal (takes away the non determinism) into balancer config
-
-			// easwars point: declare the want as a balancer config
 			wantUpdate: ClusterUpdate{
-
-
-				// irrregardless of what the struct you use to marshal
-
-				// explicitly just set/populated in xds_wrr_locality_experimental
-				// create a rh config and stick it as value of internalserviceconfig.BalancerConfig
-				// json ends up being fmt.Sprintf(`[{%q: %s}]`, bc.Name, c)
-
-				// Thus, unmarshal into a balancer config and declare name and config
-				// config has to be the correct type - i.e. a round robin config
-				// or xds_wrr_locality_config - should I add this?
-
-				// balancer.Get will get the type and builder and parse config - so I think you need
-				// to a. add xds_wrr_locality_config and also ParseConfig() method (then add tests for that) as part of this PR
-				// and b. for the custom lb proto, need to declare a mock builder and balancer
-				// that the any proto will point to
-
-
-
-				//
-
-				// wb testing converters?
-
-				// will test validations - but should be a valid config regardless
-
-
-				// represents emissions anyway...and that is how it will be used
-
-
 				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf,
-				// Oh right because it's nil otherwise...so this is only place ring hash json
-				//
-
-				// got (initial -> json) 1 2 are done
-
-				// for want we have 1 2 3 (need to prepare on both codepaths) and stick data at 1 2 or 3
-				// into the want
-
-				// 3 step process for each got and want
-
-				// all the other places it's nil - weighted_target_experimental: round robin child
-				// switch this to ring hash json (through preparation (or struct)) what do I put here for
-				// type now that it's a two step process
-
-				// Yeah and def the emission of JSON from the client should be valid - one of it's responsibiities is to validate.
-
-				// for all, because also needed for round robin emissions so no check here
-				// Thus if err := json.Unmarshal(balancer config object); err != nil {
-				//   "emitted json from the xds client should be valid configuration: %v", err
-				// }
-				// LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: defaultRingHashMinSize, MaximumRingSize: defaultRingHashMaxSize},
-				// ignore the JSON string somehow
-
-				// unmarshal and compare those with a different struct
-				// declare balancer config inline and compare it to that json.Unmarshal from emitted
-
-
-				// What is the type of go struct we want to unmarshal the arbitrary json string into?
-				// internalserviceconfig.BalancerConfig?
-
-				// marshal it into same thing you prepare?
-				// is there an overarching go struct that handles and encapsualtes all the possibilites here?
-
+				LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: defaultRingHashMinSize, MaximumRingSize: defaultRingHashMaxSize},
 			},
 			wantLBConfig: &internalserviceconfig.BalancerConfig{
 				Name: "ring_hash_experimental",
 				Config: &ringhash.LBConfig{
-					MinRingSize: 1024, // perhaps check if this follows gRFCs. This feels off
+					MinRingSize: 1024, // perhaps check if this follows gRFCs. This feels off wrt validations and numbers at each layer?
 					MaxRingSize: 4096,
 				},
 			},
@@ -558,8 +618,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			},
 			wantUpdate: ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf,
-
-				// LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: 10, MaximumRingSize: 100},
+				LBPolicy: &ClusterLBPolicyRingHash{MinimumRingSize: 10, MaximumRingSize: 100},
 			},
 			wantLBConfig: &internalserviceconfig.BalancerConfig{
 				Name: "ring_hash_experimental",
@@ -568,50 +627,144 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 					MaxRingSize: 100,
 				},
 			},
-			// LBPolicy above - ring hash, not set to nil
-			/*wantLBPolicy2: internalserviceconfig.BalancerConfig{
-				Name: "ring_hash", // is it _experimental?
-				Config: ringhash.LBConfig{
+		},
+		// *** Load Balancing Policy field tests
+		{
+			name: "happiest-case-with-ring-hash-lb-policy-configured-through-LoadBalancingPolicy",
+			cluster: &v3clusterpb.Cluster{
+				Name:                 clusterName,
+				ClusterDiscoveryType: &v3clusterpb.Cluster_Type{Type: v3clusterpb.Cluster_EDS},
+				EdsClusterConfig: &v3clusterpb.Cluster_EdsClusterConfig{
+					EdsConfig: &v3corepb.ConfigSource{
+						ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{
+							Ads: &v3corepb.AggregatedConfigSource{},
+						},
+					},
+					ServiceName: serviceName,
+				},
+				// the value of this gets passed verbatim to my converter library
+				LoadBalancingPolicy: &v3clusterpb.LoadBalancingPolicy{
+					Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+						{
+							TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+								Name: "what happens if this isn't set?", // This typed_config field is used to determine both the name of a policy, do we need validations on this or is this used somewhere?
+								TypedConfig: testutils.MarshalAny(&v3ringhashpb.RingHash{ // this shouldddd correctly unmarshal as expected
+									HashFunction: v3ringhashpb.RingHash_XX_HASH,
+									MinimumRingSize: wrapperspb.UInt64(10),
+									MaximumRingSize: wrapperspb.UInt64(100),
+								}),
+							},
+						},
+						// should I test that the next node in list doesn't get hit, I don't think I should
+					},
+				},
+				LrsServer: &v3corepb.ConfigSource{
+					ConfigSourceSpecifier: &v3corepb.ConfigSource_Self{
+						Self: &v3corepb.SelfConfigSource{},
+					},
+				},
+			},
+			wantUpdate: ClusterUpdate{
+				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf,
+			},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: "ring_hash_experimental",
+				Config: &ringhash.LBConfig{
 					MinRingSize: 10,
 					MaxRingSize: 100,
 				},
-			},*/
-
-
-			// this is for the normal case where LBPolicy used to be nil - put this everywhere it used to be nil
-			/*wantLBPolicy: internalserviceconfig.BalancerConfig{
-				Name: "xds_wrr_locality_experimental", // gets this type, unmarshals/verifies config
-				// ChildPolicy can be arbitrary type
-				Config: wrrlocality.LBConfig{
-					// what is the round robin policy type? Can I just declare it as such
-					ChildPolicy: internalserviceconfig.BalancerConfig{
-						Name: "round_robin", // in the unmarshaling/verification phase above, calls into wrrlocality ParseConfig(), gets this name, verifies
-						// No configuration - an empty json object is returned, just leave as such? this will be used as below too.
-						/*Config: roundrobin.LBConfig{
-
+			},
+		},
+		// maybe test the wrr_locality with a custom lb child
+		{
+			name: "happiest-case-with-wrrlocality-rr-child-configured-through-LoadBalancingPolicy",
+			cluster: &v3clusterpb.Cluster{
+				Name:                 clusterName,
+				ClusterDiscoveryType: &v3clusterpb.Cluster_Type{Type: v3clusterpb.Cluster_EDS},
+				EdsClusterConfig: &v3clusterpb.Cluster_EdsClusterConfig{
+					EdsConfig: &v3corepb.ConfigSource{
+						ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{
+							Ads: &v3corepb.AggregatedConfigSource{},
+						},
+					},
+					ServiceName: serviceName,
+				},
+				// the value of this gets passed verbatim to my converter library
+				LoadBalancingPolicy: &v3clusterpb.LoadBalancingPolicy{
+					Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+						{
+							TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+								Name: "what is this used for?",
+								TypedConfig: wrrLocalityAny(&v3roundrobinpb.RoundRobin{}),
+							},
 						},
 					},
 				},
-			},*/
-
-			// for the wants: declare a internalserviceconfig.BalancerConfig,
-			// than MarshalJSON into that struct this will trigger it to marshal
-			// that type
-
-
-			// I think it's better to do this first to see if this flow works well with the unmarshaling...
-			// for the converter (separate test):
-			// what's the api you're testing at?
-			// ring hash same thing as above
-
-			// round robin - an empty json object is returned, perhaps as above, excpet don't have a config
-
-			// wrr_locality - child rr - perhaps point it to round robin and also any struct/json
-
-			// custom_lb lmao
-
-			// wrr_locality with child as the custom_lb ^^^ (need to declare a mock balancer builder in test to pull it off what the any corresponds to)
-
+				LrsServer: &v3corepb.ConfigSource{
+					ConfigSourceSpecifier: &v3corepb.ConfigSource_Self{
+						Self: &v3corepb.SelfConfigSource{},
+					},
+				},
+			},
+			wantUpdate: ClusterUpdate{
+				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf,
+			},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: wrrlocality.Name,
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "round_robin",
+					},
+				},
+			},
+		},
+		// Custom LB:
+		{
+			name: "happiest-case-with-custom-lb-configured-through-LoadBalancingPolicy",
+			cluster: &v3clusterpb.Cluster{
+				Name:                 clusterName,
+				ClusterDiscoveryType: &v3clusterpb.Cluster_Type{Type: v3clusterpb.Cluster_EDS},
+				EdsClusterConfig: &v3clusterpb.Cluster_EdsClusterConfig{
+					EdsConfig: &v3corepb.ConfigSource{
+						ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{
+							Ads: &v3corepb.AggregatedConfigSource{},
+						},
+					},
+					ServiceName: serviceName,
+				},
+				// the value of this gets passed verbatim to my converter library
+				LoadBalancingPolicy: &v3clusterpb.LoadBalancingPolicy{
+					Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+						{
+							TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+								Name: "what is this used for?",
+								// nah we don't want to populate exported name space, perhaps use internal test utils helpers?
+								TypedConfig: wrrLocalityAny(&v3.TypedStruct{ // need to add the two helpers here too
+									TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy",
+									Value: &structpb.Struct{}, // probably just marshals into empty json, does go struct -> json
+								}),
+							},
+						},
+					},
+				},
+				LrsServer: &v3corepb.ConfigSource{
+					ConfigSourceSpecifier: &v3corepb.ConfigSource_Self{
+						Self: &v3corepb.SelfConfigSource{},
+					},
+				},
+			},
+			wantUpdate: ClusterUpdate{
+				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: ClusterLRSServerSelf,
+			},
+			wantLBConfig: &internalserviceconfig.BalancerConfig{
+				Name: wrrlocality.Name,
+				Config: &wrrlocality.LBConfig{
+					ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Name: "myorg.MyCustomLeastRequestPolicy",
+						Config: customLBConfig{}, // declare this type as a stub balancer and also return this config from the stub
+					},
+				},
+			},
 		},
 	}
 
@@ -632,13 +785,12 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			// json -> LB Config are sufficient and map to whole testing file
 			// since all round robin set elsewhere, and this sufficient tests
 			// the json through the lb config below.
-			if diff := cmp.Diff(update, test.wantUpdate, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" { // maybe make this top level helper if failing a lot
+			if diff := cmp.Diff(update, test.wantUpdate, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicyJSON")); diff != "" { // maybe make this top level helper if failing a lot
 				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) got diff: %v (-got, +want)", test.cluster, diff)
 			}
 			// Same flow, read update.JSON (will always be set anyway)
-			// update.LBPolicy // json.RawMessage
 			bc := &internalserviceconfig.BalancerConfig{}
-			if err := json.Unmarshal(update.LBPolicy, bc); err != nil {
+			if err := json.Unmarshal(update.LBPolicyJSON, bc); err != nil { // could be nil, but this is a test so we're good? does cmp.Diff handle nils?
 				t.Fatalf("failed to unmarshal JSON: %v", err)
 			}
 			if diff := cmp.Diff(bc, test.wantLBConfig); diff != "" {
@@ -648,7 +800,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 	}
 }
 
-// error cases for validation:
+// error cases for validation: need to add support for these cases
 /*
 
 xDS LB policy registry cannot convert the configuration and returns an error
@@ -712,7 +864,7 @@ func (s) TestValidateClusterWithSecurityConfig_EnvVarOff(t *testing.T) {
 	if err != nil {
 		t.Errorf("validateClusterAndConstructClusterUpdate() failed: %v", err)
 	}
-	if diff := cmp.Diff(wantUpdate, gotUpdate, cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" {
+	if diff := cmp.Diff(wantUpdate, gotUpdate, cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicyJSON")); diff != "" {
 		t.Errorf("validateClusterAndConstructClusterUpdate() returned unexpected diff (-want, got):\n%s", diff)
 	}
 }
@@ -1605,7 +1757,7 @@ func (s) TestValidateClusterWithSecurityConfig(t *testing.T) {
 			if (err != nil) != test.wantErr {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned err %v wantErr %v)", err, test.wantErr)
 			}
-			if diff := cmp.Diff(test.wantUpdate, update, cmpopts.EquateEmpty(), cmp.AllowUnexported(regexp.Regexp{}), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" {
+			if diff := cmp.Diff(test.wantUpdate, update, cmpopts.EquateEmpty(), cmp.AllowUnexported(regexp.Regexp{}), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicyJSON")); diff != "" {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned unexpected diff (-want, +got):\n%s", diff)
 			}
 		})
@@ -1747,7 +1899,7 @@ func (s) TestUnmarshalCluster(t *testing.T) {
 			if name != test.wantName {
 				t.Errorf("unmarshalClusterResource(%s), got name: %s, want: %s", pretty.ToJSON(test.resource), name, test.wantName)
 			}
-			if diff := cmp.Diff(update, test.wantUpdate, cmpOpts, cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" {
+			if diff := cmp.Diff(update, test.wantUpdate, cmpOpts, cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicyJSON")); diff != "" {
 				t.Errorf("unmarshalClusterResource(%s), got unexpected update, diff (-got +want): %v", pretty.ToJSON(test.resource), diff)
 			}
 		})
@@ -1768,7 +1920,7 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 					},
 				},
 			},
-			LbPolicy:         v3clusterpb.Cluster_ROUND_ROBIN, // proto is the branch conditional, we want to set the new field
+			LbPolicy:         v3clusterpb.Cluster_ROUND_ROBIN,
 			OutlierDetection: od,
 		}
 	}
@@ -1897,16 +2049,12 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 			if (err != nil) != test.wantErr {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned err %v wantErr %v)", err, test.wantErr)
 			}
-			if diff := cmp.Diff(test.wantUpdate, update, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicy")); diff != "" {
+			if diff := cmp.Diff(test.wantUpdate, update, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(ClusterUpdate{}, "LBPolicyJSON")); diff != "" {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned unexpected diff (-want, +got):\n%s", diff)
 			}
 		})
 	}
 }
-
-// this will break all the tests even outside this package...just fix the ones in this package
-
-// validating emitted = inline (created)
 
 // json doesn't match 1:1 (serialization format like proto)
 
@@ -1914,117 +2062,8 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 
 // unmarshaling produces same output - the expected output from the unit test -
 // but who knows if this is "correct" until e2e
+// put these explanations into a comment
 
-
-// "deserialize"
-// emitted json from client
-// json -> struct
-
-
-// Note: the marshaling to produce this json has knobs plumbed in through xDS protos,
-// either set these knobs inline in tests or set to be configurable
-// inline declared json want - "valid json string and you can always unmarshal it"
-// json -> struct
-
-// perhaps a helper to plumb in json and build it out with arbitrary child type?
-// var for json representation of wrr locality: round robin
-
-// var for ringhash json configuration
-
-
-// prepares same thing as registry?
-
-
-// emissions from validateClusterAndConstructClusterUpdate - all these switch to JSON
-// switch all tests to have the internal struct (any others in codebase)?
-// Fix tests already there: internal struct inline config -> json.RawMessage (wrr_locality: round_robin for nil), ringhash config in json for ringhash
-
-// converter tests orthogonal - test all at that layer to but test a single
-// converter called from validateCluster - basic
-
-// (newField || field) ->    lbConfig switch to JSON here
-// proto               ->           internal struct
-
-// the population of the JSON is where we want to call into converter library
-
-// ^^^ oh test all with env var set to true
-
-/*
-func helper() json.RawMessage {
-	// knobs for this first thing
-	bc := internalserviceconfig.BalancerConfig{
-		Name: roundrobin.Name,
-	}
-
-	// rr doesn't need a knob is a constant
-	rrLBCfgJSON, err := json.Marshal(bc)
-	if err != nil { // Shouldn't happen, prepared now.
-		// Fail test...?
-	}
-	// test created json - rr
-	lbCfgJSON := []byte(fmt.Sprintf(`[{%q: %s}]`, "xds_wrr_locality_experimental", rrLBCfgJSON))
-
-
-	// test created json - ring hash
-	// knob from management server are the min and max size in proto
-
-
-	// need knobs on minSize and maxSize
-	rhLBCfg := ringhash.LBConfig{
-		MinRingSize: /*knob for min ring size here,
-		MaxRingSize: /*knob for max ring size here,
-	}
-
-	bc := internalserviceconfig.BalancerConfig{
-		Name: "ring_hash_experimental",
-		Config: rhLBCfg,
-	}
-
-	// preparing it same way will validate, same with cluster specifier test
-	// this is to get rid of the inline json needed to prepare
-	rhLBCfgJSON, err := json.Marshal(bc)
-	if err != nil {
-		// Fail test...?
-	}
-
-
-	// emitted from the client:
-	// []byte -> marshal into struct? Balancer config?
-
-	// marshal []byte into a struct just like the other side
-	// if you marshal into go struct and take away the non determinism for
-	// the byte preparation, what does it marshal into
-
-
-	// the rest - the primitives represented by the root of interface{}
-	// bool for json booleans
-	// float64 for json numbers
-	// string for json strings
-
-	// so the config layering
-	// {rr_hash: primitive primitive primitive}
-	// map[
-	//      "rr_hash": {}
-	// ]
-
-	// but if you unmarshal and compare this is a black box
-	// and if you reflect.DeepEqual on it with cmp.Diff it's also a black box
-
-	// nil for null
-	// []interface{} json array
-	// map[string]interface{} json object
-	// unmarshal stores json key value pairs into the map?
-	// The map's key type must either be any string type, an integer, implement
-	// json.Unmarshaler, or implement encoding.TextUnmarshaler.
-	json.Unmarshal()
-
-	// honestly just treat this as a black box,
-	// unmarshal and cmp.Diff
-	// you can a. see if it works and b. see what the map output is
-
-}
-
-// unmarshal correct irregardless into internalserviceconfig.LBConfig <-
 
 // new system:
 // env var set and new fields set
@@ -2035,7 +2074,55 @@ func helper() json.RawMessage {
 // nil ring hash config -> wrr locality with round robin as child (pull internalbalancerconfig declaration of this from the xds registry test)
 
 
-// read the possibilities of error case
+// read the possibilities of error case (still need to add)
 // error case 1 - test case 1, test case 2
 // error case 2 - test case 1, test case 2
- */
+/*
+The CDS resource is rejected and a NACK returned to the control plane in either of the following cases:
+
+xDS LB policy registry cannot convert the configuration and returns an error (so set up the same error conditions you had in xDS LB registry except through full proto but you just pass it in directly right so I think it's the same proto - perhaps Least Request?)
+gRPC LB policy registry cannot parse the converted configuration.
+	// how to trigger bad json being created from proto?
+	// unregistered balancer - should this ever happen because we support all balancers emit config this should never happen
+	// custom lb with bad config?
+	// custom lb type that isn't there
+	// ^^^ because registry simply prepares config based on name and typed struct doesn't validate name or anything
+*/
+
+// ^^^ the tests above were testing the old flow ring hash configured on old field and round robin (just not ring hash)?
+
+// could test fallback, but that's implicitly tested in scaling up the success cases
+// ^^^ leave those tests in since we will continue to support them over time
+
+// So same test but different
+// If the load_balancing_policy field is provided, it will be used instead of
+// the lb_policy and lb_config fields. If load_balancing_policy is not provided,
+// full backward compatibility with the old fields will be maintained.
+
+// Need to test successful management server updates with new fields
+// map the extra layer to what gets passed into proto registry
+// emissions and input same, just mapped to another layer
+// this should always pass when expected, fail if prepares a bad config as below
+func (s) TestLoadBalancingPolicyField(t *testing.T) {
+	oldCustomLBSupport := envconfig.XDSCustomLBPolicy
+	envconfig.XDSCustomLBPolicy = true
+	defer func() {
+		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
+	}()
+	// Don't need to test cluster update? wait can I add it to that
+}
+
+// new field in the cds update struct
+// the migration really only touches this file right
+// ignore the new field with equate optionss, keep the old field validations, which is literally just that one test
+
+func (s) TestNewLBPolicyFieldCorrectlyFails(t *testing.T) {
+	// Do I need to turn on ring hash?
+	// Custom LB Env Var set to true
+	// proto configuration set through the new field
+	// Does importing the registry import all the types through transitive dependencies?
+	// If so, that's good don't import
+
+	// Same thing here, new field failjres
+
+}
