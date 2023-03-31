@@ -46,10 +46,10 @@ import (
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	v3endpointpb "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	v3aggregateclusterpb "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/aggregate/v3"
-	least_requestv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/least_request/v3"
+	v3leastrequestpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/least_request/v3"
 	v3ringhashpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/ring_hash/v3"
 	v3roundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/round_robin/v3"
-	wrr_localityv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
+	v3wrrlocalitypb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
 	v3tlspb "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	v3discoverypb "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
@@ -241,7 +241,7 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 						{
 							TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 								Name:        "unsupported proto type",
-								TypedConfig: testutils.MarshalAny(&least_requestv3.LeastRequest{}),
+								TypedConfig: testutils.MarshalAny(&v3leastrequestpb.LeastRequest{}),
 							},
 						},
 					},
@@ -304,8 +304,8 @@ func (s) TestValidateCluster_Failure(t *testing.T) {
 	}
 }
 
-func wrrLocality(m proto.Message) *wrr_localityv3.WrrLocality {
-	return &wrr_localityv3.WrrLocality{
+func wrrLocality(m proto.Message) *v3wrrlocalitypb.WrrLocality {
+	return &v3wrrlocalitypb.WrrLocality{
 		EndpointPickingPolicy: &v3clusterpb.LoadBalancingPolicy{
 			Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
 				{

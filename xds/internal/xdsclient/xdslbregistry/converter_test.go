@@ -27,10 +27,10 @@ import (
 	v3 "github.com/cncf/xds/go/xds/type/v3"
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	least_requestv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/least_request/v3"
+	v3leastrequestpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/least_request/v3"
 	v3ringhashpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/ring_hash/v3"
 	v3roundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/round_robin/v3"
-	wrr_localityv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
+	v3wrrlocalitypb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
 	"github.com/golang/protobuf/proto"
 	structpb "github.com/golang/protobuf/ptypes/struct"
 	"github.com/google/go-cmp/cmp"
@@ -267,7 +267,7 @@ func (s) TestConvertToServiceConfigFailure(t *testing.T) {
 					{
 						TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 							Name:        "unsupported proto type",
-							TypedConfig: testutils.MarshalAny(&least_requestv3.LeastRequest{}),
+							TypedConfig: testutils.MarshalAny(&v3leastrequestpb.LeastRequest{}),
 						},
 					},
 				},
@@ -310,8 +310,8 @@ func (s) TestConvertToServiceConfigFailure(t *testing.T) {
 // wrrLocality is a helper that takes a proto message and returns a
 // WrrLocalityProto with the proto message marshaled into a proto.Any as a
 // child.
-func wrrLocality(m proto.Message) *wrr_localityv3.WrrLocality {
-	return &wrr_localityv3.WrrLocality{
+func wrrLocality(m proto.Message) *v3wrrlocalitypb.WrrLocality {
+	return &v3wrrlocalitypb.WrrLocality{
 		EndpointPickingPolicy: &v3clusterpb.LoadBalancingPolicy{
 			Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
 				{
