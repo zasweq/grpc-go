@@ -57,3 +57,9 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 	}
 	return lbCfg, nil
 }
+
+// wrr_locality combines the priority child config with locality weights to
+// generate weighted_target configuration.
+
+// it's sole purpose is to construct configuration of weighted target as the cluster resolver used to do
+// so doesn't need to intercept any operations?
