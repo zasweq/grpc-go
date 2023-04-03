@@ -17,7 +17,9 @@
 package cdsbalancer
 
 import (
+	"encoding/json"
 	"errors"
+	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"sync"
 
 	"google.golang.org/grpc/xds/internal/xdsclient"
@@ -45,6 +47,13 @@ type clusterHandlerUpdate struct {
 	// is ringhash. In the future, if we support more policies, we can make this
 	// an interface, and set it to config of the other policies.
 	lbPolicy *xdsresource.ClusterLBPolicyRingHash
+
+	// where does this error go?
+
+	// do we want to NACK from here, validated, shouldn't happen, so I think it's fine here
+	lbPolicyJSONBC internalserviceconfig.BalancerConfig
+
+	lbPolicyJSON json.RawMessage
 
 	// updates is a list of ClusterUpdates from all the leaf clusters.
 	updates []xdsresource.ClusterUpdate
@@ -123,10 +132,12 @@ func (ch *clusterHandler) constructClusterUpdate() {
 	case <-ch.updateChannel:
 	default:
 	}
-	ch.updateChannel <- clusterHandlerUpdate{
+
+	ch.updateChannel <- clusterHandlerUpdate{ // just don't write, which again is fine?
 		securityCfg: ch.createdClusters[ch.rootClusterName].clusterUpdate.SecurityCfg,
 		lbPolicy:    ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicy,
-		updates:     clusterUpdate,
+		lbPolicyJSON: ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicyJSON,
+		updates:      clusterUpdate, // this is a []ClusterUpdate from the xDS Client
 	}
 }
 

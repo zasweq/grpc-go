@@ -253,10 +253,17 @@ func (b *clusterImplBalancer) UpdateClientConnState(s balancer.ClientConnState) 
 
 	// If child policy is a different type, recreate the sub-balancer.
 	if b.config == nil || b.config.ChildPolicy.Name != newConfig.ChildPolicy.Name {
-		if b.childLB != nil {
+
+		// What do other languages do here? Ask Eric.
+
+		// Doesn't this config get marshaled to JSON when passed down the
+		// hierarchy. So it needs to be valid, but it already is.
+
+		// Switch to Graceful Switch
+		if b.childLB != nil { // switch to Graceful Switch?
 			b.childLB.Close()
 		}
-		b.childLB = bb.Build(b, b.bOpts)
+		b.childLB = bb.Build(b, b.bOpts) // This builds on first UpdateClientConnState? OD does too, but WRRLocality wraps weighted target 1:1?
 	}
 	b.config = newConfig
 

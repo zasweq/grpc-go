@@ -394,6 +394,10 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			dms[i].OutlierDetection = outlierDetectionToConfig(cu.OutlierDetection)
 		}
 	}
+
+	// cluster resolvers . XDSLBPolicy (for each locality)
+	// clusterresolver.XDSLBPolicy is what is used in config builder
+	// != nil all the way down the balancer tree
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: dms,
 	}
@@ -402,6 +406,7 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 	// not set) is roundrobin. And similarly, we only need to set XDSLBPolicy
 	// for ringhash (it also defaults to roundrobin).
 	if lbp := update.lbPolicy; lbp != nil {
+		// keep this type XDSLBPolicy
 		lbCfg.XDSLBPolicy = &internalserviceconfig.BalancerConfig{
 			Name: ringhash.Name,
 			Config: &ringhash.LBConfig{
@@ -411,6 +416,19 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		}
 	}
 
+	bc := &internalserviceconfig.BalancerConfig{}
+	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil { // do it here, chu just sticks it on the Update struct
+		// this is the branching logic here
+
+		// Shouldn't happen, valid configuration should be emitted from client,
+		// will error out at x.
+
+		b.logger.Infof()
+	}
+	// but if this is invalid the whole system will be invalid - or just don't send down
+	// this is the consumer, so should error here
+	lbCfg.XDSLBPolicy = bc // Don't change xDS Cluster Resolver Load Balancer, just read this there and pass through to priority
+	// how do we want to get this PR out in general? migration?
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),
 		BalancerConfig: lbCfg,
