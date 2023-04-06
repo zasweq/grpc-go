@@ -21,6 +21,7 @@ package clusterresolver
 import (
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"sort"
 
 	"google.golang.org/grpc/balancer/roundrobin"
@@ -298,11 +299,56 @@ func priorityLocalitiesToClusterImpl(localities []xdsresource.Locality, priority
 		LoadReportingServer:   mechanism.LoadReportingServer,
 		MaxConcurrentRequests: mechanism.MaxConcurrentRequests,
 		DropCategories:        drops,
-		// ChildPolicy is not set. Will be set based on xdsLBPolicy
+		// ChildPolicy is not set. Will be set based on xdsLBPolicy NOPE
+		ChildPolicy: xdsLBPolicy, // set this here...where is this converted?!?!?!?
 	}
 
+
+	// also
+	// set addrs attributes
+	// branch on endpoint weight? ring hash still has both
+
+	var addrs []resolver.Address
+	for _, locality := range localities {
+		// only need this in certain cases
+		var lw uint32 = 1
+		if locality.Weight != 0 {
+			lw = locality.Weight
+		}
+		localityStr, err := locality.ID.ToString()
+		if err != nil {
+			localityStr = fmt.Sprintf("%+v", locality.ID)
+		}
+		for _, endpoint := range locality.Endpoints {
+			if endpoint.HealthStatus != xdsresource.EndpointHealthStatusHealthy && endpoint.HealthStatus != xdsresource.EndpointHealthStatusUnknown {
+				continue
+			}
+			// it is possible to see locality weight attributes with different values for the same locality. - I'm assuming based on locality weights
+			// We do not support this kind of an edge case and just use the weight in the first attribute we encounter.
+			addr := resolver.Address{Addr: endpoint.Address}
+			addr = hierarchy.Set(addr, []string{priorityName, localityStr})
+			addr = internal.SetLocalityID(addr, locality.ID)
+			addr = wrrlocality.SetAddrInfo(addr, wrrlocality.AddrInfo{LocalityWeight: lw})
+			// branching logic of endpoint weight
+			var ew uint32 = 1
+			if endpoint.Weight != 0 {
+				ew = endpoint.Weight
+			}
+
+			// this branch is ew * lw, see Marks comment about no-op
+			// if ew != 0 (so only set if set) && weighed robin
+			//     set weight as ew, I honestly think if we can assume lw is 1 or something in the case we're fine here
+			// Would be zero so noop
+			weightedroundrobin.SetAddrInfo(addr, weightedroundrobin.AddrInfo{Weight: lw * ew}) // already correct
+			addrs = append(addrs, addr)
+		}
+	}
+	// could also make this clusterImplConfig declared in line here
+	return clusterImplCfg, addrs, nil
+
+
 	// You can either try and migrate over (have two two until last PR) or do it all atomically and get e2e tests working etc.
-	if xdsLBPolicy == nil || xdsLBPolicy.Name == roundrobin.Name {
+	if xdsLBPolicy == nil || xdsLBPolicy.Name == roundrobin.Name { // branch right here - needs a new conditional
 		// If lb policy is ROUND_ROBIN:
 		// - locality-picking policy is weighted_target
 		// - endpoint-picking policy is round_robin
@@ -377,7 +423,7 @@ func priorityLocalitiesToClusterImpl(localities []xdsresource.Locality, priority
 		addrs := localitiesToRingHash(localities, priorityName) // this can still be built same way
 		// Set child to ring_hash, note that the ring_hash config is from
 		// xdsLBPolicy.
-		clusterImplCfg.ChildPolicy = &internalserviceconfig.BalancerConfig{Name: ringhash.Name, Config: xdsLBPolicy.Config}
+		clusterImplCfg.ChildPolicy = &internalserviceconfig.BalancerConfig{Name: ringhash.Name, Config: xdsLBPolicy.Config} // attaches ring hash name to config
 		return clusterImplCfg, addrs, nil
 	}
 
@@ -400,6 +446,10 @@ func localitiesToRingHash(localities []xdsresource.Locality, priorityName string
 		var lw uint32 = 1 // defaults to 1...
 		if locality.Weight != 0 {
 			lw = locality.Weight // put this in the attribute
+			// in wrr_locality:
+			// type AddrInfo struct {
+			//    uint32 locality weight
+			// }
 		}
 		localityStr, err := locality.ID.ToString()
 		if err != nil {
@@ -419,16 +469,22 @@ func localitiesToRingHash(localities []xdsresource.Locality, priorityName string
 			}
 
 			// The weight of each endpoint is locality_weight * endpoint_weight.
-			ai := weightedroundrobin.AddrInfo{Weight: lw * ew}
+			ai := weightedroundrobin.AddrInfo{Weight: lw * ew} // already sets locality_weight * endpoint_weight?
 			addr := weightedroundrobin.SetAddrInfo(resolver.Address{Addr: endpoint.Address}, ai)
 			addr = hierarchy.Set(addr, []string{priorityName, localityStr})
 			addr = internal.SetLocalityID(addr, locality.ID)
-			addr.Attributes // attributes.Attributes, set
-			// call Helper defined somewhere to put lw into addr.BalancerAttributes...
-			addr.BalancerAttributes // consumption by the lb (yes, the wrr_locality_experimental balancer uses it to prepare children), doesn't affect uniqueness makes sense, so different part
+			// addr.Attributes // attributes.Attributes, set
+			// call Helper defined somewhere to put lw into addr.BalancerAttributes...this is now done unconditionally
+			// now you have branch a populate branch b populate
+			// now no branch, populate unconditionally and also set child unconditionally as well too.
+			// ai := wrrlocality.AddrInfo{LocalityWeight: lw}
+			addr = wrrlocality.SetAddrInfo(addr, wrrlocality.AddrInfo{LocalityWeight: lw}) // which type oh just address
+			// addr.BalancerAttributes // consumption by the lb (yes, the wrr_locality_experimental balancer uses it to prepare children), doesn't affect uniqueness makes sense, so different part
 			addrs = append(addrs, addr)
 		}
 	}
+	// the cluster resolver will populate a new locality weight attribute for each address
+	// The attribute will have the weight (as an integer) of the locality the address is part of.
 	return addrs
 }
 
@@ -450,6 +506,11 @@ func localitiesToRingHash(localities []xdsresource.Locality, priorityName string
 func localitiesToWeightedTarget(localities []xdsresource.Locality, priorityName string, childPolicy *internalserviceconfig.BalancerConfig) (*weightedtarget.LBConfig, []resolver.Address) { // config and builds addresses
 
 
+	// no branching - stick config unconditionally
+
+
+	// but now this logic changes - but the conditional is no longer there right?
+
 
 	// *** This logic you can move to the balancer itself
 	weightedTargets := make(map[string]weightedtarget.Target)
@@ -459,7 +520,13 @@ func localitiesToWeightedTarget(localities []xdsresource.Locality, priorityName 
 		if err != nil {
 			localityStr = fmt.Sprintf("%+v", locality.ID)
 		}
+
+		// the cluster_impl does this now
+
+		// this is locality weight, doesn't get taken into account, so there is two seperate codepaths
 		weightedTargets[localityStr] = weightedtarget.Target{Weight: locality.Weight, ChildPolicy: childPolicy}
+		// ^^^ different for both
+
 		for _, endpoint := range locality.Endpoints {
 			// Filter out all "unhealthy" endpoints (unknown and healthy are
 			// both considered to be healthy:
@@ -467,15 +534,22 @@ func localitiesToWeightedTarget(localities []xdsresource.Locality, priorityName 
 			if endpoint.HealthStatus != xdsresource.EndpointHealthStatusHealthy && endpoint.HealthStatus != xdsresource.EndpointHealthStatusUnknown {
 				continue
 			}
-
+			// *** shared
 			addr := resolver.Address{Addr: endpoint.Address}
+			// ***
+
+			// needs a branch keeping this - determines attributes
 			if childPolicy.Name == weightedroundrobin.Name && endpoint.Weight != 0 {
-				ai := weightedroundrobin.AddrInfo{Weight: endpoint.Weight}
+				ai := weightedroundrobin.AddrInfo{Weight: endpoint.Weight} // this is the only branch, this is set differmet
 				addr = weightedroundrobin.SetAddrInfo(addr, ai)
 			}
+
+			// *** shared
+			// addr = wrrlocality.SetAddrInfo(addr, wrrlocality.AddrInfo{LocalityWeight: lw}) theoretically wouldn't have locality weights at this point
 			addr = hierarchy.Set(addr, []string{priorityName, localityStr})
 			addr = internal.SetLocalityID(addr, locality.ID)
 			addrs = append(addrs, addr)
+			// *shared
 		}
 	}
 	return &weightedtarget.LBConfig{Targets: weightedTargets}, addrs

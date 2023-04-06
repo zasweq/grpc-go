@@ -394,6 +394,10 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			dms[i].OutlierDetection = outlierDetectionToConfig(cu.OutlierDetection)
 		}
 	}
+
+	// cluster resolvers . XDSLBPolicy (for each locality)
+	// clusterresolver.XDSLBPolicy is what is used in config builder
+	// != nil all the way down the balancer tree
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: dms,
 	}
@@ -402,14 +406,34 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 	// not set) is roundrobin. And similarly, we only need to set XDSLBPolicy
 	// for ringhash (it also defaults to roundrobin).
 	if lbp := update.lbPolicy; lbp != nil {
+		// keep this type XDSLBPolicy
 		lbCfg.XDSLBPolicy = &internalserviceconfig.BalancerConfig{
 			Name: ringhash.Name,
-			Config: &ringhash.LBConfig{
+			Config: &ringhash.LBConfig{ // branch set or not
 				MinRingSize: lbp.MinimumRingSize,
 				MaxRingSize: lbp.MaximumRingSize,
 			},
 		}
+	} // else nil, then cluster_resolver will build out weighted target
+	// could do it here or in chu
+	// conversion in
+	// cdsbalancer: UpdateClientConnState
+	// or cdsbalancer: Cluster Handler
+
+	// but then when would it error out if send down empty config...
+
+	// I think it's cleaner here for seperation of concerns
+	bc := &internalserviceconfig.BalancerConfig{}
+	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil { // do it here, chu just sticks it on the Update struct
+		// this is the branching logic here
 	}
+	// but if this is invalid the whole system will be invalid - or just don't send down
+	// this is the consumer, so should error here
+	lbCfg.XDSLBPolicy = bc // Don't change xDS Cluster Resolver Load Balancer
+
+	// nothing else needed
+
+	// Logging warning is in cluster resolver
 
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),

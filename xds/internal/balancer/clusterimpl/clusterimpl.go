@@ -263,7 +263,7 @@ func (b *clusterImplBalancer) UpdateClientConnState(s balancer.ClientConnState) 
 		if b.childLB != nil { // switch to Graceful Switch?
 			b.childLB.Close()
 		}
-		b.childLB = bb.Build(b, b.bOpts)
+		b.childLB = bb.Build(b, b.bOpts) // This builds on first UpdateClientConnState? OD does too, but WRRLocality wraps weighted target 1:1?
 	}
 	b.config = newConfig
 
