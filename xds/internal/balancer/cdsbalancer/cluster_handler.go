@@ -133,17 +133,9 @@ func (ch *clusterHandler) constructClusterUpdate() {
 	default:
 	}
 
-	lbPolicyJSON := ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicyJSON
-	bc := &internalserviceconfig.BalancerConfig{}
-	// Ignore? Write the Update with nil?
-	if err := json.Unmarshal(lbPolicyJSON, bc); err != nil {
-		// this branch is the two options above ^^^
-	}
-
 	ch.updateChannel <- clusterHandlerUpdate{ // just don't write, which again is fine?
 		securityCfg: ch.createdClusters[ch.rootClusterName].clusterUpdate.SecurityCfg,
 		lbPolicy:    ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicy,
-		// why is it the root cluster?
 		lbPolicyJSON: ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicyJSON,
 		updates:      clusterUpdate, // this is a []ClusterUpdate from the xDS Client
 	}

@@ -409,32 +409,26 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		// keep this type XDSLBPolicy
 		lbCfg.XDSLBPolicy = &internalserviceconfig.BalancerConfig{
 			Name: ringhash.Name,
-			Config: &ringhash.LBConfig{ // branch set or not
+			Config: &ringhash.LBConfig{
 				MinRingSize: lbp.MinimumRingSize,
 				MaxRingSize: lbp.MaximumRingSize,
 			},
 		}
-	} // else nil, then cluster_resolver will build out weighted target
-	// could do it here or in chu
-	// conversion in
-	// cdsbalancer: UpdateClientConnState
-	// or cdsbalancer: Cluster Handler
+	}
 
-	// but then when would it error out if send down empty config...
-
-	// I think it's cleaner here for seperation of concerns
 	bc := &internalserviceconfig.BalancerConfig{}
 	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil { // do it here, chu just sticks it on the Update struct
 		// this is the branching logic here
+
+		// Shouldn't happen, valid configuration should be emitted from client,
+		// will error out at x.
+
+		b.logger.Infof()
 	}
 	// but if this is invalid the whole system will be invalid - or just don't send down
 	// this is the consumer, so should error here
-	lbCfg.XDSLBPolicy = bc // Don't change xDS Cluster Resolver Load Balancer
-
-	// nothing else needed
-
-	// Logging warning is in cluster resolver
-
+	lbCfg.XDSLBPolicy = bc // Don't change xDS Cluster Resolver Load Balancer, just read this there and pass through to priority
+	// how do we want to get this PR out in general? migration?
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),
 		BalancerConfig: lbCfg,
