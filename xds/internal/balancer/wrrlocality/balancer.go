@@ -117,28 +117,6 @@ func GetAddrInfo(addr resolver.Address) AddrInfo { // Do I even need this export
 // weightedTargets[localityStr] = weightedtarget.Target{Weight: locality.Weight, ChildPolicy: childPolicy}
 
 // the whole state or just the addresses?
-/*
-func buildWeightedTargetConfig(state *balancer.ClientConnState) *weightedtarget.LBConfig {
-	weightedTargets := make(map[string]weightedtarget.Target)
-	// state.ResolverState.Addresses // [] addresses
-	// now iterates over addresses not localities
-	for _, addr := range state.ResolverState.Addresses { // how to get collisions? same localityStr, should it not set if wants to use first one encountered or is this an implementation detail that doesn't matter
-		// logically equivalent:
-		// weightedTargets[localityStr] = weightedtarget.Target{Weight: locality.Weight, ChildPolicy: childPolicy}
-		// localityStr := getLocalityID(addr)
-		locality := internal.GetLocalityID(addr)
-		localityString, err := locality.ToString()
-		if err != nil {
-			// logger.Infof("failed to marshal LocalityID: %#v, loads won't be reported", scw.localityID())
-		}
-		// localityWeight = getLocalityWeight(addr) I think the setting is where it takes the "first one" logically
-		// what happens in the failure case?
-		ai := GetAddrInfo(addr) // make unexported since just used here?
-		// Are all these reads safe?
-		weightedTargets[localityString] = weightedtarget.Target{Weight: ai.LocalityWeight, ChildPolicy: lbCfg.ChildPolicy/*config.ChildPolicy verbatim}
-	}
-	return &weightedtarget.LBConfig{Targets: weightedTargets}
-}*/
 
 // what state does this need and what operations do you need to intercept here?
 type wrrLocality struct { // experimental is only type of name
@@ -150,24 +128,10 @@ type wrrLocality struct { // experimental is only type of name
 
 func (b *wrrLocality) UpdateClientConnState(s balancer.ClientConnState) error {
 	lbCfg, ok := s.BalancerConfig.(*LBConfig)
-
 	if !ok {
 		b.logger.Errorf("received config with unexpected type %T: %v", s.BalancerConfig, s.BalancerConfig)
 		return balancer.ErrBadResolverState
 	}
-
-	// move helper here cleaner and can easily return error
-
-	// lbCfg.ChildPolicy // here's the data the weighted target stuff needs
-
-	// wtCfg := buildWeightedTargetConfig(s)
-	// stick this as part of balancer.ClientConnState ^^^, then send to child
-	/*ccs := balancer.ClientConnState{
-		// wtCfg somewhere in here
-		// is the rest of the field the same or different? I think the same
-		ResolverState: s.ResolverState, // This is what Outlier Detection does, so I think we're good here
-		BalancerConfig: wtCfg,
-	}*/
 
 	// Noop synchronous, adds it's own synchronous instructions (happens before, no run() etc.) but doesn't change
 	// how the rest of the guarantees are synchronous
@@ -187,7 +151,7 @@ func (b *wrrLocality) UpdateClientConnState(s balancer.ClientConnState) error {
 		// localityWeight = getLocalityWeight(addr) I think the setting is where it takes the "first one" logically
 		// what happens in the failure case?
 		ai := GetAddrInfo(addr) // make unexported since just used here?
-		// Are all these reads safe? i.e. any nil dereferences like Doug was worried about
+		// Are all these reads safe? i.e. any nil dereferences like Doug was worried about?
 		weightedTargets[localityString] = weightedtarget.Target{Weight: ai.LocalityWeight, ChildPolicy: lbCfg.ChildPolicy/*config.ChildPolicy verbatim*/}
 	}
 	wtCfg := &weightedtarget.LBConfig{Targets: weightedTargets}

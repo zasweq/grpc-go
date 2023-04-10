@@ -279,6 +279,9 @@ func (s) TestUpdateClientConnState(t *testing.T) { // I don't this this needs it
 	}
 	// too many knobs to make t-test
 }
+
+// what is the expected result if it gets invalid UpdateClientConnState inputs?
+
 // will it import it's a different file...
 /*
 type mockBalancer struct {
@@ -302,3 +305,8 @@ func (mc *mockBalancer) UpdateClientConnState(s balancer.ClientConnState) {
 // Well at least it works with creation etc.
 
 // or is there another way to verify the child balancer works?
+
+
+// and obv. this will get tested e2e in the xDS tree in xDS e2e tests...
+
+// separate e2e package to test public API
