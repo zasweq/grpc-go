@@ -58,7 +58,8 @@ func (bb) ParseConfig() { // implement the method signature and do something int
 }
 
 type customLB struct {
-
+	// I think make this pick first
+	// and do 1 22 1 22 expected distribution
 }
 
 func (clb *customLB) UpdateClientConnState(ccs *balancer.ClientConnState) error {
@@ -159,80 +160,10 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 
 // knob you need to pass through function hierarchy - let the whole thing be a knob?
 
-// clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities...
-func clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities(params e2e.ResourceParams, ports []uint32) e2e.UpdateOptions {
-	routeConfigName := "route-" + params.DialTarget
-	clusterName := "cluster-" + params.DialTarget
-	endpointsName := "endpoints-" + params.DialTarget
-	return e2e.UpdateOptions{
-		NodeID:    params.NodeID,
-		Listeners: []*v3listenerpb.Listener{e2e.DefaultClientListener(params.DialTarget, routeConfigName)},
-		Routes:    []*v3routepb.RouteConfiguration{e2e.DefaultRouteConfig(routeConfigName, params.DialTarget, clusterName)},
-		Clusters:  []*v3clusterpb.Cluster{clusterWithCustomLBConfiguration(clusterName, endpointsName, params.SecLevel)}, // cluster is one entry in the list
-		Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.EndpointResourceWithOptionsMultipleLocalities(e2e.EndpointOptions{
-			ClusterName: endpointsName,
-			Host:        params.Host,
-			PortsInLocalities: [][]uint32{
-				{ports[0], ports[1]},
-				{ports[2], ports[3], ports[4]},
-			},
-			LocalityWeights: []uint32{
-				1,
-				2,
-			},
-		})},
-	}
-}
-
 // make it a knob afterward?
 
 // does default xDS resources correspond to the static system of other balancers I drew
 // in my notebook?
-func clusterWithCustomLBConfiguration(clusterName, edsServiceName string, secLevel e2e.SecurityLevel) *v3clusterpb.Cluster {
-	// what crap do I put here?
-	/*
-	When the xDS client receives a CDS update it notifies its listeners/watchers
-	of the configuration changes, including the load balancing policy to be
-	used. Currently the xDS client only considers the lb_policy field in the CDS
-	update when constructing the update information it sends out. This logic
-	will change to consider the new load_balancing_policy field that will be
-	used as the source of LB policy configuration if it is populated.
-
-	return e2e.UpdateOptions{
-			NodeID:    params.NodeID,
-			Listeners: []*v3listenerpb.Listener{e2e.DefaultClientListener(params.DialTarget, routeConfigName)},
-			Routes:    []*v3routepb.RouteConfiguration{e2e.DefaultRouteConfig(routeConfigName, params.DialTarget, clusterName)},
-
-			// This top level pb is what needs to change -
-			// this has the two fields described in the above language
-			Clusters:  []*v3clusterpb.Cluster{clusterWithOutlierDetection(clusterName, endpointsName, params.SecLevel)},
-			Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.DefaultEndpoint(endpointsName, params.Host, ports)},
-		}
-	*/
-	// default cluster?
-	// then add field?
-	// will also test that old Field doesn't get used and new one takes precedence
-	cluster := e2e.DefaultCluster(clusterName, edsServiceName, secLevel)
-	// cluster.LoadBalancingPolicy
-	// this should take precedence over the old field
-	cluster.LoadBalancingPolicy = &v3clusterpb.LoadBalancingPolicy{
-		Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
-			{
-				TypedExtensionConfig: &v3corepb.TypedExtensionConfig{ // wait no this needs to be a child of wrr_locality
-					Name: "noop name",
-					// I think like my helper make this a knob?
-					TypedConfig: wrrLocalityAny(&v3.TypedStruct{ // this hardcodes this to wrrLocalityAny, make this a knob?
-						TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy", // make this name correspond to the balancer you register above...
-						Value:   &structpb.Struct{},
-					}),
-				},
-			},
-		},
-	}
-
-	// does the rest of the configuration map to the static configuration?
-
-}
 
 // wrrLocality is a helper that takes a proto message and returns a
 // WrrLocalityProto with the proto message marshaled into a proto.Any as a
@@ -266,6 +197,16 @@ func wrrLocalityAny(m proto.Message) *anypb.Any {
 
 // ring hash
 
+/*
+Other helper amounts to:
+wrrLocalityAny(&v3.TypedStruct{
+						TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy", // make this name correspond to the balancer you register above...
+						Value:   &structpb.Struct{},
+					}),
+
+call this helper with this expression for proto message... (knob for t-test)
+*/
+
 // clusterWithLBConfiguration returns a cluster resource with the proto message Marshaled as an any
 // and specified through the load_balancing_policy field.
 func clusterWithLBConfiguration(clusterName, edsServiceName string, secLevel e2e.SecurityLevel, m proto.Message) *v3clusterpb.Cluster {
@@ -288,10 +229,6 @@ func clusterWithLBConfiguration(clusterName, edsServiceName string, secLevel e2e
 			},
 		},
 	} // nothing is below EDS so I think change CDS and EDS and we shpuld be good here
-}
-
-func endpointWithPortsInMultipleLocalities() {
-
 }
 
 

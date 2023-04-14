@@ -554,8 +554,6 @@ type EndpointOptions struct {
 
 // DefaultEndpoint returns a basic xds Endpoint resource.
 func DefaultEndpoint(clusterName string, host string, ports []uint32) *v3endpointpb.ClusterLoadAssignment {
-	// to make backwards compatible just have ports be
-	// placed into the first index representing locality 1
 	return EndpointResourceWithOptions(EndpointOptions{
 		ClusterName: clusterName,
 		Host:        host,
@@ -563,37 +561,17 @@ func DefaultEndpoint(clusterName string, host string, ports []uint32) *v3endpoin
 	})
 }
 
-// same helper that calls function below...
-// or just same helper that keeps the rest of the resources section available to use and hardcoded...to keep rest of tree
-// static
-
 // returns an xDS Endpoint resource configured with provided options
+
+// EndpointResourceWithOptionsMultipleLocalities...
 func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endpointpb.ClusterLoadAssignment {
-	// call with (in common setup for main test or t test when you make it t test)
-	/*callOpts := EndpointOptions{
-		ClusterName: clusterName, // same clusterName
-		Host: host, // localhost
-		PortsInLocalities: [][]uint32{
-			{1, 2},
-			{3, 4, 5},
-		},
-		LocalityWeights: []uint32{
-			1,
-			2,
-		},
-	}*/
 	// Is there anything else you need to configure this with? I feel like perhaps since now multiple localities?
 	// See what the client spits out wrt struct?
 
 	var endpoints []*v3endpointpb.LocalityLbEndpoints
 
-	// new
-	for i, portsInLocality := range opts.PortsInLocalities { // locality: "locality" + i
-		// top level []*v3endpointpb.LocalityLbEndpoints
-		// var localityLBEndpoints *v3endpointpb.LocalityLbEndpoints
-
-
-		var lbEndpoints []*v3endpointpb.LbEndpoint // built out over the port lifetime
+	for i, portsInLocality := range opts.PortsInLocalities {
+		var lbEndpoints []*v3endpointpb.LbEndpoint
 		for _, port := range portsInLocality {
 			lbEndpoints = append(lbEndpoints, &v3endpointpb.LbEndpoint{
 				HostIdentifier: &v3endpointpb.LbEndpoint_Endpoint{Endpoint: &v3endpointpb.Endpoint{
@@ -604,102 +582,26 @@ func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endp
 							PortSpecifier: &v3corepb.SocketAddress_PortValue{PortValue: port}}, // scale up ports too
 					}},
 				}},
-				LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1}, // this is the knob you need to add for locality weights - scale up the endpoint options field (backwards compatible fields)
+				LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1},
 			})
-
-			// append to top level - each node having it's own lbEndpoints
 		}
 
-		/*localityLBEndpoints = &v3endpointpb.LocalityLbEndpoints{ // can make this inline
+		endpoints = append(endpoints, &v3endpointpb.LocalityLbEndpoints{
 			Locality:    &v3corepb.Locality{
 				Region: "region" + string(i),
 				Zone: "zone" + string(i),
 				SubZone: "subzone" + string(i),
 			},
 			LbEndpoints: lbEndpoints,
-			LoadBalancingWeight: &wrapperspb.UInt32Value{Value: opts.LocalityWeights[i]}, // I think this is the knob you need to add for localities keep this as 1 for simplicitly? or could make pick first choose first one with endpoint weight 2 but that would tie it to implementation and this would be simpler
-			Priority:            0,
-		}*/
-
-		endpoints = append(endpoints, &v3endpointpb.LocalityLbEndpoints{ // can make this inline
-			Locality:    &v3corepb.Locality{
-				Region: "region" + string(i),
-				Zone: "zone" + string(i),
-				SubZone: "subzone" + string(i),
-			},
-			LbEndpoints: lbEndpoints,
-			// made csp specifiable
-			LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1}, // I think this is the knob you need to add for localities keep this as 1 for simplicitly? or could make pick first choose first one with endpoint weight 2 but that would tie it to implementation and this would be simpler
+			LoadBalancingWeight: &wrapperspb.UInt32Value{Value: opts.LocalityWeights[i]},
 			Priority:            0,
 		})
 	}
-	// new
 
-
-	// old
-	for _, port := range opts.Ports { // oh there you go, just need ports across multiple localities
-		lbEndpoints = append(lbEndpoints, &v3endpointpb.LbEndpoint{
-			HostIdentifier: &v3endpointpb.LbEndpoint_Endpoint{Endpoint: &v3endpointpb.Endpoint{
-				Address: &v3corepb.Address{Address: &v3corepb.Address_SocketAddress{
-					SocketAddress: &v3corepb.SocketAddress{
-						Protocol:      v3corepb.SocketAddress_TCP, // still on tcp
-						Address:       opts.Host, // if you want knob scale up opts struct localhost
-						PortSpecifier: &v3corepb.SocketAddress_PortValue{PortValue: port}}, // scale up ports too
-				}},
-			}},
-			LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1}, // this is the knob you need to add for locality weights - scale up the endpoint options field (backwards compatible fields)
-		})
-
-		// add:
-
-		// finish add
-
-	}
-	// old
-
-
-
-	// rest of stuff kept constant for the rest of the system to continue to work properly...
-
-
-	// still need to set up the system with two localites and 12 345 with different weights...
-	// number of localities - 2 (0, 1) starting index 1
-	// portsWithWeight{port, weight, (locality)?}
 	cla := &v3endpointpb.ClusterLoadAssignment{
 		ClusterName: opts.ClusterName,
-		Endpoints: []*v3endpointpb.LocalityLbEndpoints{
-			{
-				Locality:    &v3corepb.Locality{SubZone: "subzone"},
-				LbEndpoints: lbEndpoints,
-				// made csp specifiable
-				LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1}, // I think this is the knob you need to add for localities
-				Priority:            0,
-			},
-			// scale this array up to represent another locality (construct a new lbEndpoints struct and
-			// put it here...based on 12 345 345 partition)
-		},
+		Endpoints: endpoints,
 	}
-
-	// locality weights
-	// hosts in each locality
-
-	// The locality layer is random - weighted target, what's best way to get rid of randomness in tests/test this
-	// see locality layer
-	// and also Easwar's test I reviewed nice has wrr check
-
-	// "which takes into account both layers"
-	// so pass in 12 345 345 in addrs want, and weighted round robin check after setting up system
-
-	// configure the scenario of L1: (1 2) L2: (3 4 5), does the codebase not have tests already for r
-
-	// check 1 2 345 345, weighted target isn't deterministic? if it is you can
-	// assert distribution as such
-
-	// also add a locality here, what tests do we have for e.g. e2e round robin?
-
-	// we're not populating the address map, we're letting vvv
-	// cluster resolver (part of our system, prepares this)
-	// unit tests in wrr_locality simulate ^^^
 
 	var drops []*v3endpointpb.ClusterLoadAssignment_Policy_DropOverload
 	for category, val := range opts.DropPercents {
@@ -711,7 +613,7 @@ func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endp
 			},
 		})
 	}
-	if len(drops) != 0 {
+	if len(drops) != 0 { // Like Easwar asked, is this field relevant?
 		cla.Policy = &v3endpointpb.ClusterLoadAssignment_Policy{
 			DropOverloads: drops,
 		}
@@ -723,63 +625,30 @@ func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endp
 // the provided options.
 func EndpointResourceWithOptions(opts EndpointOptions) *v3endpointpb.ClusterLoadAssignment {
 	var lbEndpoints []*v3endpointpb.LbEndpoint
-	for _, port := range opts.Ports { // oh there you go, just need ports across multiple localities
+	for _, port := range opts.Ports {
 		lbEndpoints = append(lbEndpoints, &v3endpointpb.LbEndpoint{
 			HostIdentifier: &v3endpointpb.LbEndpoint_Endpoint{Endpoint: &v3endpointpb.Endpoint{
 				Address: &v3corepb.Address{Address: &v3corepb.Address_SocketAddress{
 					SocketAddress: &v3corepb.SocketAddress{
-						Protocol:      v3corepb.SocketAddress_TCP, // still on tcp
-						Address:       opts.Host, // if you want knob scale up opts struct localhost
-						PortSpecifier: &v3corepb.SocketAddress_PortValue{PortValue: port}}, // scale up ports too
+						Protocol:      v3corepb.SocketAddress_TCP,
+						Address:       opts.Host,
+						PortSpecifier: &v3corepb.SocketAddress_PortValue{PortValue: port}},
 				}},
 			}},
-			LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1}, // this is the knob you need to add for locality weights - scale up the endpoint options field (backwards compatible fields)
+			LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1},
 		})
-
-		// add:
-
-		// finish add
-
 	}
-	// still need to set up the system with two localites and 12 345 with different weights...
-	// number of localities - 2 (0, 1) starting index 1
-	// portsWithWeight{port, weight, (locality)?}
 	cla := &v3endpointpb.ClusterLoadAssignment{
 		ClusterName: opts.ClusterName,
 		Endpoints: []*v3endpointpb.LocalityLbEndpoints{
 			{
 				Locality:    &v3corepb.Locality{SubZone: "subzone"},
 				LbEndpoints: lbEndpoints,
-				// made csp specifiable
-				LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1}, // I think this is the knob you need to add for localities
+				LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1},
 				Priority:            0,
 			},
-			// scale this array up to represent another locality (construct a new lbEndpoints struct and
-			// put it here...based on 12 345 345 partition)
 		},
 	}
-
-	// locality weights
-	// hosts in each locality
-
-	// The locality layer is random - weighted target, what's best way to get rid of randomness in tests/test this
-	// see locality layer
-	// and also Easwar's test I reviewed nice has wrr check
-
-	// "which takes into account both layers"
-	// so pass in 12 345 345 in addrs want, and weighted round robin check after setting up system
-
-	// configure the scenario of L1: (1 2) L2: (3 4 5), does the codebase not have tests already for r
-
-	// check 1 2 345 345, weighted target isn't deterministic? if it is you can
-	// assert distribution as such
-
-	// also add a locality here, what tests do we have for e.g. e2e round robin?
-
-	// we're not populating the address map, we're letting vvv
-	// cluster resolver (part of our system, prepares this)
-	// unit tests in wrr_locality simulate ^^^
-
 	var drops []*v3endpointpb.ClusterLoadAssignment_Policy_DropOverload
 	for category, val := range opts.DropPercents {
 		drops = append(drops, &v3endpointpb.ClusterLoadAssignment_Policy_DropOverload{
