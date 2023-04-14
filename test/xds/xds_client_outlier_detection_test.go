@@ -224,7 +224,7 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 	}
 	// At first, due to no statistics on each of the backends, the 3
 	// upstreams should all be round robined across.
-	if err = checkRoundRobinRPCs(ctx, client, fullAddresses); err != nil {
+	if err = checkRoundRobinRPCs(ctx, client, fullAddresses); err != nil { // why did I have to change this?
 		t.Fatalf("error in expected round robin: %v", err)
 	}
 

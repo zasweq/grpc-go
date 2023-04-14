@@ -278,7 +278,7 @@ func (s) TestUpdateClientConnState(t *testing.T) { // I don't this this needs it
 		t.Fatalf("UpdateClientConnState got unexpected weighted target config (-got, +want): %v", diff)
 	}
 	// too many knobs to make t-test
-}
+} // this test worked it just didn't have child correctly mocked tp capture emissions
 
 // what is the expected result if it gets invalid UpdateClientConnState inputs?
 
@@ -310,3 +310,22 @@ func (mc *mockBalancer) UpdateClientConnState(s balancer.ClientConnState) {
 // and obv. this will get tested e2e in the xDS tree in xDS e2e tests...
 
 // separate e2e package to test public API
+
+
+func (s) TestUpdateClientConnStateE2E(t *testing.T) {
+	// Doug's suggestion - through config parser
+	parser := bb{}
+	// you get load balancing config from public API
+	lbc, err := parser.ParseConfig(/*json.RawMessage*/)
+	if err != nil {
+
+	}
+	parser.Build() // wait my test already does this through setup - just not through ParseConfig like the balancer API expects
+
+	// cleaner way of populating addresses passed into UpdateClientConnState
+	// here
+
+	// PROBLEM SOLVING: mock the balancer below somehow to verify
+	// it gets configured with correct configuration
+
+}
