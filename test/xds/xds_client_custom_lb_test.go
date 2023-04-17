@@ -388,6 +388,9 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 
 	// Figure out how to test distribution
 	fullAddresses := []resolver.Address{
+		// backends addresses actually require you spin up backends
+
+		// helper counts these
 		// 1 - backends addresses or localhost + port that we spin up or are these logically equivalent?
 		// 2
 		// 3
@@ -415,3 +418,6 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 func (s) TestCustomLBErrorConditions(t *testing.T) { // or is this already handled by unit tests?
 
 }
+
+// all old tests pass as usual - no explicit tests on wrr_locality behavior though
+// just sanity checks
