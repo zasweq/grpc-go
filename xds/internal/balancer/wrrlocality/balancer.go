@@ -47,7 +47,23 @@ func (bb) Name() string {
 	return Name
 }
 
+// To overwrite child for testing purposes for both of these functions...verify
+// config it's only function is to prepare config, soooooo I think doing that is
+// fine
+var newWRRLocality = newWrrLocalityWithChild
+
+func newWrrLocalityWithChild(child balancer.Balancer) *wrrLocality {
+	return &wrrLocality{ // not important for critical path, happens on balancer build time
+		child: child, // child needs to implement full balancer.Balancer interface for it to work
+	}
+	// in tests:
+	// ignore child
+	// close on testing balancer, can use that channel to verify configs
+}
+
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
+
+	// Two operations: get the builder and builder.Build which returns wtb
 	builder := balancer.Get(weightedtarget.Name)
 	if builder == nil {
 		// Shouldn't happen, registered through imported weighted target,
@@ -55,16 +71,23 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 		return nil
 	}
 
+
 	// Doesn't need to intercept any balancer.ClientConn operations; pass
 	// through by just giving cc to child balancer.
 	wtb := builder.Build(cc, bOpts)
+
+
+	/*
 	if wtb == nil { // can this even happen?
 		// shouldn't happen, defensive programming
 		return nil
 	}
-	wrrL := &wrrLocality{
+	wrrL := &wrrLocality{ // not important for critical path, happens on balancer build time, extra function call is nothing
 		child: wtb,
 	}
+	*/
+	wrrL := newWRRLocality(wtb)
+
 	wrrL.logger = prefixLogger(wrrL)
 	wrrL.logger.Infof("Created")
 	return wrrL
