@@ -19,7 +19,19 @@
 // Package e2e_test contains e2e test cases for the WRR Locality LB Policy.
 package e2e_test
 
-import "testing"
+import (
+	"testing"
+
+	"google.golang.org/grpc/internal/grpctest"
+)
+
+type s struct {
+	grpctest.Tester
+}
+
+func Test(t *testing.T) {
+	grpctest.RunSubTests(t, s{})
+}
 
 // write the logic for this after the other test?
 func (s) TestWRRLocalityE2E(t *testing.T) {

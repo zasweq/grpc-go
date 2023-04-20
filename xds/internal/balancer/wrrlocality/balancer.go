@@ -16,6 +16,8 @@
  *
  */
 
+// switch this to Easwar's comment about URL formatting
+
 // Package wrrlocality provides an implementation of the wrr locality LB policy,
 // as defined in
 // https://github.com/grpc/proposal/blob/master/A52-xds-custom-lb-policies.md.
@@ -47,46 +49,27 @@ func (bb) Name() string {
 	return Name
 }
 
-// To overwrite child for testing purposes for both of these functions...verify
-// config it's only function is to prepare config, soooooo I think doing that is
-// fine
-var newWRRLocality = newWrrLocalityWithChild
-
-func newWrrLocalityWithChild(child balancer.Balancer) *wrrLocality {
-	return &wrrLocality{ // not important for critical path, happens on balancer build time
-		child: child, // child needs to implement full balancer.Balancer interface for it to work
-	}
-	// in tests:
-	// ignore child
-	// close on testing balancer, can use that channel to verify configs
-}
+// To plumb in a different child in tests.
+var weightedTargetName = weightedtarget.Name
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
-
-	// Two operations: get the builder and builder.Build which returns wtb
-	builder := balancer.Get(weightedtarget.Name)
+	builder := balancer.Get(weightedTargetName)
 	if builder == nil {
 		// Shouldn't happen, registered through imported weighted target,
 		// defensive programming.
 		return nil
 	}
 
-
 	// Doesn't need to intercept any balancer.ClientConn operations; pass
 	// through by just giving cc to child balancer.
 	wtb := builder.Build(cc, bOpts)
-
-
-	/*
-	if wtb == nil { // can this even happen?
-		// shouldn't happen, defensive programming
+	if wtb == nil {
+		// shouldn't happen, defensive programming.
 		return nil
 	}
-	wrrL := &wrrLocality{ // not important for critical path, happens on balancer build time, extra function call is nothing
+	wrrL := &wrrLocality{
 		child: wtb,
 	}
-	*/
-	wrrL := newWRRLocality(wtb)
 
 	wrrL.logger = prefixLogger(wrrL)
 	wrrL.logger.Infof("Created")
@@ -114,35 +97,27 @@ func (a AddrInfo) Equal(o interface{}) bool {
 } // idk I don't like this code block...
 
 
+// AddrInfo...
 type AddrInfo struct {
 	LocalityWeight uint32
 }
 
+// SetAddrInfo...
 func SetAddrInfo(addr resolver.Address, addrInfo AddrInfo) resolver.Address {
 	addr.BalancerAttributes = addr.BalancerAttributes.WithValue(attributeKey{}, addrInfo)
 	return addr
 }
 
-func GetAddrInfo(addr resolver.Address) AddrInfo { // Do I even need this exported if it's called internally?
+// getAddrInfo...
+func getAddrInfo(addr resolver.Address) AddrInfo { // Do I even need this exported if it's called internally?
 	v := addr.BalancerAttributes.Value(attributeKey{})
 	ai, _ := v.(AddrInfo)
 	return ai
 }
 
-
-
-
-
-
-
-
-// triggered by new addresses:, so part of the UpdateClientConnState operation I'm assuming
-// weightedTargets[localityStr] = weightedtarget.Target{Weight: locality.Weight, ChildPolicy: childPolicy}
-
-// the whole state or just the addresses?
-
 // what state does this need and what operations do you need to intercept here?
-type wrrLocality struct { // experimental is only type of name
+// It's only function is to build the config. I think this is all you need.
+type wrrLocality struct {
 	// 1:1 with weighted target - prepares it and is coupled, this never changes after construction right just updates?
 	child balancer.Balancer
 
@@ -169,11 +144,12 @@ func (b *wrrLocality) UpdateClientConnState(s balancer.ClientConnState) error {
 		locality := internal.GetLocalityID(addr)
 		localityString, err := locality.ToString() // where do I populate this?
 		if err != nil {
+			// Shouldn't happen
 			logger.Infof("failed to marshal LocalityID: %v, skipping this locality in weighted target")
 		}
 		// localityWeight = getLocalityWeight(addr) I think the setting is where it takes the "first one" logically
 		// what happens in the failure case?
-		ai := GetAddrInfo(addr) // make unexported since just used here?
+		ai := getAddrInfo(addr) // make unexported since just used here?
 		// Are all these reads safe? i.e. any nil dereferences like Doug was worried about?
 		weightedTargets[localityString] = weightedtarget.Target{Weight: ai.LocalityWeight, ChildPolicy: lbCfg.ChildPolicy/*config.ChildPolicy verbatim*/}
 	}
@@ -191,8 +167,7 @@ func (b *wrrLocality) UpdateClientConnState(s balancer.ClientConnState) error {
 	*/
 
 	// so for e2e (i.e. it as top level balancer of channel) I think you
-	// just expect more than 2/3rds of RPCs to go to (or the weights) to go to that backend
-
+	// just expect more than 2/3rds of RPCs to go to (or the weights) to go to that backend - part of e2e xDS testing should work as usual
 	return b.child.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState: s.ResolverState, // This is what Outlier Detection does, so I think we're good here
 		BalancerConfig: wtCfg,
@@ -208,20 +183,6 @@ func (b *wrrLocality) UpdateSubConnState(sc balancer.SubConn, scState balancer.S
 	b.child.UpdateSubConnState(sc, scState)
 }
 
-func (b *wrrLocality) Close() { // can't call other operations after close, but nothing gets called after this close so unless other things can close child don't need to worry
+func (b *wrrLocality) Close() {
 	b.child.Close()
 }
-
-// two concepts: (at what layer do each of these happen and in what operations build and update client conn state)
-
-// wrrlocality:
-// building the balancer
-// updating the balancers configuration
-
-// child:
-// building the balancer - statically build since 1:1 when you build wrrlocality?
-// updating the balancers configuration - needs locality weights
-
-
-// balancer.ClientConn calls are pass through right this doesn't need to intercept anything that way
-// just build downward

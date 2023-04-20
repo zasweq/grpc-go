@@ -139,7 +139,7 @@ type mockClientConn struct {}
 
 func setup(t *testing.T) (*wrrLocality, func()) { // rename to wrrLocalityBalancer? Also if needed return a tcc here
 	t.Helper()
-	builder := balancer.Get(Name)
+	builder := balancer.Get(Name) // does do flow of getting builder, and using it to build lb struct on heap with all corresponding threads
 	if builder == nil {
 		t.Fatalf("balancer.Get(%q) returned nil", Name)
 	}
@@ -165,7 +165,7 @@ func setup(t *testing.T) (*wrrLocality, func()) { // rename to wrrLocalityBalanc
 // the endpoint picking policy defined in the Balancer Config and construct a
 // weighted target configuration corresponding to these inputs.
 func (s) TestUpdateClientConnState(t *testing.T) {
-	cfgOrErrCh := testutils.NewChannel()
+	cfgCh := testutils.NewChannel()
 	/*mb := &mockBalancer{
 		cfgOrErrCh: cfgOrErrCh,
 	}
@@ -180,6 +180,11 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 			child: mb, // wtf why...
 		}
 	}*/
+	oldWeightedTargetName := weightedTargetName
+	defer func() {
+		weightedTargetName = oldWeightedTargetName
+	}()
+	weightedTargetName = "mock_weighted_target" // have it point to balancer registered below
 
 	// ccsCh := testutils.NewChannel()
 	// hardcodes weighted target child but even if you mock you can
@@ -187,20 +192,26 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 	// but the balancer brings it in, so prob need to mock constructor since prebuilt
 	stub.Register("mock_weighted_target", stub.BalancerFuncs{ // can't do this because it conflicts with weighted target on the stack
 		UpdateClientConnState: func(bd *stub.BalancerData, ccs balancer.ClientConnState) error {
-			ccsCh.Send(ccs.BalancerConfig)
-			wtCfg, ok := s.BalancerConfig.(*weightedtarget.LBConfig)
+			// cfgCh.Send(ccs.BalancerConfig)
+			wtCfg, ok := ccs.BalancerConfig.(*weightedtarget.LBConfig)
 			if !ok {
 				// send on err ch - config sent down must be weighted target, important
 				// verification to make.
-				mb.cfgOrErrCh.Send(errors.New("child received config that was not a weighted target config"))
+				// cfgCh.Send(errors.New("child received config that was not a weighted target config")) // this will block if need a recv for return, reader error chan?
+				/*
+				UpdateClientConnState can error from:
+				1. this call can print
+				2. receiving a config with bad type
+				*/
+				return errors.New("child received config that was not a weighted target config") // could also just return an error
 			}
 
 			// can't do verification here unless you persist want, which will be more work
 
 			// send the wtCfg on the channel - either sends error or config
-			mb.cfgOrErrCh.Send(wtCfg) // typecast to *weightedtarget.LBConfig
+			defer cfgCh.Send(wtCfg) // typecast to *weightedtarget.LBConfig
+			return nil
 		},
-		// only test functionality other operations are tested by e2e
 	})
 
 	// but plumbs in child balancer at build time...so if you want to plumb in mock
@@ -248,31 +259,46 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 	addr2 = internal.SetLocalityID(addr2, lID2)
 	addr2 = SetAddrInfo(addr2, AddrInfo{LocalityWeight: 1})
 	addrs = append(addrs, addr2)
-	ccs.ResolverState.Addresses = addrs
+	ccs.ResolverState.Addresses = addrs // if t-test this needs to be specified
 
 	// 2. The wrrL config with child policy round robin...
 	// can merge ccs into an inline declaration later
+
+	// The parsed load balancing configuration returned by the builder's
+	// ParseConfig method, if implemented.
+
+	// func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error)
+	// so the only difference is you fill out a JSON string and then build out this BalancerConfig
+
+	// I think declaring this here inline is fine it's just a unit test
+
+
 	ccs.BalancerConfig = &LBConfig{
 		ChildPolicy: &internalserviceconfig.BalancerConfig{
 			Name: "round_robin",
 		},
 	}
 
-	wrrL.UpdateClientConnState(ccs)
+	err := wrrL.UpdateClientConnState(ccs)
+	if err != nil {
+		// two things: error from child's UpdateClientConnState
+		// receive a bad config type (maybe try that as a unit test lol)
+		// localityID issue can never happen
+		t.Fatalf("unexpected error from UpdateClientConnState(maybe log ccs): %v", err)
+	}
 
-
-
+	// want err etc.
 
 	// honestly easier just to overwrite name and do it this way
 	// by registering stub balancer...combine with codeblock below with channels etc.
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	/*ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	cfg, err := ccsCh.Receive(ctx)
 	if err != nil {
 		t.Fatalf("timed out waiting for UpdateClientConnState on the first child balancer: %v", err)
-	}
+	}*/
 	// Verification on the weighted target config
-	var gotWtCfg *weightedtarget.LBConfig
+	/*var gotWtCfg *weightedtarget.LBConfig
 	var ok bool
 
 	if gotWtCfg, ok = cfg.(*weightedtarget.LBConfig); !ok {
@@ -280,23 +306,34 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 	} else { // or just declare vars earlier to get rid of the else and have early return earlier
 		// Targets map[string]Target
 
-	}
+	}*/
 
 
 
 
+	/*
+	lID := internal.LocalityID{
+			Region: "region-1", // actually won't the string be region/zone/subzone, including top level locality string
+			Zone: "zone-1",
+			SubZone: "subzone-1",
+		}
+	*/
 
-
+	// Three tasks:
+	// 1. Get rid of non determinism
+	// 2. Cleanup this file
+	// 3. Does this need another test case or is this single sanity check fine? My gut tells me the latter. that's all it needs
+	// (see tests for wt builder in cluster_resolver?)
 
 	wantWtCfg := &weightedtarget.LBConfig{
 		Targets: map[string]weightedtarget.Target{
-			"locality-1": {
+			"{\"region\":\"region-1\",\"zone\":\"zone-1\",\"subZone\":\"subzone-1\"}": {
 				Weight: 2,
 				ChildPolicy: &internalserviceconfig.BalancerConfig{
 					Name: "round_robin",
 				},
 			},
-			"locality-2": {
+			"{\"region\":\"region-2\",\"zone\":\"zone-2\",\"subZone\":\"subzone-2\"}": {
 				Weight: 1,
 				ChildPolicy: &internalserviceconfig.BalancerConfig{
 					Name: "round_robin",
@@ -307,122 +344,29 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 	}
 
 	// wtCfg vs. wantCfg
-	if diff := cmp.Diff(gotWtCfg, wantWtCfg); diff != "" {
+	/*if diff := cmp.Diff(gotWtCfg, wantWtCfg); diff != "" {
 		t.Fatalf("UpdateClientConnState got unexpected weighted target config (-got, +want): %v", diff)
-	}
+	}*/
 	// too many knobs to make t-test
 
 
-
-	// either it times out
-	// or sends an (config || error)
-	// recv config off channel, cfg or error
-
-	// if timed out fail
-	//     early return
-
-	// typecast
-	//     if error fail
-	//     if cfg gotCfg = cfg
-
-	// cmp.Diff wantCfg vs. wantCfg
-
-	cfgOrErr, err := cfgOrErrCh.Receive(ctx)
+	// could defer the channel push? that would cause it to not block forever.
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	cfg, err := cfgCh.Receive(ctx)
 	if err != nil {
-		// Logically, this means UpdateClientConnState never got called in the first place.
+		// Logically, this means UpdateClientConnState never got called in the first place because timeout.
 		t.Fatalf("error from cfgOrErrCh: %v", err)
 	}
-	if err, ok := cfgOrErr.(error); ok {
-		t.Fatalf("error received from cfgOrErrCh: %v", err)
-	}
 
-	gotWtCfg, ok = cfgOrErr.(*weightedtarget.LBConfig)
+	gotWtCfg, ok := cfg.(*weightedtarget.LBConfig)
 	if !ok {
-		// Shouldn't happen
+		// Shouldn't happen - only sends a config on this
+		t.Fatalf("Unexpected config type received from channel %T", gotWtCfg)
 	}
 
 	if diff := cmp.Diff(gotWtCfg, wantWtCfg); diff != "" {
-
+		t.Fatalf("child received unexpected wtCfg, diff (-got, +want): %v", diff)
 	}
-} // this test worked it just didn't have child correctly mocked tp capture emissions
-
-// what is the expected result if it gets invalid UpdateClientConnState inputs?
-
-// will it import it's a different file...
-
-type mockBalancer struct {
-	// channel to send on - either verify in the component or send the config on the channel and verify in test goroutine
-	// errCh
-	// wtCh // one channel or two channels - I think I've done this before and I typecasted on errCh
-
-	cfgOrErrCh *testutils.Channel
 }
 
-func (mb *mockBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
-	// s.BalancerConfig // here
-	// typecast to balancer config, should work
-	wtCfg, ok := s.BalancerConfig.(*weightedtarget.LBConfig)
-	if !ok {
-		// send on err ch - config sent down must be weighted target, important
-		// verification to make.
-		mb.cfgOrErrCh.Send(errors.New("child received config that was not a weighted target config"))
-	}
-
-	// can't do verification here unless you persist want, which will be more work
-
-	// send the wtCfg on the channel - either sends error or config
-	mb.cfgOrErrCh.Send(wtCfg) // typecast to *weightedtarget.LBConfig
-}
-
-// other operations as a no-op
-func (mb *mockBalancer) ResolverError(_ error) {}
-
-func (mb *mockBalancer) UpdateSubConnState(_ balancer.SubConn, _ balancer.SubConnState) {}
-
-func (mb *mockBalancer) Close() {}
-
-
-// assertion on LB Config equality:
-
-// Equal method on LB Config type? it's just child policy
-// will that affect other tests
-
-// wait no it's wtCfg vs. wtCfg. This might already be there...
-
-
-
-// e2e test top level balancer with weights determining percentage of RPCs sent to backends
-
-// just a wrapper that prepares weighed target config
-// so just take weighted target e2e_tests and wrap them with this
-// UpdateClientConnState...once you write test you can see exactly how to wrap
-
-
-// It does create a weighted targt, need to mock
-// Well at least it works with creation etc.
-
-// or is there another way to verify the child balancer works?
-
-
-// and obv. this will get tested e2e in the xDS tree in xDS e2e tests...
-
-// separate e2e package to test public API
-
-
-func (s) TestUpdateClientConnStateE2E(t *testing.T) {
-	// Doug's suggestion - through config parser
-	parser := bb{}
-	// you get load balancing config from public API
-	lbc, err := parser.ParseConfig(/*json.RawMessage*/)
-	if err != nil {
-
-	}
-	parser.Build() // wait my test already does this through setup - just not through ParseConfig like the balancer API expects
-
-	// cleaner way of populating addresses passed into UpdateClientConnState
-	// here
-
-	// PROBLEM SOLVING: mock the balancer below somehow to verify
-	// it gets configured with correct configuration
-
-}
