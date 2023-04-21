@@ -21,7 +21,7 @@ package xds_test
 import (
 	"context"
 	"fmt"
-	v3 "github.com/cncf/xds/go/xds/type/v3"
+	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	v3endpointpb "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	v3listenerpb "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
@@ -29,7 +29,6 @@ import (
 	v3roundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/round_robin/v3"
 	v3wrrlocalitypb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
 	"github.com/golang/protobuf/proto"
-	structpb "github.com/golang/protobuf/ptypes/struct"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/credentials/insecure"
@@ -43,7 +42,6 @@ import (
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/protobuf/types/known/anypb"
 	"testing"
-	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 )
 
 // message to Terry:
@@ -82,7 +80,7 @@ func (bb) Name() string {
 // gets an UpdateClientConnState with []addresses corresponding to each locality
 
 
-
+/*
 type customLB struct {
 	// I think make this pick first (by wrapping?)
 	// and do 1 22 1 22 expected distribution - plumb into my scenario by picking first of...what? 1 22 1 22?
@@ -117,7 +115,7 @@ func (p *customLBPickFirstPicker) Pick(info balancer.PickInfo) (balancer.PickRes
 		SubConn: sc,
 
 	}, nil
-}
+}*/
 
 // how do you even inject error?
 // custom LB return a certain error type only thing knows about (like how TD doesn't know about new error type)
@@ -130,7 +128,7 @@ const customLBPickFirstName = "pick_first"
 
 // UpdateState with a picker that does something interesting - write scenario in
 // notebook below and implement it with this picker, test distribution?
-
+/*
 func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 	// Turn on env var here to not gate the client
 	oldCustomLBSupport := envconfig.XDSCustomLBPolicy
@@ -146,20 +144,6 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 	// stubserver that responds with correct behavior?
 
 	// we need to verify distribution somehow - perhaps do that through stub servers and counters?
-	port1, cleanup1 := startTestService(t, /*do we need a stub server for anything?*/)
-	defer cleanup1()
-
-	port2, cleanup2 := startTestService(t, /*do we need a stub server for anything? Maybe to verify calls?*/)
-	defer cleanup2()
-
-	port3, cleanup3 := startTestService(t, /*do we need a stub server for anything?*/)
-	defer cleanup3()
-
-	port4, cleanup4 := startTestService(t, /*do we need a stub server for anything?*/)
-	defer cleanup4()
-
-	port5, cleanup5 := startTestService(t, /*do we need a stub server for anything? perhaps the adresses*/)
-	defer cleanup5()
 
 	// Configure a wrr_locality balancer with a custom lb child that is
 	// essentially pick first as the locality picking policy and endpoint
@@ -177,7 +161,7 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 	Note that when registering custom policy implementations in the gRPC load
 	balancer registry, the name should follow valid protobuf message naming
 	conventions and use a custom package, e.g. "myorg.MyCustomLb". (see converter_test?)
-	*/
+
 
 
 
@@ -241,7 +225,7 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 
 	// the endpoint picking policy - another mathematical rr across the 75% and 25% bucket
 
-}
+}*/
 
 // knob you need to pass through function hierarchy - let the whole thing be a knob?
 
@@ -312,6 +296,7 @@ func clusterWithLBConfiguration(clusterName, edsServiceName string, secLevel e2e
 			},
 		},
 	} // nothing is below EDS so I think change CDS and EDS and we should be good here
+	return cluster
 }
 
 // clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities returns default
@@ -343,6 +328,8 @@ func clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(params e2e.Re
 		})}, // test emissions at each layer if this doesn't work i.e. log emissions
 	}
 }
+
+// Other tests in this suite should pass as usual...blank import wrr or no need since already in xDS hierarchy?
 
 // vvv this one is easier. Get this working then map to custom LB stuff ^^^
 
@@ -376,6 +363,8 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
 	}()
 
+	// blank import rr?
+
 	// do we need to stub anything?
 	managementServer, nodeID, _, r, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
 	defer cleanup()
@@ -384,45 +373,21 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 	// stubserver gives you addresses
 
 	// we need to verify distribution somehow - perhaps do that through stub servers and counters?
-	backend1 := &stubserver.StubServer{
-		EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) {
-			return &testpb.Empty{}, nil
-		},
-	}
-	port1, cleanup1 := startTestService(t, backend1/*do we need a stub server for anything?*/)
-	defer cleanup1()
-
-	backend2 := &stubserver.StubServer{
-		EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) {
-			return &testpb.Empty{}, nil
-		},
-	}
-	port2, cleanup2 := startTestService(t, backend2/*do we need a stub server for anything? Maybe to verify calls?*/)
-	defer cleanup2()
-
-	backend3 := &stubserver.StubServer{
-		EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) {
-			return &testpb.Empty{}, nil
-		},
-	}
-	port3, cleanup3 := startTestService(t, backend3/*do we need a stub server for anything?*/)
-	defer cleanup3()
-
-	backend4 := &stubserver.StubServer{
-		EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) {
-			return &testpb.Empty{}, nil
-		},
-	}
-	port4, cleanup4 := startTestService(t, backend4/*do we need a stub server for anything?*/)
-	defer cleanup4()
-
-	backend5 := &stubserver.StubServer{
-		EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) { // rebase onto master/my pr as well this will require a lottt of rebasing, what happens to old field?
-			return &testpb.Empty{}, nil
-		},
-	}
-	port5, cleanup5 := startTestService(t, backend5/*do we need a stub server for anything? perhaps the adresses*/)
-	defer cleanup5()
+	backend1 := stubserver.StartTestService(t, nil)
+	port1 := testutils.ParsePort(t, backend1.Address)
+	defer backend1.Stop()
+	backend2 := stubserver.StartTestService(t, nil)
+	port2 := testutils.ParsePort(t, backend2.Address)
+	defer backend2.Stop()
+	backend3 := stubserver.StartTestService(t, nil)
+	port3 := testutils.ParsePort(t, backend3.Address)
+	defer backend3.Stop()
+	backend4 := stubserver.StartTestService(t, nil)
+	port4 := testutils.ParsePort(t, backend4.Address)
+	defer backend4.Stop()
+	backend5 := stubserver.StartTestService(t, nil)
+	port5 := testutils.ParsePort(t, backend5.Address)
+	defer backend5.Stop()
 
 	// Configure a wrr_locality balancer with a rr child as the locality picking
 	// policy and endpoint picking policy, and also configure 2 localities with
@@ -495,21 +460,22 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 
 		// helper counts these
 		// 1 - backends addresses or localhost + port that we spin up (on stubservers or backends) or are these logically equivalent?
-		{Addr: "localhost" + string(port1)}, // try it without spinning up backends (also perhaps move to a helper for the spinning up of 5 backends)
+		{Addr: backend1.Address}, // try it without spinning up backends (also perhaps move to a helper for the spinning up of 5 backends)
 		// 2
-		{Addr: "localhost" + string(port2)},
+		{Addr: backend2.Address},
 		// 3
-		{Addr: "localhost" + string(port3)},
+		{Addr: backend3.Address},
 		// 4
-		{Addr: "localhost" + string(port4)},
+		{Addr: backend4.Address},
 		// 5
-		{Addr: "localhost" + string(port5)},
+		{Addr: backend5.Address},
 		// 3
-		{Addr: "localhost" + string(port3)},
+		{Addr: backend3.Address},
 		// 4 I think functionality equivalent the two options ^^^
-		{Addr: "localhost" + string(port4)},
+		{Addr: backend4.Address},
 		// 5 localhost + port
-		{Addr: "localhost" + string(port5)},
+		{Addr: backend5.Address},
+		{Addr: backend5.Address},
 	}
 
 	// we needed to change this for OD...change it for this one?

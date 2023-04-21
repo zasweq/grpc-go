@@ -416,6 +416,8 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		}
 	}
 
+	// client json -> internal struct
+	// does this marshal back into JSON anywhere else?
 	bc := &internalserviceconfig.BalancerConfig{}
 	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil { // do it here, chu just sticks it on the Update struct
 		// this is the branching logic here
@@ -423,10 +425,17 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		// Shouldn't happen, valid configuration should be emitted from client,
 		// will error out at x.
 
-		b.logger.Infof()
+		b.logger.Infof("Error handling? emitted JSON from xDS Client: %v", err)
+		return
 	}
 	// but if this is invalid the whole system will be invalid - or just don't send down
 	// this is the consumer, so should error here
+
+	// event of full CDS Update sends
+	// config downward, config is full LB Config of internalbalancerconfig.LBConfig type
+
+	// takes JSON emitted, converts to BC here...
+	// to stick bc on child
 	lbCfg.XDSLBPolicy = bc // Don't change xDS Cluster Resolver Load Balancer, just read this there and pass through to priority
 	// how do we want to get this PR out in general? migration?
 	ccState := balancer.ClientConnState{
