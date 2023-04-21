@@ -21,6 +21,7 @@ package xds_test
 import (
 	"context"
 	"fmt"
+	v3 "github.com/cncf/xds/go/xds/type/v3"
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	v3endpointpb "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -29,6 +30,7 @@ import (
 	v3roundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/round_robin/v3"
 	v3wrrlocalitypb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
 	"github.com/golang/protobuf/proto"
+	structpb "github.com/golang/protobuf/ptypes/struct"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/credentials/insecure"
@@ -128,57 +130,55 @@ const customLBPickFirstName = "pick_first"
 
 // UpdateState with a picker that does something interesting - write scenario in
 // notebook below and implement it with this picker, test distribution?
-/*
+
 func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
-	// Turn on env var here to not gate the client
 	oldCustomLBSupport := envconfig.XDSCustomLBPolicy
 	envconfig.XDSCustomLBPolicy = true
 	defer func() {
 		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
 	}()
 
+	// blank import rr?
+
 	// do we need to stub anything?
 	managementServer, nodeID, _, r, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
 	defer cleanup()
 
 	// stubserver that responds with correct behavior?
+	// stubserver gives you addresses
 
 	// we need to verify distribution somehow - perhaps do that through stub servers and counters?
+	backend1 := stubserver.StartTestService(t, nil)
+	port1 := testutils.ParsePort(t, backend1.Address)
+	defer backend1.Stop()
+	backend2 := stubserver.StartTestService(t, nil)
+	port2 := testutils.ParsePort(t, backend2.Address)
+	defer backend2.Stop()
+	backend3 := stubserver.StartTestService(t, nil)
+	port3 := testutils.ParsePort(t, backend3.Address)
+	defer backend3.Stop()
+	backend4 := stubserver.StartTestService(t, nil)
+	port4 := testutils.ParsePort(t, backend4.Address)
+	defer backend4.Stop()
+	backend5 := stubserver.StartTestService(t, nil)
+	port5 := testutils.ParsePort(t, backend5.Address)
+	defer backend5.Stop()
 
-	// Configure a wrr_locality balancer with a custom lb child that is
-	// essentially pick first as the locality picking policy and endpoint
-	// picking policy, and also configure 2 localities with weights (1, 2) which
-	// have backends (12, 345) respectively.
-
-	// Language relating to configuration:
-	/*
-	"The gRPC policy name will be the "type name" part of the value of the
-	type_url field in the TypedStruct. We get this by using the part after the
-	last / character."
-
-	The Struct contained in the TypedStruct will be returned as-is as the configuration JSON object.
-
-	Note that when registering custom policy implementations in the gRPC load
-	balancer registry, the name should follow valid protobuf message naming
-	conventions and use a custom package, e.g. "myorg.MyCustomLb". (see converter_test?)
-
-
-
-
+	// Configure a wrr_locality balancer with a rr child as the locality picking
+	// policy and endpoint picking policy, and also configure 2 localities with
+	// weights (1, 2) which have backends (12, 345) respectively.
+	const serviceName = "my-service-client-side-xds"
 	m := &v3.TypedStruct{
 		TypeUrl: "type.googleapis.com/pick_first", // have this correspond to the name of custom LB registered above
 		Value:   &structpb.Struct{},
 	}
-
-	const serviceName = "my-service-client-side-xds"
-	resources := clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(e2e.ResourceParams{
-		// Are these still correct?
+	resources := clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(e2e.ResourceParams{ // need to maybe get the cluster and pass it in here...
 		DialTarget: serviceName,
 		NodeID: nodeID,
 		Host: "localhost",
-		// End question of correctness...
 		SecLevel: e2e.SecurityLevelNone,
-	}, []uint32{port1, port2, port3, port4, port5}, m) // document must call this helper with 5 ports?
+	}, []uint32{port1, port2, port3, port4, port5}, wrrLocality(m)) // how do these ports get put into localities/how to specify locality weights - "load balancer information about locality weights received from EDS" (we took these ports and I put them in EDS response)
+	// how do we put addresses in each locality? *** I think it's localhost + port which I already did...but make sure
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
@@ -193,8 +193,7 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 	defer cc.Close()
 
 	client := testgrpc.NewTestServiceClient(cc)
-	// gets the addrs?
-	// switch this testpb to interop
+	// ping once before sending to helper?
 	if _, err := client.UnaryCall(ctx, &testpb.SimpleRequest{}); err != nil {
 		t.Fatalf("Unary RPC failed, error: %v", err)
 	}
@@ -225,7 +224,33 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 
 	// the endpoint picking policy - another mathematical rr across the 75% and 25% bucket
 
-}*/
+	// scenario 2: wrr_locality round_robin child (through new field)
+
+	// wrr locality (locality layer)
+	// locality 1: 1       locality 2: 2
+	// 1 2                 3 4 5 (rr across both - endpoint layer)
+	// 12 345 345 12 345 345 12 345 345 (expected distribution)
+	// 1/3rds 1 2        2/3rds 3 4 5
+
+	// Figure out how to test distribution
+	fullAddresses := []resolver.Address{ // full PR with deletion of old field as well...
+		// backends addresses actually require you spin up backends
+		// helper counts these
+		// 1 - backends addresses or localhost + port that we spin up (on stubservers or backends) or are these logically equivalent?
+		{Addr: backend1.Address}, // is it deterministic in ordering
+		// 3
+		{Addr: backend3.Address},
+		{Addr: backend3.Address},
+	}
+
+	// we needed to change this for OD...change it for this one?
+
+	// rebase on master to get this to work
+	if err := roundrobin.CheckWeightedRoundRobinRPCs(ctx, client, fullAddresses); err != nil { // to make t-test: fullAddresses = wantAddresses and make knob
+		t.Fatalf("error in expeected round robin: %v", err)
+	}
+
+}
 
 // knob you need to pass through function hierarchy - let the whole thing be a knob?
 
@@ -474,7 +499,6 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 		// 4 I think functionality equivalent the two options ^^^
 		{Addr: backend4.Address},
 		// 5 localhost + port
-		{Addr: backend5.Address},
 		{Addr: backend5.Address},
 	}
 
