@@ -58,6 +58,10 @@ type priorityConfig struct {
 	childNameGen *nameGenerator
 }
 
+// one big atomic PR - also delete client emissions and get it working by deleting support for old field.
+
+// rewrite this comment vvv and all comments in this helper/clusterresolver
+
 // buildPriorityConfigJSON builds balancer config for the passed in
 // priorities.
 //

@@ -86,7 +86,8 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 		b.cc.UpdateAddresses(b.subConn, state.ResolverState.Addresses)
 		return nil
 	}
-
+	// oh creates a new SubConn with the full [] of resolver state addresses...
+	// then picks on that, plurality of the connectivity state is a result of [] -> () one SubConn
 	subConn, err := b.cc.NewSubConn(state.ResolverState.Addresses, balancer.NewSubConnOptions{})
 	if err != nil {
 		if logger.V(2) {
@@ -127,7 +128,7 @@ func (b *pickfirstBalancer) UpdateSubConnState(subConn balancer.SubConn, state b
 
 	switch state.ConnectivityState {
 	case connectivity.Ready:
-		b.cc.UpdateState(balancer.State{
+		b.cc.UpdateState(balancer.State{ // chooses and persists a result in UpdateSubConnState()
 			ConnectivityState: state.ConnectivityState,
 			Picker:            &picker{result: balancer.PickResult{SubConn: subConn}},
 		})

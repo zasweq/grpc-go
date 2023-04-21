@@ -45,3 +45,7 @@ func (s) TestWRRLocalityE2E(t *testing.T) {
 
 // so rather than migrate over, switch over, e2e tests should continue to work as normal
 // so  configure
+
+
+// I don't think I need this file/package...
+// covered by xDS e2e tests

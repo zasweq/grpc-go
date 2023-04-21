@@ -144,7 +144,7 @@ func setup(t *testing.T) (*wrrLocality, func()) { // rename to wrrLocalityBalanc
 		t.Fatalf("balancer.Get(%q) returned nil", Name)
 	}
 	// in unit tests verify tcc called with pass through crap
-	tcc := testutils.NewTestClientConn(t)
+	tcc := testutils.NewTestClientConn(t) // what happens if nothing is called, lower level doesn't call right
 	wrrL := builder.Build(tcc, balancer.BuildOptions{})
 	return wrrL.(*wrrLocality), wrrL.Close
 }
@@ -166,38 +166,18 @@ func setup(t *testing.T) (*wrrLocality, func()) { // rename to wrrLocalityBalanc
 // weighted target configuration corresponding to these inputs.
 func (s) TestUpdateClientConnState(t *testing.T) {
 	cfgCh := testutils.NewChannel()
-	/*mb := &mockBalancer{
-		cfgOrErrCh: cfgOrErrCh,
-	}
-
-	oldNewWRRLocality := newWRRLocality
-	defer func() {
-		newWRRLocality = oldNewWRRLocality
-	}()
-
-	newWRRLocality = func(child balancer.Balancer) *wrrLocality {
-		return &wrrLocality{
-			child: mb, // wtf why...
-		}
-	}*/
 	oldWeightedTargetName := weightedTargetName
 	defer func() {
 		weightedTargetName = oldWeightedTargetName
 	}()
-	weightedTargetName = "mock_weighted_target" // have it point to balancer registered below
-
-	// ccsCh := testutils.NewChannel()
-	// hardcodes weighted target child but even if you mock you can
-	// map the mock verifications anyway
-	// but the balancer brings it in, so prob need to mock constructor since prebuilt
-	stub.Register("mock_weighted_target", stub.BalancerFuncs{ // can't do this because it conflicts with weighted target on the stack
+	// overwrite the weighted target name to have wrr_locality_expiermental pull
+	// the mock balancer defined below off the registry.
+	weightedTargetName = "mock_weighted_target"
+	stub.Register("mock_weighted_target", stub.BalancerFuncs{
 		UpdateClientConnState: func(bd *stub.BalancerData, ccs balancer.ClientConnState) error {
-			// cfgCh.Send(ccs.BalancerConfig)
+			// ccs.ResolverState - verify this too?
 			wtCfg, ok := ccs.BalancerConfig.(*weightedtarget.LBConfig)
 			if !ok {
-				// send on err ch - config sent down must be weighted target, important
-				// verification to make.
-				// cfgCh.Send(errors.New("child received config that was not a weighted target config")) // this will block if need a recv for return, reader error chan?
 				/*
 				UpdateClientConnState can error from:
 				1. this call can print
@@ -205,38 +185,21 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 				*/
 				return errors.New("child received config that was not a weighted target config") // could also just return an error
 			}
-
-			// can't do verification here unless you persist want, which will be more work
-
-			// send the wtCfg on the channel - either sends error or config
 			defer cfgCh.Send(wtCfg) // typecast to *weightedtarget.LBConfig
 			return nil
 		},
 	})
 
-	// but plumbs in child balancer at build time...so if you want to plumb in mock
-	// need to perhaps hook in a constructor?
-
 	wrrL, close := setup(t)
 	defer close()
 
 	ccs := balancer.ClientConnState{}
-	// Two things needed:
-	// 1. The Address Map to be populated with the correct locality weights
-	// and also the locality weight
 	var addrs []resolver.Address
 	addr := resolver.Address{
 		Addr: "locality-1",
 	}
-
-	// "Locality{region=region_a,zone=zone_a,subZone=subZone_a}" from A52
-	/*
-	locality.ToString() simply just marshals it
-
-	 */
-
-
-	// just run it and see what happens
+	// "Locality{region=region_a,zone=zone_a,subZone=subZone_a}" or is this just Java JSON parsing? Does this even matter?
+	// Do we want to make Marshaling of Locality ID = ^^^
 
 	lID := internal.LocalityID{
 		Region: "region-1", // actually won't the string be region/zone/subzone, including top level locality string
@@ -287,27 +250,6 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 		t.Fatalf("unexpected error from UpdateClientConnState(maybe log ccs): %v", err)
 	}
 
-	// want err etc.
-
-	// honestly easier just to overwrite name and do it this way
-	// by registering stub balancer...combine with codeblock below with channels etc.
-	/*ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
-	defer cancel()
-	cfg, err := ccsCh.Receive(ctx)
-	if err != nil {
-		t.Fatalf("timed out waiting for UpdateClientConnState on the first child balancer: %v", err)
-	}*/
-	// Verification on the weighted target config
-	/*var gotWtCfg *weightedtarget.LBConfig
-	var ok bool
-
-	if gotWtCfg, ok = cfg.(*weightedtarget.LBConfig); !ok {
-		t.Fatalf("Received child policy config of type %T, want %T", cfg, weightedtarget.LBConfig{})
-	} else { // or just declare vars earlier to get rid of the else and have early return earlier
-		// Targets map[string]Target
-
-	}*/
-
 
 
 
@@ -337,16 +279,10 @@ func (s) TestUpdateClientConnState(t *testing.T) {
 				Weight: 1,
 				ChildPolicy: &internalserviceconfig.BalancerConfig{
 					Name: "round_robin",
-					// no need to specify config
 				},
 			},
 		},
 	}
-
-	// wtCfg vs. wantCfg
-	/*if diff := cmp.Diff(gotWtCfg, wantWtCfg); diff != "" {
-		t.Fatalf("UpdateClientConnState got unexpected weighted target config (-got, +want): %v", diff)
-	}*/
 	// too many knobs to make t-test
 
 
