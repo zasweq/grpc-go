@@ -220,7 +220,7 @@ func testResourceDeletionNotIgnored(t *testing.T, initialResource func(string) e
 	t.Cleanup(func() { cc.Close() })
 
 	if err := verifyRPCtoAllEndpoints(cc); err != nil {
-		t.Fatal(err)
+		t.Fatal(err) // xds_client_ignore_resource_deletion_test.go:223: rpc UnaryCall() failed: rpc error: code = DeadlineExceeded desc = context deadline exceeded
 	}
 
 	// Mutate resource and update on the server.

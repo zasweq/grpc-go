@@ -16,11 +16,10 @@
  *
  */
 
-// switch this to Easwar's comment about URL formatting
-
 // Package wrrlocality provides an implementation of the wrr locality LB policy,
-// as defined in
-// https://github.com/grpc/proposal/blob/master/A52-xds-custom-lb-policies.md.
+// as defined in [A52 - xDS Custom LB Policies].
+//
+// [A52 - xDS Custom LB Policies]: https://github.com/grpc/proposal/blob/master/A52-xds-custom-lb-policies.md
 package wrrlocality
 
 import (
@@ -67,7 +66,7 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 		// shouldn't happen, defensive programming.
 		return nil
 	}
-	wrrL := &wrrLocality{
+	wrrL := &wrrLocalityBalancer{
 		child: wtb,
 	}
 
@@ -93,38 +92,49 @@ type attributeKey struct{}
 // Equal allows the values to be compared by Attributes.Equal.
 func (a AddrInfo) Equal(o interface{}) bool {
 	oa, ok := o.(AddrInfo)
-	return ok && oa.LocalityWeight == a.LocalityWeight
+	print("LocalityWeight1: ", oa.LocalityWeight, ". LocalityWeight2: ", a.LocalityWeight, ".")
+	return ok && oa.LocalityWeight == a.LocalityWeight // check if this is being called in failing tests
 } // idk I don't like this code block...
 
 
-// AddrInfo...
+// AddrInfo is the locality weight of the locality an address is a part of.
 type AddrInfo struct {
 	LocalityWeight uint32
 }
 
-// SetAddrInfo...
+// SetAddrInfo returns a copy of addr in which the BalancerAttributes field is
+// updated with AddrInfo.
 func SetAddrInfo(addr resolver.Address, addrInfo AddrInfo) resolver.Address {
 	addr.BalancerAttributes = addr.BalancerAttributes.WithValue(attributeKey{}, addrInfo)
 	return addr
 }
 
+func (a AddrInfo) String() string {
+	return fmt.Sprintf("Locality Weight: %d", a.LocalityWeight)
+}
+
 // getAddrInfo...
-func getAddrInfo(addr resolver.Address) AddrInfo { // Do I even need this exported if it's called internally?
+func getAddrInfo(addr resolver.Address) AddrInfo {
 	v := addr.BalancerAttributes.Value(attributeKey{})
-	ai, _ := v.(AddrInfo)
+	// in the failure case, return 1 even though failure case shouldn't happen
+	// or does this already implicitly happen? This is what wrr does so maybe it implicitly happens...
+	ai, _ := v.(AddrInfo) // can this fail? handle it at this layer anyway...
 	return ai
 }
 
-// what state does this need and what operations do you need to intercept here?
-// It's only function is to build the config. I think this is all you need.
-type wrrLocality struct {
-	// 1:1 with weighted target - prepares it and is coupled, this never changes after construction right just updates?
+// wrrLocalityBalancer wraps a child weighted target balancer, and builds configuration
+// for the child once it receives configuration and locality weight information.
+type wrrLocalityBalancer struct {
+	// child will be a weighted target balancer, and this balancer will build
+	// configuration for this child. Thus, build it at wrrLocalityBalancer build time,
+	// and configure it once wrrLocalityBalancer received configurations. Other balancer
+	// operations you pass through.
 	child balancer.Balancer
 
 	logger *grpclog.PrefixLogger
 }
 
-func (b *wrrLocality) UpdateClientConnState(s balancer.ClientConnState) error {
+func (b *wrrLocalityBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	lbCfg, ok := s.BalancerConfig.(*LBConfig)
 	if !ok {
 		b.logger.Errorf("received config with unexpected type %T: %v", s.BalancerConfig, s.BalancerConfig)
@@ -137,52 +147,33 @@ func (b *wrrLocality) UpdateClientConnState(s balancer.ClientConnState) error {
 	// wrr_locality combines the priority child config with locality weights to
 	// generate weighted_target configuration.
 	weightedTargets := make(map[string]weightedtarget.Target)
-	for _, addr := range s.ResolverState.Addresses { // how to get collisions? same localityStr, should it not set if wants to use first one encountered or is this an implementation detail that doesn't matter
-		// is this collision possible in the getter?
-		// logically equivalent:
-		// weightedTargets[localityStr] = weightedtarget.Target{Weight: locality.Weight, ChildPolicy: childPolicy}
-		locality := internal.GetLocalityID(addr)
-		localityString, err := locality.ToString() // where do I populate this?
+	for _, addr := range s.ResolverState.Addresses {
+		locality := internal.GetLocalityID(addr) // what happens if this fails? also happens in that layer
+		localityString, err := locality.ToString()
 		if err != nil {
-			// Shouldn't happen
+			// Should never happen.
 			logger.Infof("failed to marshal LocalityID: %v, skipping this locality in weighted target")
 		}
-		// localityWeight = getLocalityWeight(addr) I think the setting is where it takes the "first one" logically
-		// what happens in the failure case?
-		ai := getAddrInfo(addr) // make unexported since just used here?
-		// Are all these reads safe? i.e. any nil dereferences like Doug was worried about?
-		weightedTargets[localityString] = weightedtarget.Target{Weight: ai.LocalityWeight, ChildPolicy: lbCfg.ChildPolicy/*config.ChildPolicy verbatim*/}
+		ai := getAddrInfo(addr)
+
+		// if this isn't set this ai becomes 0 due to this being value type...
+		weightedTargets[localityString] = weightedtarget.Target{Weight: ai.LocalityWeight, ChildPolicy: lbCfg.ChildPolicy}
 	}
 	wtCfg := &weightedtarget.LBConfig{Targets: weightedTargets}
-	/*
-	For testing this is what it looks like:
-	{
-	  "targets": {
-	    "locality_1": {
-	      "weight":1,
-	      "childPolicy": [{"round_robin": ""}]
-	    }
-	  }
-	}
-	*/
-
-	// so for e2e (i.e. it as top level balancer of channel) I think you
-	// just expect more than 2/3rds of RPCs to go to (or the weights) to go to that backend - part of e2e xDS testing should work as usual
 	return b.child.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState: s.ResolverState, // This is what Outlier Detection does, so I think we're good here
+		ResolverState: s.ResolverState,
 		BalancerConfig: wtCfg,
 	})
 }
 
-func (b *wrrLocality) ResolverError(err error) {
-	// forward to child? Guaranteed to be sync since calls into API are sync
+func (b *wrrLocalityBalancer) ResolverError(err error) {
 	b.child.ResolverError(err)
 }
 
-func (b *wrrLocality) UpdateSubConnState(sc balancer.SubConn, scState balancer.SubConnState) {
+func (b *wrrLocalityBalancer) UpdateSubConnState(sc balancer.SubConn, scState balancer.SubConnState) {
 	b.child.UpdateSubConnState(sc, scState)
 }
 
-func (b *wrrLocality) Close() {
+func (b *wrrLocalityBalancer) Close() {
 	b.child.Close()
 }

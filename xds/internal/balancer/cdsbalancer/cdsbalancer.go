@@ -38,7 +38,6 @@ import (
 	"google.golang.org/grpc/serviceconfig"
 	"google.golang.org/grpc/xds/internal/balancer/clusterresolver"
 	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
-	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/xdsclient"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 )
@@ -395,38 +394,22 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		}
 	}
 
-	// cluster resolvers . XDSLBPolicy (for each locality)
-	// clusterresolver.XDSLBPolicy is what is used in config builder
-	// != nil all the way down the balancer tree
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: dms,
 	}
 
-	// lbPolicy is set only when the policy is ringhash. The default (when it's
-	// not set) is roundrobin. And similarly, we only need to set XDSLBPolicy
-	// for ringhash (it also defaults to roundrobin).
-	if lbp := update.lbPolicy; lbp != nil {
-		// keep this type XDSLBPolicy
-		lbCfg.XDSLBPolicy = &internalserviceconfig.BalancerConfig{
-			Name: ringhash.Name,
-			Config: &ringhash.LBConfig{
-				MinRingSize: lbp.MinimumRingSize,
-				MaxRingSize: lbp.MaximumRingSize,
-			},
-		}
-	}
-
-	// client json -> internal struct
+	// client json 01010101 -> internal struct
 	// does this marshal back into JSON anywhere else?
 	bc := &internalserviceconfig.BalancerConfig{}
-	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil { // do it here, chu just sticks it on the Update struct
-		// this is the branching logic here
-
-		// Shouldn't happen, valid configuration should be emitted from client,
-		// will error out at x.
-
+	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil { // do it here, chu just sticks it on the Update struct (could convert there, but it makes sense here)
+		// Shouldn't happen, valid configuration is emitted from client,
+		// (validity is already checked in the client, we have this double
+		// validation though because Unmarshalling and Validating are coupled
+		// into one json.Unmarshal operation). We will switch this in the
+		// future.
+		print("Error handling? emitted JSON from xDS Client: %v")
 		b.logger.Infof("Error handling? emitted JSON from xDS Client: %v", err)
-		return
+		return // plumb an error back? Undefined behavior but will never trigger.
 	}
 	// but if this is invalid the whole system will be invalid - or just don't send down
 	// this is the consumer, so should error here
@@ -436,8 +419,10 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 
 	// takes JSON emitted, converts to BC here...
 	// to stick bc on child
-	lbCfg.XDSLBPolicy = bc // Don't change xDS Cluster Resolver Load Balancer, just read this there and pass through to priority
-	// how do we want to get this PR out in general? migration?
+
+	// Change expectation for this field in unit tests since we changed the
+	// logic for this emission.
+	lbCfg.XDSLBPolicy = bc
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),
 		BalancerConfig: lbCfg,

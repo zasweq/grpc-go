@@ -20,6 +20,7 @@
 package weightedroundrobin
 
 import (
+	"fmt"
 	"google.golang.org/grpc/resolver"
 )
 
@@ -39,6 +40,7 @@ type AddrInfo struct {
 // Equal allows the values to be compared by Attributes.Equal.
 func (a AddrInfo) Equal(o interface{}) bool {
 	oa, ok := o.(AddrInfo)
+	print("Weight1: ", oa.Weight, ". Weight2: ", a.Weight, ".")
 	return ok && oa.Weight == a.Weight
 }
 
@@ -65,4 +67,8 @@ func GetAddrInfo(addr resolver.Address) AddrInfo {
 	v := addr.BalancerAttributes.Value(attributeKey{})
 	ai, _ := v.(AddrInfo)
 	return ai
+}
+
+func (a AddrInfo) String() string {
+	return fmt.Sprintf("Weight: %d", a.Weight) // I think it's both lw * ew
 }

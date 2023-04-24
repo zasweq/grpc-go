@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2022 gRPC authors.
+ * Copyright 2023 gRPC authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ package xds_test
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	v3 "github.com/cncf/xds/go/xds/type/v3"
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -31,106 +33,27 @@ import (
 	v3wrrlocalitypb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
 	"github.com/golang/protobuf/proto"
 	structpb "github.com/golang/protobuf/ptypes/struct"
+	testgrpc "google.golang.org/grpc/interop/grpc_testing"
+	testpb "google.golang.org/grpc/interop/grpc_testing"
+
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/internal/testutils/roundrobin"
 	"google.golang.org/grpc/internal/testutils/xds/e2e"
-	testgrpc "google.golang.org/grpc/interop/grpc_testing"
-	testpb "google.golang.org/grpc/interop/grpc_testing"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/protobuf/types/known/anypb"
-	"testing"
 )
 
-// message to Terry:
-/*
-What e2e scenarios does Java have for Custom LB (when I say "Custom LB" I mean the new load_balancing_policy field in it's entirety)? (there's so many possibilities, and then a Custom LB has arbitrary behavior) but curious to see what your test cases are. Also, Go doesn't have least_request so don't list any scenarios with that :D
-wrr_locality with rr child I do expected distribution based on locality weights on each of the endpoints in them
-wrr_locality with custom_lb child I was thinking just creating a custom lb that is essentially a pick first
-*/
-
-// lowkey I feel like I can get this working - other test is just not hooked yet
-
-const name = "myorg.MyCustomLeastRequestPolicy"
-
-type bb struct {}
-
-func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) {
-	// Is there a way to just wrap the pick first for easy testing? Or I could make this do something fun
-}
-
-func (bb) ParseConfig() { // implement the method signature and do something interesting
-	// Part of e2e flow Easwar wants to test - can do something interesting here...
-}
-
-func (bb) Name() string {
-	return name
-}
-
-// Addresses:     addressesSplit[name],
-
-// partitions the address list
-
-// locality the address is a part of...
-
-// so locality layer - where this custom LB is deployed: balancer at this layer
-
-// gets an UpdateClientConnState with []addresses corresponding to each locality
-
-
-/*
-type customLB struct {
-	// I think make this pick first (by wrapping?)
-	// and do 1 22 1 22 expected distribution - plumb into my scenario by picking first of...what? 1 22 1 22?
-}
-
-func (clb *customLB) UpdateClientConnState(ccs *balancer.ClientConnState) error {
-	// how to get these addresses corresponding to the deployed upstreams in this test?
-	// I think just assume happens implicitly here
-
-	ccs.ResolverState.Addresses // []Addresses corresponding to locality
-
-	// pick first just creates a SubConn corresponding to ^^^
-
-	// od you just configure and test this has more scenarios
-
-	// muse about scenario you want this helper lb to do
-}
-
-// the picker picks on the addresses, and does something interesting with them
-// Pick first picker...can assert on the address distribution downstream of that
-
-type customLBPickFirstPicker struct {
-	// chose first SubConn...persist list?
-}
-
-func (p *customLBPickFirstPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
-	// what can go here...?
-
-	// sc = pick first SubConn
-
-	return balancer.PickResult{
-		SubConn: sc,
-
-	}, nil
-}*/
-
-// how do you even inject error?
-// custom LB return a certain error type only thing knows about (like how TD doesn't know about new error type)
-
-// just point to pick_first - can do the 1 33 1 33 assertion
-
 // pretend the pick first is a custom LB we wrote.
-// const customLBPickFirstName = grpc.PickFirstBalancerName // circular dependency?
 const customLBPickFirstName = "pick_first"
 
 // UpdateState with a picker that does something interesting - write scenario in
 // notebook below and implement it with this picker, test distribution?
 
+// just point to pick_first - can do the 1 33 1 33 assertion
 func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 	oldCustomLBSupport := envconfig.XDSCustomLBPolicy
 	envconfig.XDSCustomLBPolicy = true
@@ -237,27 +160,19 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 		// backends addresses actually require you spin up backends
 		// helper counts these
 		// 1 - backends addresses or localhost + port that we spin up (on stubservers or backends) or are these logically equivalent?
-		{Addr: backend1.Address}, // is it deterministic in ordering
+		{Addr: backend1.Address}, // is it deterministic in ordering pick first down hierarchy, perhaps not map
 		// 3
 		{Addr: backend3.Address},
 		{Addr: backend3.Address},
 	}
-
-	// we needed to change this for OD...change it for this one?
-
-	// rebase on master to get this to work
 	if err := roundrobin.CheckWeightedRoundRobinRPCs(ctx, client, fullAddresses); err != nil { // to make t-test: fullAddresses = wantAddresses and make knob
 		t.Fatalf("error in expeected round robin: %v", err)
 	}
 
 }
 
-// knob you need to pass through function hierarchy - let the whole thing be a knob?
-
-// make it a knob afterward?
-
 // does default xDS resources correspond to the static system of other balancers I drew
-// in my notebook?
+// in my notebook? Looks like so :)
 
 // wrrLocality is a helper that takes a proto message and returns a
 // WrrLocalityProto with the proto message marshaled into a proto.Any as a
@@ -289,38 +204,26 @@ func wrrLocalityAny(m proto.Message) *anypb.Any {
 // wrr locality
 // round robin child
 
-// ring hash
-
-/*
-Other helper amounts to:
-wrrLocalityAny(&v3.TypedStruct{
-						TypeUrl: "type.googleapis.com/myorg.MyCustomLeastRequestPolicy", // make this name correspond to the balancer you register above...
-						Value:   &structpb.Struct{},
-					}),
-
-call this helper with this expression for proto message... (knob for t-test)
-*/
+// ring hash (implicitly tested by current test)
 
 // clusterWithLBConfiguration returns a cluster resource with the proto message Marshaled as an any
 // and specified through the load_balancing_policy field.
 func clusterWithLBConfiguration(clusterName, edsServiceName string, secLevel e2e.SecurityLevel, m proto.Message) *v3clusterpb.Cluster {
-	// locality knobs on weights and what addresses are in which locality?
-	// will also test that old Field doesn't get used and new one takes precedence
+	// locality knobs on weights and what addresses are in which locality? no write that it's hardcoded
+	// will also test that old Field doesn't get used and new one takes precedence (should get rid of as part of this PR)
 	cluster := e2e.DefaultCluster(clusterName, edsServiceName, secLevel)
-	// cluster.LoadBalancingPolicy
-	// this should take precedence over the old field
-	any := testutils.MarshalAny(m) // or does this need to be a certain type
+	// this should take precedence over the old field still plumbed in above
+	// (i.e. get the rebase with all of Easwar's comments incorporated in working - will delete old field)
 	cluster.LoadBalancingPolicy = &v3clusterpb.LoadBalancingPolicy{
 		Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
 			{
-				TypedExtensionConfig: &v3corepb.TypedExtensionConfig{ // wait no this needs to be a child of wrr_locality
+				TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
 					Name: "noop name",
-					// I think like my helper make this a knob?
-					TypedConfig: any,
+					TypedConfig: testutils.MarshalAny(m),
 				},
 			},
 		},
-	} // nothing is below EDS so I think change CDS and EDS and we should be good here
+	}
 	return cluster
 }
 
@@ -350,13 +253,11 @@ func clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(params e2e.Re
 				1,
 				2,
 			},
-		})}, // test emissions at each layer if this doesn't work i.e. log emissions
+		})},
 	}
 }
 
 // Other tests in this suite should pass as usual...blank import wrr or no need since already in xDS hierarchy?
-
-// vvv this one is easier. Get this working then map to custom LB stuff ^^^
 
 // scenario 1: wrr_locality custom lb child (through new field, only way)
 
@@ -381,23 +282,16 @@ func clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(params e2e.Re
 // WRR, and the endpoint layer, which simply round robins across the backends
 // present in each locality. Thus, the expected distribution should be close to
 // (12 345 345).
-func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
+func (s) TestCustomLBRRChild(t *testing.T) {
 	oldCustomLBSupport := envconfig.XDSCustomLBPolicy
 	envconfig.XDSCustomLBPolicy = true
 	defer func() {
 		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
 	}()
 
-	// blank import rr?
-
 	// do we need to stub anything?
 	managementServer, nodeID, _, r, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
 	defer cleanup()
-
-	// stubserver that responds with correct behavior?
-	// stubserver gives you addresses
-
-	// we need to verify distribution somehow - perhaps do that through stub servers and counters?
 	backend1 := stubserver.StartTestService(t, nil)
 	port1 := testutils.ParsePort(t, backend1.Address)
 	defer backend1.Stop()
@@ -441,9 +335,9 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 
 	client := testgrpc.NewTestServiceClient(cc)
 	// ping once before sending to helper?
-	if _, err := client.UnaryCall(ctx, &testpb.SimpleRequest{}); err != nil {
+	/*if _, err := client.UnaryCall(ctx, &testpb.SimpleRequest{}); err != nil {
 		t.Fatalf("Unary RPC failed, error: %v", err)
-	}
+	}*/
 
 	// 1 2 - Locality 1 (How do we specify this in xDS Configuration? i.e. these addresses in locality 1)
 	// Weight: 1 (also specify this in xDS configuration)
@@ -473,38 +367,28 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 
 	// scenario 2: wrr_locality round_robin child (through new field)
 
+	// Write comment detailing the scenario in depth
 	// wrr locality (locality layer)
 	// locality 1: 1       locality 2: 2
 	// 1 2                 3 4 5 (rr across both - endpoint layer)
 	// 12 345 345 12 345 345 12 345 345 (expected distribution)
 	// 1/3rds 1 2        2/3rds 3 4 5
-
-	// Figure out how to test distribution
 	fullAddresses := []resolver.Address{ // full PR with deletion of old field as well...
-		// backends addresses actually require you spin up backends
-
-		// helper counts these
-		// 1 - backends addresses or localhost + port that we spin up (on stubservers or backends) or are these logically equivalent?
-		{Addr: backend1.Address}, // try it without spinning up backends (also perhaps move to a helper for the spinning up of 5 backends)
-		// 2
+		{Addr: backend1.Address},
 		{Addr: backend2.Address},
-		// 3
 		{Addr: backend3.Address},
-		// 4
 		{Addr: backend4.Address},
-		// 5
 		{Addr: backend5.Address},
-		// 3
 		{Addr: backend3.Address},
-		// 4 I think functionality equivalent the two options ^^^
 		{Addr: backend4.Address},
-		// 5 localhost + port
 		{Addr: backend5.Address},
 	}
 
-	// we needed to change this for OD...change it for this one?
+	// we needed to change this for OD...change it for this one? if I make it looser shouldn't break exisiting
 
-	// rebase on master to get this to work
+
+	// adjust jitter/give on this to actually get it to stop being flaky once you get it to reproduce it
+	// or context timeout
 	if err := roundrobin.CheckWeightedRoundRobinRPCs(ctx, client, fullAddresses); err != nil { // to make t-test: fullAddresses = wantAddresses and make knob
 		t.Fatalf("error in expeected round robin: %v", err)
 	}
@@ -518,14 +402,8 @@ func (s) TestCustomLBRRChild(t *testing.T) { // make a t-test?
 // setup my scenario above once then can reuse for
 // wrr locality rr child
 // wrr locality custom lb child
-// ring hash
 
-func (s) TestCustomLBErrorConditions(t *testing.T) { // or is this already handled by unit tests?
-	// from client? Unit test? What does this even encapsulate?
-}
+// ring hash (implicitly tested from previous test and the tests in xDS Client
+// that show same JSON emitted)
 
-// all old tests pass as usual - no explicit tests on wrr_locality behavior though
-// just sanity checks
-
-
-
+// ^^^ other scenarios that map to this statement as well

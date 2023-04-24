@@ -49,14 +49,14 @@ const (
 
 // Endpoint contains information of an endpoint.
 type Endpoint struct {
-	Address      string // is this a balancer address? This is 1:1?
+	Address      string
 	HealthStatus EndpointHealthStatus
-	Weight       uint32 // taken into account in weighted round robin?
+	Weight       uint32
 }
 
 // Locality contains information of a locality.
 type Locality struct {
-	Endpoints []Endpoint // so stick the correct endpoints within configuration - addr1, addr2 e.g.
+	Endpoints []Endpoint
 	ID        internal.LocalityID
 	Priority  uint32
 	Weight    uint32

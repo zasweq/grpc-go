@@ -25,7 +25,6 @@ import (
 
 	"google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/balancer/weightedroundrobin"
-	"google.golang.org/grpc/balancer/weightedtarget"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/hierarchy"
 	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
@@ -60,39 +59,10 @@ type priorityConfig struct {
 
 // one big atomic PR - also delete client emissions and get it working by deleting support for old field.
 
-// rewrite this comment vvv and all comments in this helper/clusterresolver
-
 // buildPriorityConfigJSON builds balancer config for the passed in
 // priorities.
 //
 // The built tree of balancers (see test for the output struct).
-//
-// If xds lb policy is ROUND_ROBIN, the children will be weighted_target for
-// locality picking, and round_robin for endpoint picking.
-//
-//	                                  ┌────────┐
-//	                                  │priority│
-//	                                  └┬──────┬┘
-//	                                   │      │
-//	                       ┌───────────▼┐    ┌▼───────────┐
-//	                       │cluster_impl│    │cluster_impl│
-//	                       └─┬──────────┘    └──────────┬─┘
-//	                         │                          │
-//	          ┌──────────────▼─┐                      ┌─▼──────────────┐
-//	          │locality_picking│                      │locality_picking│
-//	          └┬──────────────┬┘                      └┬──────────────┬┘
-//	           │              │                        │              │
-//	         ┌─▼─┐          ┌─▼─┐                    ┌─▼─┐          ┌─▼─┐
-//	         │LRS│          │LRS│                    │LRS│          │LRS│
-//	         └─┬─┘          └─┬─┘                    └─┬─┘          └─┬─┘
-//	           │              │                        │              │
-//	┌──────────▼─────┐  ┌─────▼──────────┐  ┌──────────▼─────┐  ┌─────▼──────────┐
-//	│endpoint_picking│  │endpoint_picking│  │endpoint_picking│  │endpoint_picking│
-//	└────────────────┘  └────────────────┘  └────────────────┘  └────────────────┘
-//
-// If xds lb policy is RING_HASH, the children will be just a ring_hash policy.
-// The endpoints from all localities will be flattened to one addresses list, (ummmmm I need to not do this anymore? How does this behavior map?)
-// and the ring_hash policy will pick endpoints from it.
 //
 //	          ┌────────┐
 //	          │priority│
@@ -103,13 +73,9 @@ type priorityConfig struct {
 //	└──────┬─────┘  └─────┬──────┘
 //	       │              │
 //	┌──────▼─────┐  ┌─────▼──────┐
-//	│ ring_hash  │  │ ring_hash  │
+//	│xDSLBPolicy │  │xDSLBPolicy │ (Locality and Endpoint picking layer)
 //	└────────────┘  └────────────┘
 //
-// If endpointPickingPolicy is nil, roundrobin will be used.
-//
-// Custom locality picking policy isn't support, and weighted_target is always
-// used.
 func buildPriorityConfigJSON(priorities []priorityConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) ([]byte, []resolver.Address, error) {
 	pc, addrs, err := buildPriorityConfig(priorities, xdsLBPolicy)
 	if err != nil {
@@ -294,18 +260,11 @@ var rrBalancerConfig = &internalserviceconfig.BalancerConfig{Name: roundrobin.Na
 
 // priorityLocalitiesToClusterImpl takes a list of localities (with the same
 // priority), and generates a cluster impl policy config, and a list of
-// addresses.
+// addresses with their sets their path hierarchy set to [priority-name,
+// locality-name], so priority and the xDS LB Policy know which child policy
+// each address is for.
 func priorityLocalitiesToClusterImpl(localities []xdsresource.Locality, priorityName string, mechanism DiscoveryMechanism, drops []clusterimpl.DropConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) (*clusterimpl.LBConfig, []resolver.Address, error) {
-	clusterImplCfg := &clusterimpl.LBConfig{
-		Cluster:               mechanism.Cluster,
-		EDSServiceName:        mechanism.EDSServiceName,
-		LoadReportingServer:   mechanism.LoadReportingServer,
-		MaxConcurrentRequests: mechanism.MaxConcurrentRequests,
-		DropCategories:        drops,
-		ChildPolicy:           xdsLBPolicy,
-	}
-
-	// cleanup this added code block
+	// cleanup this added code block. ** todo with var names etc.
 	var addrs []resolver.Address
 	for _, locality := range localities {
 		var lw uint32 = 1
@@ -317,14 +276,12 @@ func priorityLocalitiesToClusterImpl(localities []xdsresource.Locality, priority
 			localityStr = fmt.Sprintf("%+v", locality.ID)
 		}
 		for _, endpoint := range locality.Endpoints {
+			// Filter out all "unhealthy" endpoints (unknown and healthy are
+			// both considered to be healthy:
+			// https://www.envoyproxy.io/docs/envoy/latest/api-v2/api/v2/core/health_check.proto#envoy-api-enum-core-healthstatus).
 			if endpoint.HealthStatus != xdsresource.EndpointHealthStatusHealthy && endpoint.HealthStatus != xdsresource.EndpointHealthStatusUnknown {
 				continue
 			}
-			// it is possible to see locality weight attributes with different values for the same locality. - I'm assuming based on locality weights
-			// We do not support this kind of an edge case and just use the weight in the first attribute we encounter.
-
-			// this needs to log warning in this component
-
 			addr := resolver.Address{Addr: endpoint.Address}
 			addr = hierarchy.Set(addr, []string{priorityName, localityStr})
 
@@ -334,147 +291,32 @@ func priorityLocalitiesToClusterImpl(localities []xdsresource.Locality, priority
 			// support this kind of an edge case and just use the weight in the
 			// first attribute we encounter. A warning should be logged about
 			// any locality weights being discarded.
-
 			// Can ^^^ even trigger??? we read locality ID
+			// Just mention handled in EDS, spits out the locality weight for that priority, this is per priority,
+			// so weights correspond to what is set with specific priority.
 			// and then set an addr based on an addr key, so addrs can't collide?
 
 			addr = internal.SetLocalityID(addr, locality.ID)
-
-			// the cluster resolver will populate a new locality weight
-			// attribute for each address The attribute will have the weight (as
-			// an integer) of the locality the address is part of.
+			// "To provide the xds_wrr_locality load balancer information about
+			// locality weights received from EDS, the cluster resolver will
+			// populate a new locality weight attribute for each address The
+			// attribute will have the weight (as an integer) of the locality
+			// the address is part of." - A52
 			addr = wrrlocality.SetAddrInfo(addr, wrrlocality.AddrInfo{LocalityWeight: lw})
 			var ew uint32 = 1
 			if endpoint.Weight != 0 {
 				ew = endpoint.Weight
 			}
-
-			// only question is what happens if ew = 0? before we had an ew != 0
-			// check, but don't know if that will cause undefined behavior or
-			// not
-			// also on lw with default 0 or 1...? Do we set as 1 before?
-
-			// the cluster resolver will populate a new locality weight
-			// attribute for each address The attribute will have the weight (as
-			// an integer) of the locality the address is part of.
-			weightedroundrobin.SetAddrInfo(addr, weightedroundrobin.AddrInfo{Weight: lw * ew})
+			addr = weightedroundrobin.SetAddrInfo(addr, weightedroundrobin.AddrInfo{Weight: lw * ew})
 			addrs = append(addrs, addr)
 		}
 	}
-	// could also make this clusterImplConfig declared in line here
-	return clusterImplCfg, addrs, nil
-
-	// You can either try and migrate over (have two two until last PR) or do it all atomically and get e2e tests working etc.
-}
-
-// localitiesToRingHash takes a list of localities (with the same priority), and
-// generates a list of addresses.
-//
-// The addresses have path hierarchy set to [priority-name], so priority knows
-// which child policy they are for.
-func localitiesToRingHash(localities []xdsresource.Locality, priorityName string) []resolver.Address {
-	var addrs []resolver.Address
-	for _, locality := range localities {
-		var lw uint32 = 1 // defaults to 1...
-		if locality.Weight != 0 {
-			lw = locality.Weight // put this in the attribute
-			// in wrr_locality:
-			// type AddrInfo struct {
-			//    uint32 locality weight
-			// }
-		}
-		localityStr, err := locality.ID.ToString()
-		if err != nil {
-			localityStr = fmt.Sprintf("%+v", locality.ID)
-		}
-		for _, endpoint := range locality.Endpoints {
-			// Filter out all "unhealthy" endpoints (unknown and healthy are
-			// both considered to be healthy:
-			// https://www.envoyproxy.io/docs/envoy/latest/api-v2/api/v2/core/health_check.proto#envoy-api-enum-core-healthstatus).
-			if endpoint.HealthStatus != xdsresource.EndpointHealthStatusHealthy && endpoint.HealthStatus != xdsresource.EndpointHealthStatusUnknown {
-				continue
-			}
-
-			var ew uint32 = 1
-			if endpoint.Weight != 0 {
-				ew = endpoint.Weight
-			}
-
-			// The weight of each endpoint is locality_weight * endpoint_weight.
-			ai := weightedroundrobin.AddrInfo{Weight: lw * ew}
-			addr := weightedroundrobin.SetAddrInfo(resolver.Address{Addr: endpoint.Address}, ai)
-			addr = hierarchy.Set(addr, []string{priorityName, localityStr})
-			addr = internal.SetLocalityID(addr, locality.ID)
-			// the cluster resolver will populate a new locality weight
-			// attribute for each address The attribute will have the weight (as
-			// an integer) of the locality the address is part of.
-			addr = wrrlocality.SetAddrInfo(addr, wrrlocality.AddrInfo{LocalityWeight: lw})
-			addrs = append(addrs, addr)
-		}
-	}
-	return addrs
-}
-
-
-// localitiesToWeightedTarget takes a list of localities (with the same
-// priority), and generates a weighted target config, and list of addresses.
-//
-// The addresses have path hierarchy set to [priority-name, locality-name], so
-// priority and weighted target know which child policy they are for.
-func localitiesToWeightedTarget(localities []xdsresource.Locality, priorityName string, childPolicy *internalserviceconfig.BalancerConfig) (*weightedtarget.LBConfig, []resolver.Address) { // config and builds addresses
-
-
-
-	// *** This logic you can move to the balancer itself
-	weightedTargets := make(map[string]weightedtarget.Target)
-	var addrs []resolver.Address
-	for _, locality := range localities {
-		localityStr, err := locality.ID.ToString()
-		if err != nil {
-			localityStr = fmt.Sprintf("%+v", locality.ID)
-		}
-
-		// the cluster_impl does this now
-
-		// this doesn't default to 1 though - what is correct behavior?
-
-		// this is locality weight, doesn't get taken into account, so there is two seperate codepaths
-
-		// don't set to 0? 0 is a possibility for locality weight? Prepares with
-		// 0 here and ew, which we used to account for, does this lead to any
-		// bad downstream behavior?
-		weightedTargets[localityStr] = weightedtarget.Target{Weight: locality.Weight, ChildPolicy: childPolicy}
-		// ^^^ different for both
-
-		for _, endpoint := range locality.Endpoints {
-			// Filter out all "unhealthy" endpoints (unknown and healthy are
-			// both considered to be healthy:
-			// https://www.envoyproxy.io/docs/envoy/latest/api-v2/api/v2/core/health_check.proto#envoy-api-enum-core-healthstatus).
-			if endpoint.HealthStatus != xdsresource.EndpointHealthStatusHealthy && endpoint.HealthStatus != xdsresource.EndpointHealthStatusUnknown {
-				continue
-			}
-			// *** shared
-			addr := resolver.Address{Addr: endpoint.Address}
-			// ***
-
-			// needs a branch keeping this - determines attributes
-			if childPolicy.Name == weightedroundrobin.Name && endpoint.Weight != 0 {
-				ai := weightedroundrobin.AddrInfo{Weight: endpoint.Weight} // this is the only branch, this is set differmet
-				addr = weightedroundrobin.SetAddrInfo(addr, ai)
-			}
-
-			// *** shared
-			// addr = wrrlocality.SetAddrInfo(addr, wrrlocality.AddrInfo{LocalityWeight: lw}) theoretically wouldn't have locality weights at this point
-			addr = hierarchy.Set(addr, []string{priorityName, localityStr})
-			addr = internal.SetLocalityID(addr, locality.ID)
-			addrs = append(addrs, addr)
-			// *shared
-		}
-	}
-	return &weightedtarget.LBConfig{Targets: weightedTargets}, addrs
-	// ***
-
-
-
-
+	return &clusterimpl.LBConfig{
+		Cluster:               mechanism.Cluster,
+		EDSServiceName:        mechanism.EDSServiceName,
+		LoadReportingServer:   mechanism.LoadReportingServer,
+		MaxConcurrentRequests: mechanism.MaxConcurrentRequests,
+		DropCategories:        drops,
+		ChildPolicy:           xdsLBPolicy,
+	}, addrs, nil
 }

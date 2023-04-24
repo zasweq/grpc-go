@@ -77,7 +77,7 @@ func (s) TestClientSideXDS(t *testing.T) {
 	defer cc.Close()
 
 	client := testgrpc.NewTestServiceClient(cc)
-	if _, err := client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil { // this is just a smoke test that you can make an rpc on this system
+	if _, err := client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil {
 		t.Fatalf("rpc EmptyCall() failed: %v", err)
 	}
 }

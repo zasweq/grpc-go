@@ -141,6 +141,13 @@ func parseEDSRespProto(m *v3endpointpb.ClusterLoadAssignment) (EndpointsUpdate, 
 			SubZone: l.SubZone,
 		}
 		lidStr, _ := lid.ToString()
+
+		// Since an xDS configuration can place a given locality under multiple
+		// priorities, it is possible to see locality weight attributes with
+		// different values for the same locality note somewhere this is handled
+		// in our client, each locality under a priority gets the weight for
+		// that priority.
+
 		if localitiesWithPriority[lidStr] {
 			return EndpointsUpdate{}, fmt.Errorf("duplicate locality %s with the same priority %v", lidStr, priority)
 		}

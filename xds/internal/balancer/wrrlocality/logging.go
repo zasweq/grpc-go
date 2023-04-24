@@ -30,6 +30,6 @@ const prefix = "[wrrlocality-lb %p] "
 
 var logger = grpclog.Component("xds")
 
-func prefixLogger(p *wrrLocality) *internalgrpclog.PrefixLogger {
+func prefixLogger(p *wrrLocalityBalancer) *internalgrpclog.PrefixLogger {
 	return internalgrpclog.NewPrefixLogger(logger, fmt.Sprintf(prefix, p))
 }
