@@ -398,10 +398,8 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		DiscoveryMechanisms: dms,
 	}
 
-	// client json 01010101 -> internal struct
-	// does this marshal back into JSON anywhere else?
 	bc := &internalserviceconfig.BalancerConfig{}
-	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil { // do it here, chu just sticks it on the Update struct (could convert there, but it makes sense here)
+	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil {
 		// Shouldn't happen, valid configuration is emitted from client,
 		// (validity is already checked in the client, we have this double
 		// validation though because Unmarshalling and Validating are coupled
@@ -413,15 +411,6 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 	}
 	// but if this is invalid the whole system will be invalid - or just don't send down
 	// this is the consumer, so should error here
-
-	// event of full CDS Update sends
-	// config downward, config is full LB Config of internalbalancerconfig.LBConfig type
-
-	// takes JSON emitted, converts to BC here...
-	// to stick bc on child
-
-	// Change expectation for this field in unit tests since we changed the
-	// logic for this emission.
 	lbCfg.XDSLBPolicy = bc
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),

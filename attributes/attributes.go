@@ -84,22 +84,18 @@ func (a *Attributes) Equal(o *Attributes) bool {
 	if len(a.m) != len(o.m) {
 		return false
 	}
-	print("In Equal in Attributes")
 	for k, v := range a.m {
 		ov, ok := o.m[k]
 		if !ok {
 			// o missing element of a
-			print("o missing element of a")
 			return false
 		}
 		if eq, ok := v.(interface{ Equal(o interface{}) bool }); ok {
 			if !eq.Equal(ov) {
-				print("!eq.Equal(ov)")
 				return false
 			}
 		} else if v != ov {
 			// Fallback to a standard equality check if Value is unimplemented.
-			print("standard equality check failed")
 			return false
 		}
 	}
@@ -115,40 +111,15 @@ func (a *Attributes) Equal(o *Attributes) bool {
 
 // for cmp.Diff?
 func (a *Attributes) String() string {
-	// look through the keys implicitly
-	/*for k, v := range a.m { // non deterministic iteration
-		// typecast it somehow and then call Equal
-		// if implements string() call the child type (typecast to interface to be general for all possible value types :D)
-
-		// I don't think you need k
-
-		// attach attribute key? But what value will that add?
-
-		// what string() method gets called...
-		if str, ok := v.(interface{ String() string }); ok {
-			str.String() // append this to string
-		}
-
-		// default to some behavior or just do nothing?
-	}*/
-
-	// { Val.string(), Val2.string(), Val3.string() }
-	// string builder {
-	// for each
-	//     if string()
-	//           val.string()
-	// add }
-	var sb strings.Builder // or do this? logically equivalent since you're not creating heap memory
-	// sb := strings.Builder{}
-
+	var sb strings.Builder
 	sb.WriteString("{")
 	for _, v := range a.m {
+		// key could also implement string...but less important as per package
 		if str, ok := v.(interface{ String() string }); ok {
-			sb.WriteString(str.String()) // append this to string
+			sb.WriteString(str.String())
 			sb.WriteString(", ")
 		}
 	}
 	sb.WriteString("}")
-
 	return sb.String()
 }

@@ -168,11 +168,7 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 	if err := roundrobin.CheckWeightedRoundRobinRPCs(ctx, client, fullAddresses); err != nil { // to make t-test: fullAddresses = wantAddresses and make knob
 		t.Fatalf("error in expeected round robin: %v", err)
 	}
-
 }
-
-// does default xDS resources correspond to the static system of other balancers I drew
-// in my notebook? Looks like so :)
 
 // wrrLocality is a helper that takes a proto message and returns a
 // WrrLocalityProto with the proto message marshaled into a proto.Any as a
@@ -245,19 +241,17 @@ func clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(params e2e.Re
 			ClusterName: endpointsName,
 			Host:        params.Host,
 			PortsInLocalities: [][]uint32{
-				{ports[0], ports[1]}, // validate this or document it as a requirement of calling function
-				{ports[2], ports[3], ports[4]}, // does "localhost" + port[0] = addresses or no...I think so
+				{ports[0], ports[1]},
+				{ports[2], ports[3], ports[4]},
 			},
 			// interop is only turning on Go :)
-			LocalityWeights: []uint32{ // document that len(LocalityWeights) has to = len(first dimension of ports in localities (and maybe what ports in localities mean)
+			LocalityWeights: []uint32{
 				1,
 				2,
 			},
 		})},
 	}
 }
-
-// Other tests in this suite should pass as usual...blank import wrr or no need since already in xDS hierarchy?
 
 // scenario 1: wrr_locality custom lb child (through new field, only way)
 
@@ -271,6 +265,8 @@ func clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(params e2e.Re
 // 1 2                 3 4 5 (rr across both - endpoint layer)
 // 12 345 345 12 345 345 12 345 345 (expected distribution)
 // 1/3rds 1 2        2/3rds 3 4 5
+
+// cleanup this helper vvv then plumb the custom lb thing into t test (make seperate t-test)
 
 // TestCustomLBRRChild tests scenario where you have a round robin balancer
 // deployed as the child of the wrr_locality picking balancer with round robin
@@ -289,7 +285,6 @@ func (s) TestCustomLBRRChild(t *testing.T) {
 		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
 	}()
 
-	// do we need to stub anything?
 	managementServer, nodeID, _, r, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
 	defer cleanup()
 	backend1 := stubserver.StartTestService(t, nil)
@@ -313,13 +308,12 @@ func (s) TestCustomLBRRChild(t *testing.T) {
 	// weights (1, 2) which have backends (12, 345) respectively.
 	m := wrrLocality(&v3roundrobinpb.RoundRobin{})
 	const serviceName = "my-service-client-side-xds"
-	resources := clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(e2e.ResourceParams{ // need to maybe get the cluster and pass it in here...
+	resources := clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(e2e.ResourceParams{
 		DialTarget: serviceName,
 		NodeID: nodeID,
 		Host: "localhost",
 		SecLevel: e2e.SecurityLevelNone,
-	}, []uint32{port1, port2, port3, port4, port5}, m) // how do these ports get put into localities/how to specify locality weights - "load balancer information about locality weights received from EDS" (we took these ports and I put them in EDS response)
-	// how do we put addresses in each locality? *** I think it's localhost + port which I already did...but make sure
+	}, []uint32{port1, port2, port3, port4, port5}, m)
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
@@ -334,10 +328,6 @@ func (s) TestCustomLBRRChild(t *testing.T) {
 	defer cc.Close()
 
 	client := testgrpc.NewTestServiceClient(cc)
-	// ping once before sending to helper?
-	/*if _, err := client.UnaryCall(ctx, &testpb.SimpleRequest{}); err != nil {
-		t.Fatalf("Unary RPC failed, error: %v", err)
-	}*/
 
 	// 1 2 - Locality 1 (How do we specify this in xDS Configuration? i.e. these addresses in locality 1)
 	// Weight: 1 (also specify this in xDS configuration)
@@ -384,18 +374,17 @@ func (s) TestCustomLBRRChild(t *testing.T) {
 		{Addr: backend5.Address},
 	}
 
-	// we needed to change this for OD...change it for this one? if I make it looser shouldn't break exisiting
-
-
+	// this broke once :/
 	// adjust jitter/give on this to actually get it to stop being flaky once you get it to reproduce it
 	// or context timeout
-	if err := roundrobin.CheckWeightedRoundRobinRPCs(ctx, client, fullAddresses); err != nil { // to make t-test: fullAddresses = wantAddresses and make knob
+	if err := roundrobin.CheckWeightedRoundRobinRPCs(ctx, client, fullAddresses); err != nil {
 		t.Fatalf("error in expeected round robin: %v", err)
 	}
 
 	// Only knob is m passed in
 
 	// and addresses expected, once you finish this one can scale up to a t-test for custom LB
+	// to make t-test: fullAddresses = wantAddresses and make knob
 
 }
 
@@ -407,3 +396,117 @@ func (s) TestCustomLBRRChild(t *testing.T) {
 // that show same JSON emitted)
 
 // ^^^ other scenarios that map to this statement as well
+
+// Top level comment from rr child comment
+func (s) TestWrrLocality(t *testing.T) {
+	oldCustomLBSupport := envconfig.XDSCustomLBPolicy
+	envconfig.XDSCustomLBPolicy = true
+	defer func() {
+		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
+	}()
+
+	managementServer, nodeID, _, r, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
+	defer cleanup()
+	backend1 := stubserver.StartTestService(t, nil)
+	port1 := testutils.ParsePort(t, backend1.Address)
+	defer backend1.Stop()
+	backend2 := stubserver.StartTestService(t, nil)
+	port2 := testutils.ParsePort(t, backend2.Address)
+	defer backend2.Stop()
+	backend3 := stubserver.StartTestService(t, nil)
+	port3 := testutils.ParsePort(t, backend3.Address)
+	defer backend3.Stop()
+	backend4 := stubserver.StartTestService(t, nil)
+	port4 := testutils.ParsePort(t, backend4.Address)
+	defer backend4.Stop()
+	backend5 := stubserver.StartTestService(t, nil)
+	port5 := testutils.ParsePort(t, backend5.Address)
+	defer backend5.Stop()
+	const serviceName = "my-service-client-side-xds"
+	tests := []struct{
+		name string
+		// specified through load_balancing_policy field
+		wrrLocalityConfiguration *v3wrrlocalitypb.WrrLocality
+		addressDistributionWant []resolver.Address
+	}{
+		{
+			name: "rr_child",
+			wrrLocalityConfiguration: wrrLocality(&v3roundrobinpb.RoundRobin{}),
+			addressDistributionWant: []resolver.Address{ // full PR with deletion of old field as well...
+				{Addr: backend1.Address},
+				{Addr: backend2.Address},
+				{Addr: backend3.Address},
+				{Addr: backend4.Address},
+				{Addr: backend5.Address},
+				{Addr: backend3.Address},
+				{Addr: backend4.Address},
+				{Addr: backend5.Address},
+			},
+		},
+		// custom LB field which points to pick first
+		{
+			name: "custom_lb_child_pick_first",
+			wrrLocalityConfiguration: wrrLocality(&v3.TypedStruct{
+				TypeUrl: "type.googleapis.com/pick_first",
+				Value:   &structpb.Struct{},
+			}),
+			addressDistributionWant: []resolver.Address{
+				{Addr: backend1.Address},
+				{Addr: backend3.Address},
+				{Addr: backend3.Address},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resources := clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(e2e.ResourceParams{
+				DialTarget: serviceName,
+				NodeID: nodeID,
+				Host: "localhost",
+				SecLevel: e2e.SecurityLevelNone,
+			}, []uint32{port1, port2, port3, port4, port5}, test.wrrLocalityConfiguration)
+
+			ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+			defer cancel()
+			if err := managementServer.Update(ctx, resources); err != nil {
+				t.Fatal(err)
+			}
+
+			cc, err := grpc.Dial(fmt.Sprintf("xds:///%s", serviceName), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(r))
+			if err != nil {
+				t.Fatalf("failed to dial local test server: %v", err)
+			}
+			defer cc.Close()
+
+			client := testgrpc.NewTestServiceClient(cc)
+			if err := roundrobin.CheckWeightedRoundRobinRPCs(ctx, client, test.addressDistributionWant); err != nil {
+				t.Fatalf("error in expeected round robin: %v", err)
+			}
+		})
+	}
+}
+
+// wt target looks correct, this is all less though
+/*
+tlogger.go:116: INFO roundrobin.go:202 [testutils-roundrobin] non-weighted-roundrobin, gotRatio: map[127.0.0.1:62974:0.1672872340425532 127.0.0.1:62975:0.1672872340425532 127.0.0.1:62976:0.22180851063829787 127.0.0.1:62977:0.22180851063829787 127.0.0.1:62978:0.22180851063829787], wantRatio: map[127.0.0.1:62974:0.125 127.0.0.1:62975:0.125 127.0.0.1:62976:0.25 127.0.0.1:62977:0.25 127.0.0.1:62978:0.25]  (t=+954.042525ms)
+*/
+
+/*
+tlogger.go:116: INFO roundrobin.go:203 [testutils-roundrobin] non-weighted-roundrobin, gotRatio: map[127.0.0.1:49189:0.16447368421052633 127.0.0.1:49190:0.16529605263157895 127.0.0.1:49191:0.2236842105263158 127.0.0.1:49192:0.2236842105263158 127.0.0.1:49193:0.22286184210526316], wantRatio: map[127.0.0.1:49189:0.125 127.0.0.1:49190:0.125 127.0.0.1:49191:0.25 127.0.0.1:49192:0.25 127.0.0.1:49193:0.25]  (t=+199.722691ms)
+
+
+tlogger.go:116: INFO roundrobin.go:203 [testutils-roundrobin] non-weighted-roundrobin, gotRatio: map[127.0.0.1:50096:0.16866335141651598 127.0.0.1:50097:0.16870102471368295 127.0.0.1:50098:0.2208785412899337 127.0.0.1:50099:0.2208785412899337 127.0.0.1:50100:0.2208785412899337], wantRatio: map[127.0.0.1:50096:0.125 127.0.0.1:50097:0.125 127.0.0.1:50098:0.25 127.0.0.1:50099:0.25 127.0.0.1:50100:0.25]
+
+// tlogger.go:116: INFO roundrobin.go:203 [testutils-roundrobin] non-weighted-roundrobin, gotRatio: map[127.0.0.1:50916:0.16573810321715818 127.0.0.1:50917:0.16575904825737264 127.0.0.1:50918:0.22283428284182305 127.0.0.1:50919:0.22283428284182305 127.0.0.1:50920:0.22283428284182305], wantRatio: map[127.0.0.1:50916:0.125 127.0.0.1:50917:0.125 127.0.0.1:50918:0.25 127.0.0.1:50919:0.25 127.0.0.1:50920:0.25]
+
+seems to be something slightly off wrt psuedo randomness...how is this calculated?
+is weighted target being configured right?
+is weighted target being configured right?
+
+with 2, 4:
+
+ tlogger.go:116: INFO roundrobin.go:203 [testutils-roundrobin] non-weighted-roundrobin, gotRatio: map[127.0.0.1:51279:0.16607142857142856 127.0.0.1:51280:0.1669642857142857 127.0.0.1:51281:0.22232142857142856 127.0.0.1:51282:0.22232142857142856 127.0.0.1:51283:0.22232142857142856], wantRatio: map[127.0.0.1:51279:0.125 127.0.0.1:51280:0.125 127.0.0.1:51281:0.25 127.0.0.1:51282:0.25 127.0.0.1:51283:0.25]
+
+generally deterministic failures, I think has something to do with weighted target logic
+
+*/

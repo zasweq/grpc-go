@@ -537,15 +537,15 @@ type EndpointOptions struct {
 	// to this resource reside.
 	Ports []uint32
 
-	// The first dimension is the individual localities...
-	// Ports [][]uint32
-
+	// PortsInLocalities represent ports in different localities. The first
+	// dimension represents a locality, and the second represents the ports
+	// within that locality.
 	PortsInLocalities [][]uint32
 
-	// could do it automatic locality '1', locality '2' etc.
-
-	LocalityWeights []uint32 // must be same size as first dimension of ports in localities
-
+	// LocalityWeights are the weights of localities specified in the first
+	// dimension of PortsInLocalities. Must be the same length as the first
+	// dimension of PortsInLocalities.
+	LocalityWeights []uint32
 
 	// DropPercents is a map from drop category to a drop percentage. If unset,
 	// no drops are configured.
@@ -561,15 +561,10 @@ func DefaultEndpoint(clusterName string, host string, ports []uint32) *v3endpoin
 	})
 }
 
-// returns an xDS Endpoint resource configured with provided options
-
-// EndpointResourceWithOptionsMultipleLocalities...
+// EndpointResourceWithOptionsMultipleLocalities returns an xDS Endpoint
+// resource which specifies multiple localities.
 func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endpointpb.ClusterLoadAssignment {
-	// Is there anything else you need to configure this with? I feel like perhaps since now multiple localities?
-	// See what the client spits out wrt struct?
-
 	var endpoints []*v3endpointpb.LocalityLbEndpoints
-
 	for i, portsInLocality := range opts.PortsInLocalities {
 		var lbEndpoints []*v3endpointpb.LbEndpoint
 		for _, port := range portsInLocality {
@@ -577,9 +572,9 @@ func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endp
 				HostIdentifier: &v3endpointpb.LbEndpoint_Endpoint{Endpoint: &v3endpointpb.Endpoint{
 					Address: &v3corepb.Address{Address: &v3corepb.Address_SocketAddress{
 						SocketAddress: &v3corepb.SocketAddress{
-							Protocol:      v3corepb.SocketAddress_TCP, // still on tcp
-							Address:       opts.Host, // if you want knob scale up opts struct localhost
-							PortSpecifier: &v3corepb.SocketAddress_PortValue{PortValue: port}}, // scale up ports too
+							Protocol:      v3corepb.SocketAddress_TCP,
+							Address:       opts.Host,
+							PortSpecifier: &v3corepb.SocketAddress_PortValue{PortValue: port}},
 					}},
 				}},
 				LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1},
@@ -613,7 +608,7 @@ func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endp
 			},
 		})
 	}
-	if len(drops) != 0 { // Like Easwar asked, is this field relevant?
+	if len(drops) != 0 {
 		cla.Policy = &v3endpointpb.ClusterLoadAssignment_Policy{
 			DropOverloads: drops,
 		}

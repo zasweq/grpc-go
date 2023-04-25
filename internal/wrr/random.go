@@ -61,6 +61,7 @@ func (rw *randomWRR) Next() (item interface{}) {
 		return rw.items[grpcrandInt63n(int64(len(rw.items)))].item
 	}
 
+	// is this truly random or is there something that explains the strange distribution that is always locality weight 1 gets slightly more
 	sumOfWeights := rw.items[len(rw.items)-1].accumulatedWeight
 	// Random number in [0, sumOfWeights).
 	randomWeight := grpcrandInt63n(sumOfWeights)

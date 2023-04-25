@@ -40,7 +40,6 @@ type AddrInfo struct {
 // Equal allows the values to be compared by Attributes.Equal.
 func (a AddrInfo) Equal(o interface{}) bool {
 	oa, ok := o.(AddrInfo)
-	print("Weight1: ", oa.Weight, ". Weight2: ", a.Weight, ".")
 	return ok && oa.Weight == a.Weight
 }
 
@@ -70,5 +69,5 @@ func GetAddrInfo(addr resolver.Address) AddrInfo {
 }
 
 func (a AddrInfo) String() string {
-	return fmt.Sprintf("Weight: %d", a.Weight) // I think it's both lw * ew
+	return fmt.Sprintf("Weight: %d", a.Weight)
 }

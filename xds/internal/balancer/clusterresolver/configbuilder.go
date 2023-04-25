@@ -264,7 +264,6 @@ var rrBalancerConfig = &internalserviceconfig.BalancerConfig{Name: roundrobin.Na
 // locality-name], so priority and the xDS LB Policy know which child policy
 // each address is for.
 func priorityLocalitiesToClusterImpl(localities []xdsresource.Locality, priorityName string, mechanism DiscoveryMechanism, drops []clusterimpl.DropConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) (*clusterimpl.LBConfig, []resolver.Address, error) {
-	// cleanup this added code block. ** todo with var names etc.
 	var addrs []resolver.Address
 	for _, locality := range localities {
 		var lw uint32 = 1
