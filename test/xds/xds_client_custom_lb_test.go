@@ -34,7 +34,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	structpb "github.com/golang/protobuf/ptypes/struct"
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
-	testpb "google.golang.org/grpc/interop/grpc_testing"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -117,9 +116,6 @@ func (s) TestCustomLBWRRLocalityChild(t *testing.T) {
 
 	client := testgrpc.NewTestServiceClient(cc)
 	// ping once before sending to helper?
-	if _, err := client.UnaryCall(ctx, &testpb.SimpleRequest{}); err != nil {
-		t.Fatalf("Unary RPC failed, error: %v", err)
-	}
 
 	// 1 2 - Locality 1 (How do we specify this in xDS Configuration? i.e. these addresses in locality 1)
 	// Weight: 1 (also specify this in xDS configuration)
@@ -434,14 +430,42 @@ func (s) TestWrrLocality(t *testing.T) {
 			wrrLocalityConfiguration: wrrLocality(&v3roundrobinpb.RoundRobin{}),
 			addressDistributionWant: []resolver.Address{ // full PR with deletion of old field as well...
 				{Addr: backend1.Address},
+				{Addr: backend1.Address},
+				{Addr: backend1.Address},
+				{Addr: backend1.Address},
+				{Addr: backend1.Address},
+				{Addr: backend1.Address},
+				{Addr: backend2.Address},
+				{Addr: backend2.Address},
+				{Addr: backend2.Address},
+				{Addr: backend2.Address},
+				{Addr: backend2.Address},
 				{Addr: backend2.Address},
 				{Addr: backend3.Address},
-				{Addr: backend4.Address},
-				{Addr: backend5.Address},
+				{Addr: backend3.Address},
+				{Addr: backend3.Address},
+				{Addr: backend3.Address},
+				{Addr: backend3.Address},
+				{Addr: backend3.Address},
+				{Addr: backend3.Address},
 				{Addr: backend3.Address},
 				{Addr: backend4.Address},
+				{Addr: backend4.Address},
+				{Addr: backend4.Address},
+				{Addr: backend4.Address},
+				{Addr: backend4.Address},
+				{Addr: backend4.Address},
+				{Addr: backend4.Address},
+				{Addr: backend4.Address},
 				{Addr: backend5.Address},
-			},
+				{Addr: backend5.Address},
+				{Addr: backend5.Address},
+				{Addr: backend5.Address},
+				{Addr: backend5.Address},
+				{Addr: backend5.Address},
+				{Addr: backend5.Address},
+				{Addr: backend5.Address},
+			}, // takes len of addresses into account
 		},
 		// custom LB field which points to pick first
 		{
@@ -508,5 +532,51 @@ with 2, 4:
  tlogger.go:116: INFO roundrobin.go:203 [testutils-roundrobin] non-weighted-roundrobin, gotRatio: map[127.0.0.1:51279:0.16607142857142856 127.0.0.1:51280:0.1669642857142857 127.0.0.1:51281:0.22232142857142856 127.0.0.1:51282:0.22232142857142856 127.0.0.1:51283:0.22232142857142856], wantRatio: map[127.0.0.1:51279:0.125 127.0.0.1:51280:0.125 127.0.0.1:51281:0.25 127.0.0.1:51282:0.25 127.0.0.1:51283:0.25]
 
 generally deterministic failures, I think has something to do with weighted target logic
+
+tlogger.go:116: INFO roundrobin.go:203 [testutils-roundrobin] non-weighted-roundrobin, gotRatio: map[127.0.0.1:60123:0.1622983870967742 127.0.0.1:60124:0.1622983870967742 127.0.0.1:60125:0.22513440860215053 127.0.0.1:60126:0.22513440860215053 127.0.0.1:60127:0.22513440860215053], wantRatio: map[127.0.0.1:60123:0.125 127.0.0.1:60124:0.125 127.0.0.1:60125:0.25 127.0.0.1:60126:0.25 127.0.0.1:60127:0.25
+
+
+
+
+weighted target config looks correct:
+INFO weightedtarget.go:84 [xds] [weighted-target-lb 0xc00058ccc0] Received update from resolver, balancer config: {
+          "targets": {
+            "{\"region\":\"region\\u0000\",\"zone\":\"zone\\u0000\",\"subZone\":\"subzone\\u0000\"}": {
+              "weight": 1,
+              "childPolicy": [
+                {
+                  "round_robin": {}
+                }
+              ]
+            },
+            "{\"region\":\"region\\u0001\",\"zone\":\"zone\\u0001\",\"subZone\":\"subzone\\u0001\"}": {
+              "weight": 2,
+              "childPolicy": [
+                {
+                  "round_robin": {}
+                }
+              ]
+            }
+          }
+        }
+
+
+
+error in picker?
+
+tlogger.go:116: INFO roundrobin.go:50 [roundrobin] roundrobinPicker: Build called with info: {map[0xc00058d560:{%!v(PANIC=String method: runtime error: invalid memory address or nil pointer dereference)} 0xc00058d600:{%!v(PANIC=String method: runtime error: invalid memory address or nil pointer dereference)}]}  (t=+13.927761ms)
+
+
+
+tlogger.go:116: INFO roundrobin.go:50 [roundrobin] roundrobinPicker: Build called with info: {map[0xc00058d560:{%!v(PANIC=String method: runtime error: invalid memory address or nil pointer dereference)} 0xc00058d600:{%!v(PANIC=String method: runtime error: invalid memory address or nil pointer dereference)}]}  (t=+13.927761ms)
+
+INFO roundrobin.go:203 [testutils-roundrobin] non-weighted-roundrobin, gotRatio: map[127.0.0.1:60123:0.1671903052064632 127.0.0.1:60124:0.1671903052064632 127.0.0.1:60125:0.22194793536804308 127.0.0.1:60126:0.22194793536804308 127.0.0.1:60127:0.22172351885098743], wantRatio: map[127.0.0.1:60123:0.125 127.0.0.1:60124:0.125 127.0.0.1:60125:0.25 127.0.0.1:60126:0.25 127.0.0.1:60127:0.25]
+
+
+Even in passing:     tlogger.go:116: INFO roundrobin.go:50 [roundrobin] roundrobinPicker: Build called with info: {map[0xc0003ffba0:{%!v(PANIC=String method: runtime error: invalid memory address or nil pointer dereference)} 0xc00054e940:{%!v(PANIC=String method: runtime error: invalid memory address or nil pointer dereference)}]}  (t=+9.763378ms)
+
+
+1/3rd go to first 2/3rds go to second
+// 16.7 16.7 22 22 22
 
 */

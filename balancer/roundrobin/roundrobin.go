@@ -46,6 +46,24 @@ func init() {
 
 type rrPickerBuilder struct{}
 
+/*
+correct behavior:
+roundrobinPicker: Build called with info: {map[0xc0001d3140:{{
+          "Addr": "localhost:60901",
+          "ServerName": "",
+          "Attributes": null,
+          "BalancerAttributes": {},
+          "Type": 0,
+          "Metadata": null
+        }}]}
+
+
+bad behavior:
+
+Build called with info: {map[0xc000494d80:{%!v(PANIC=String method: runtime
+error: invalid memory address or nil pointer dereference)}
+*/
+
 func (*rrPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	logger.Infof("roundrobinPicker: Build called with info: %v", info)
 	if len(info.ReadySCs) == 0 {

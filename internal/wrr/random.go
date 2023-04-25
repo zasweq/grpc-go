@@ -65,6 +65,8 @@ func (rw *randomWRR) Next() (item interface{}) {
 	sumOfWeights := rw.items[len(rw.items)-1].accumulatedWeight
 	// Random number in [0, sumOfWeights).
 	randomWeight := grpcrandInt63n(sumOfWeights)
+	// This is the correct algorithm...
+
 	// Item's accumulated weights are in ascending order, because item's weight >= 0.
 	// Binary search rw.items to find first item whose accumulatedWeight > randomWeight
 	// The return i is guaranteed to be in range [0, len(rw.items)) because randomWeight < last item's accumulatedWeight
