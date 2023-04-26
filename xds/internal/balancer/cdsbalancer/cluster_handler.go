@@ -39,15 +39,9 @@ var (
 type clusterHandlerUpdate struct {
 	// securityCfg is the Security Config from the top (root) cluster.
 	securityCfg *xdsresource.SecurityConfig
-	// lbPolicy is the lb policy from the top (root) cluster.
-	//
-	// Currently, we only support roundrobin or ringhash, and since roundrobin
-	// does need configs, this is only set to the ringhash config, if the policy
-	// is ringhash. In the future, if we support more policies, we can make this
-	// an interface, and set it to config of the other policies.
-	lbPolicy *xdsresource.ClusterLBPolicyRingHash
 
-	lbPolicyJSON json.RawMessage
+	// lbPolicy is the the child of the cluster_impl policy, for all priorities.
+	lbPolicy json.RawMessage
 
 	// updates is a list of ClusterUpdates from all the leaf clusters.
 	updates []xdsresource.ClusterUpdate
@@ -129,8 +123,8 @@ func (ch *clusterHandler) constructClusterUpdate() {
 
 	ch.updateChannel <- clusterHandlerUpdate{
 		securityCfg: ch.createdClusters[ch.rootClusterName].clusterUpdate.SecurityCfg,
-		lbPolicyJSON: ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicyJSON,
-		updates:      clusterUpdate,
+		lbPolicy:    ch.createdClusters[ch.rootClusterName].clusterUpdate.LBPolicy,
+		updates:     clusterUpdate,
 	}
 }
 

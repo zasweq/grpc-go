@@ -535,13 +535,13 @@ func TestPriorityLocalitiesToClusterImpl(t *testing.T) {
 		wantConfig: &clusterimpl.LBConfig{
 			Cluster:        testClusterName,
 			EDSServiceName: testEDSService,
-			ChildPolicy:  &internalserviceconfig.BalancerConfig{Name: roundrobin.Name},
+			ChildPolicy:    &internalserviceconfig.BalancerConfig{Name: roundrobin.Name},
 		},
 		wantAddrs: []resolver.Address{
 			testAddrWithAttrs("addr-1-1", 20, 90, "test-priority", &internal.LocalityID{Zone: "test-zone-1"}),
 			testAddrWithAttrs("addr-1-2", 20, 10, "test-priority", &internal.LocalityID{Zone: "test-zone-1"}),
 			testAddrWithAttrs("addr-2-1", 80, 90, "test-priority", &internal.LocalityID{Zone: "test-zone-2"}),
-			testAddrWithAttrs("addr-2-2", 80, 10,"test-priority", &internal.LocalityID{Zone: "test-zone-2"}),
+			testAddrWithAttrs("addr-2-2", 80, 10, "test-priority", &internal.LocalityID{Zone: "test-zone-2"}),
 		},
 	},
 		{

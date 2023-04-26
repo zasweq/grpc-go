@@ -102,7 +102,8 @@ func (a *Attributes) Equal(o *Attributes) bool {
 	return true
 }
 
-// Mention this in PR explanation as a bullet point.
+// String prints the attribute map. If any key or values throughout the map
+// implement fmt.Stringer, it calls that method and appends.
 func (a *Attributes) String() string {
 	var sb strings.Builder
 	sb.WriteString("{")

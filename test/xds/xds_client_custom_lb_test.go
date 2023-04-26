@@ -73,17 +73,16 @@ func wrrLocalityAny(m proto.Message) *anypb.Any {
 	return testutils.MarshalAny(wrrLocality(m))
 }
 
-// clusterWithLBConfiguration returns a cluster resource with the proto message Marshaled as an any
-// and specified through the load_balancing_policy field.
+// clusterWithLBConfiguration returns a cluster resource with the proto message
+// passed Marshaled to an any and specified through the load_balancing_policy
+// field.
 func clusterWithLBConfiguration(clusterName, edsServiceName string, secLevel e2e.SecurityLevel, m proto.Message) *v3clusterpb.Cluster {
-	// will also test that old Field doesn't get used and new one takes precedence (should get rid of as part of this PR so this comment no longer applies but persist to know what to do later)
 	cluster := e2e.DefaultCluster(clusterName, edsServiceName, secLevel)
-	// (i.e. get the rebase with all of Easwar's comments incorporated in working - will delete old field)
 	cluster.LoadBalancingPolicy = &v3clusterpb.LoadBalancingPolicy{
 		Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
 			{
 				TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
-					Name: "noop name",
+					Name:        "noop name",
 					TypedConfig: testutils.MarshalAny(m),
 				},
 			},
@@ -152,21 +151,21 @@ func (s) TestWrrLocality(t *testing.T) {
 	port5 := testutils.ParsePort(t, backend5.Address)
 	defer backend5.Stop()
 	const serviceName = "my-service-client-side-xds"
-	tests := []struct{
+	tests := []struct {
 		name string
 		// Configuration will be specified through load_balancing_policy field.
 		wrrLocalityConfiguration *v3wrrlocalitypb.WrrLocality
-		addressDistributionWant []resolver.Address
+		addressDistributionWant  []resolver.Address
 	}{
 		{
-			name: "rr_child",
+			name:                     "rr_child",
 			wrrLocalityConfiguration: wrrLocality(&v3roundrobinpb.RoundRobin{}),
 			// Each addresses expected probability is locality weight of
 			// locality / total locality weights multiplied by 1 / number of
 			// endpoints in each locality (due to round robin across endpoints
 			// in a locality). Thus, address 1 and address 2 have 1/3 * 1/2
 			// probability, and addresses 3 4 5 have 2/3 * 1/3 probability of
-			// showing up.
+			// being routed to.
 			addressDistributionWant: []resolver.Address{
 				{Addr: backend1.Address},
 				{Addr: backend1.Address},
@@ -208,9 +207,9 @@ func (s) TestWrrLocality(t *testing.T) {
 		},
 		// This configures custom lb as the child of wrr_locality, which points
 		// to our pick_first implementation. Thus, the expected distribution of
-		// addresses is locality weight of locality / total locality weights and
-		// within each locality the first backend (e.g. Address 1 for locality
-		// 1, and Address 3 for locality 2).
+		// addresses is locality weight of locality / total locality weights as
+		// the probability of picking the first backend within the locality
+		// (e.g. Address 1 for locality 1, and Address 3 for locality 2).
 		{
 			name: "custom_lb_child_pick_first",
 			wrrLocalityConfiguration: wrrLocality(&v3.TypedStruct{
@@ -228,9 +227,9 @@ func (s) TestWrrLocality(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			resources := clientResourcesNewFieldSpecifiedAndPortsInMultipleLocalities2(e2e.ResourceParams{
 				DialTarget: serviceName,
-				NodeID: nodeID,
-				Host: "localhost",
-				SecLevel: e2e.SecurityLevelNone,
+				NodeID:     nodeID,
+				Host:       "localhost",
+				SecLevel:   e2e.SecurityLevelNone,
 			}, []uint32{port1, port2, port3, port4, port5}, test.wrrLocalityConfiguration)
 
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)

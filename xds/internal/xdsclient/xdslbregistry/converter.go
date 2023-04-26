@@ -16,7 +16,6 @@
  *
  */
 
-
 // Package xdslbregistry provides utilities to convert proto load balancing
 // configuration, defined by the xDS API spec, to JSON load balancing
 // configuration.

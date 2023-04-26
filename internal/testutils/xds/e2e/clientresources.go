@@ -562,7 +562,8 @@ func DefaultEndpoint(clusterName string, host string, ports []uint32) *v3endpoin
 }
 
 // EndpointResourceWithOptionsMultipleLocalities returns an xDS Endpoint
-// resource which specifies multiple localities.
+// resource which specifies multiple localities, with the ports specified per
+// locality placed into each localities endpoints specification.
 func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endpointpb.ClusterLoadAssignment {
 	var endpoints []*v3endpointpb.LocalityLbEndpoints
 	for i, portsInLocality := range opts.PortsInLocalities {
@@ -582,12 +583,12 @@ func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endp
 		}
 
 		endpoints = append(endpoints, &v3endpointpb.LocalityLbEndpoints{
-			Locality:    &v3corepb.Locality{
-				Region: "region" + string(i),
-				Zone: "zone" + string(i),
+			Locality: &v3corepb.Locality{
+				Region:  "region" + string(i),
+				Zone:    "zone" + string(i),
 				SubZone: "subzone" + string(i),
 			},
-			LbEndpoints: lbEndpoints,
+			LbEndpoints:         lbEndpoints,
 			LoadBalancingWeight: &wrapperspb.UInt32Value{Value: opts.LocalityWeights[i]},
 			Priority:            0,
 		})
@@ -595,7 +596,7 @@ func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endp
 
 	cla := &v3endpointpb.ClusterLoadAssignment{
 		ClusterName: opts.ClusterName,
-		Endpoints: endpoints,
+		Endpoints:   endpoints,
 	}
 
 	var drops []*v3endpointpb.ClusterLoadAssignment_Policy_DropOverload
@@ -637,8 +638,8 @@ func EndpointResourceWithOptions(opts EndpointOptions) *v3endpointpb.ClusterLoad
 		ClusterName: opts.ClusterName,
 		Endpoints: []*v3endpointpb.LocalityLbEndpoints{
 			{
-				Locality:    &v3corepb.Locality{SubZone: "subzone"},
-				LbEndpoints: lbEndpoints,
+				Locality:            &v3corepb.Locality{SubZone: "subzone"},
+				LbEndpoints:         lbEndpoints,
 				LoadBalancingWeight: &wrapperspb.UInt32Value{Value: 1},
 				Priority:            0,
 			},

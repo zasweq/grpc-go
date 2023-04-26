@@ -57,16 +57,6 @@ type priorityConfig struct {
 	childNameGen *nameGenerator
 }
 
-// one big atomic PR - also delete client emissions and get it working by deleting support for old field.
-
-// cleanup everything
-
-// rebase onto xDS Client PR
-
-// delete old field out of client
-
-
-
 // buildPriorityConfigJSON builds balancer config for the passed in
 // priorities.
 //
@@ -83,7 +73,6 @@ type priorityConfig struct {
 //	┌──────▼─────┐  ┌─────▼──────┐
 //	│xDSLBPolicy │  │xDSLBPolicy │ (Locality and Endpoint picking layer)
 //	└────────────┘  └────────────┘
-//
 func buildPriorityConfigJSON(priorities []priorityConfig, xdsLBPolicy *internalserviceconfig.BalancerConfig) ([]byte, []resolver.Address, error) {
 	pc, addrs, err := buildPriorityConfig(priorities, xdsLBPolicy)
 	if err != nil {
@@ -291,18 +280,6 @@ func priorityLocalitiesToClusterImpl(localities []xdsresource.Locality, priority
 			}
 			addr := resolver.Address{Addr: endpoint.Address}
 			addr = hierarchy.Set(addr, []string{priorityName, localityStr})
-
-			// Since an xDS configuration can place a given locality under
-			// multiple priorities, it is possible to see locality weight
-			// attributes with different values for the same locality. We do not
-			// support this kind of an edge case and just use the weight in the
-			// first attribute we encounter. A warning should be logged about
-			// any locality weights being discarded.
-			// Can ^^^ even trigger??? we read locality ID
-			// Just mention handled in EDS, spits out the locality weight for that priority, this is per priority,
-			// so weights correspond to what is set with specific priority.
-			// and then set an addr based on an addr key, so addrs can't collide?
-
 			addr = internal.SetLocalityID(addr, locality.ID)
 			// "To provide the xds_wrr_locality load balancer information about
 			// locality weights received from EDS, the cluster resolver will

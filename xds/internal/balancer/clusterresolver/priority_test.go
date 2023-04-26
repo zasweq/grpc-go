@@ -43,9 +43,9 @@ import (
 )
 
 var (
-	testClusterNames  = []string{"test-cluster-1", "test-cluster-2"}
-	testSubZones      = []string{"I", "II", "III", "IV"}
-	testEndpointAddrs []string
+	testClusterNames    = []string{"test-cluster-1", "test-cluster-2"}
+	testSubZones        = []string{"I", "II", "III", "IV"}
+	testEndpointAddrs   []string
 	wrrLocalityLBConfig = &internalserviceconfig.BalancerConfig{
 		Name: wrrlocality.Name,
 		Config: &wrrlocality.LBConfig{

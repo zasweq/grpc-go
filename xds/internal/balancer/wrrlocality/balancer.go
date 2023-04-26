@@ -55,6 +55,7 @@ type LBConfig struct {
 	// ChildPolicy is the config for the child policy.
 	ChildPolicy *internalserviceconfig.BalancerConfig `json:"childPolicy,omitempty"`
 }
+
 // To plumb in a different child in tests.
 var weightedTargetName = weightedtarget.Name
 
@@ -95,13 +96,11 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 
 type attributeKey struct{}
 
-// Do I need Equal? Do Balancer attributes get checked for equality?
 // Equal allows the values to be compared by Attributes.Equal.
 func (a AddrInfo) Equal(o interface{}) bool {
 	oa, ok := o.(AddrInfo)
-	return ok && oa.LocalityWeight == a.LocalityWeight // check if this is being called in failing tests
-} // idk I don't like this code block...
-
+	return ok && oa.LocalityWeight == a.LocalityWeight
+}
 
 // AddrInfo is the locality weight of the locality an address is a part of.
 type AddrInfo struct {
@@ -119,12 +118,19 @@ func (a AddrInfo) String() string {
 	return fmt.Sprintf("Locality Weight: %d", a.LocalityWeight)
 }
 
-// getAddrInfo...
+// getAddrInfo returns the AddrInfo stored in the BalancerAttributes field of
+// addr. Returns an AddrInfo with LocalityWeight of 1 if no AddrInfo found.
 func getAddrInfo(addr resolver.Address) AddrInfo {
 	v := addr.BalancerAttributes.Value(attributeKey{})
-	// in the failure case, return 1 even though failure case shouldn't happen
-	// or does this already implicitly happen? This is what wrr does so maybe it implicitly happens...
-	ai, _ := v.(AddrInfo) // can this fail? handle it at this layer anyway...
+	var ai AddrInfo
+	var ok bool
+	if ai, ok = v.(AddrInfo); !ok {
+		// Shouldn't happen, but to avoid undefiend behavior of 0 locality
+		// weight.
+		return AddrInfo{
+			LocalityWeight: 1,
+		}
+	}
 	return ai
 }
 
@@ -151,20 +157,23 @@ func (b *wrrLocalityBalancer) UpdateClientConnState(s balancer.ClientConnState) 
 
 	weightedTargets := make(map[string]weightedtarget.Target)
 	for _, addr := range s.ResolverState.Addresses {
-		locality := internal.GetLocalityID(addr) // what happens if this fails? also happens in that layer
+		// These gets of attributes could potentially return zero values. This
+		// shouldn't happen though, and thus don't error out, and just build a
+		// weighted target with undefined behavior. (For the attribute in this
+		// package, I defaulted the getter to return a value with defined
+		// behavior rather than zero value).
+		locality := internal.GetLocalityID(addr)
 		localityString, err := locality.ToString()
 		if err != nil {
 			// Should never happen.
 			logger.Infof("failed to marshal LocalityID: %v, skipping this locality in weighted target")
 		}
 		ai := getAddrInfo(addr)
-
-		// if this isn't set this ai becomes 0 due to this being value type...
 		weightedTargets[localityString] = weightedtarget.Target{Weight: ai.LocalityWeight, ChildPolicy: lbCfg.ChildPolicy}
 	}
 	wtCfg := &weightedtarget.LBConfig{Targets: weightedTargets}
 	return b.child.UpdateClientConnState(balancer.ClientConnState{
-		ResolverState: s.ResolverState,
+		ResolverState:  s.ResolverState,
 		BalancerConfig: wtCfg,
 	})
 }

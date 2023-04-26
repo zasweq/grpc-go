@@ -63,7 +63,7 @@ var (
 			IdentityInstanceName:   "default2",
 			SubjectAltNameMatchers: testSANMatchers,
 		},
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy: wrrLocalityLBConfigJSON,
 	}
 	cdsUpdateWithMissingSecurityCfg = xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
@@ -251,7 +251,7 @@ func (s) TestSecurityConfigWithoutXDSCreds(t *testing.T) {
 	// newChildBalancer function as part of test setup.
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -310,7 +310,7 @@ func (s) TestNoSecurityConfigWithXDSCreds(t *testing.T) {
 	// passed to the CDS balancer as part of this update.
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -573,7 +573,7 @@ func (s) TestSecurityConfigUpdate_GoodToFallback(t *testing.T) {
 	// channel needs to be put in a bad state.
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
 		t.Fatal(err)
@@ -685,7 +685,7 @@ func (s) TestSecurityConfigUpdate_GoodToGood(t *testing.T) {
 			RootInstanceName:       "default1",
 			SubjectAltNameMatchers: testSANMatchers,
 		},
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy: wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -711,7 +711,7 @@ func (s) TestSecurityConfigUpdate_GoodToGood(t *testing.T) {
 			RootInstanceName:       "default2",
 			SubjectAltNameMatchers: testSANMatchers,
 		},
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy: wrrLocalityLBConfigJSON,
 	}
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
 		t.Fatal(err)

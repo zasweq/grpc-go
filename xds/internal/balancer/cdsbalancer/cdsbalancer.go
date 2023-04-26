@@ -399,13 +399,13 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 	}
 
 	bc := &internalserviceconfig.BalancerConfig{}
-	if err := json.Unmarshal(update.lbPolicyJSON, bc); err != nil {
-		// This will never, valid configuration is emitted from client. Validity
-		// is already checked in the client, however, this double validation is
-		// present because Unmarshalling and Validating are coupled into one
-		// json.Unmarshal operation). We will switch this in the future to two
-		// separate operations.
-		b.logger.Infof("emitted JSON xDSLBPolicy %s from xDS Client is invalid: %v", update.lbPolicyJSON, err)
+	if err := json.Unmarshal(update.lbPolicy, bc); err != nil {
+		// This will never occur, valid configuration is emitted from the xDS
+		// Client. Validity is already checked in the xDS Client, however, this
+		// double validation is present because Unmarshalling and Validating are
+		// coupled into one json.Unmarshal operation). We will switch this in
+		// the future to two separate operations.
+		b.logger.Infof("emitted lbPolicy %s from xDS Client is invalid: %v", update.lbPolicy, err)
 		return
 	}
 	lbCfg.XDSLBPolicy = bc

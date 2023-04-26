@@ -134,11 +134,11 @@ func (s) TestParseConfig(t *testing.T) {
 
 func setup(t *testing.T) (*wrrLocalityBalancer, func()) {
 	t.Helper()
-	builder := balancer.Get(Name) // does do flow of getting builder, and using it to build lb struct on heap with all corresponding threads
+	builder := balancer.Get(Name)
 	if builder == nil {
 		t.Fatalf("balancer.Get(%q) returned nil", Name)
 	}
-	tcc := testutils.NewTestClientConn(t) // what happens if nothing is called, lower level doesn't call right
+	tcc := testutils.NewTestClientConn(t)
 	wrrL := builder.Build(tcc, balancer.BuildOptions{})
 	return wrrL.(*wrrLocalityBalancer), wrrL.Close
 }
@@ -146,9 +146,9 @@ func setup(t *testing.T) (*wrrLocalityBalancer, func()) {
 // TestUpdateClientConnState tests the UpdateClientConnState method of the
 // wrr_locality_experimental balancer. This UpdateClientConn operation should
 // take the localities and their weights in the addresses passed in, alongside
-// the endpoint picking policy defined in the Balancer Config and construct a
-// weighted target configuration corresponding to these inputs.
-func (s) TestUpdateClientConnState(t *testing.T) { // this is all Java has
+// the endpoint picking policy defined in the Balancer Config specified and
+// construct a weighted target configuration corresponding to these inputs.
+func (s) TestUpdateClientConnState(t *testing.T) {
 	cfgCh := testutils.NewChannel()
 	oldWeightedTargetName := weightedTargetName
 	defer func() {
@@ -162,12 +162,7 @@ func (s) TestUpdateClientConnState(t *testing.T) { // this is all Java has
 		UpdateClientConnState: func(bd *stub.BalancerData, ccs balancer.ClientConnState) error {
 			wtCfg, ok := ccs.BalancerConfig.(*weightedtarget.LBConfig)
 			if !ok {
-				/*
-				UpdateClientConnState can error from:
-				1. this call can print
-				2. receiving a config with bad type
-				*/
-				return errors.New("child received config that was not a weighted target config") // could also just return an error
+				return errors.New("child received config that was not a weighted target config")
 			}
 			defer cfgCh.Send(wtCfg)
 			return nil
@@ -177,14 +172,17 @@ func (s) TestUpdateClientConnState(t *testing.T) { // this is all Java has
 	wrrL, close := setup(t)
 	defer close()
 
+	// Create the addresses with two localities with certain locality weights.
+	// This represents what the addresses the wrr_locality balancer will receive
+	// in UpdateClientConnState.
 	var addrs []resolver.Address
 	addr := resolver.Address{
 		Addr: "locality-1",
 	}
 
 	lID := internal.LocalityID{
-		Region: "region-1",
-		Zone: "zone-1",
+		Region:  "region-1",
+		Zone:    "zone-1",
 		SubZone: "subzone-1",
 	}
 	addr = internal.SetLocalityID(addr, lID)
@@ -194,23 +192,14 @@ func (s) TestUpdateClientConnState(t *testing.T) { // this is all Java has
 	addr2 := resolver.Address{
 		Addr: "locality-2",
 	}
-
 	lID2 := internal.LocalityID{
-		Region: "region-2",
-		Zone: "zone-2",
+		Region:  "region-2",
+		Zone:    "zone-2",
 		SubZone: "subzone-2",
 	}
 	addr2 = internal.SetLocalityID(addr2, lID2)
 	addr2 = SetAddrInfo(addr2, AddrInfo{LocalityWeight: 1})
 	addrs = append(addrs, addr2)
-
-	// The parsed load balancing configuration returned by the builder's
-	// ParseConfig method, if implemented.
-
-	// func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error)
-	// so the only difference is you fill out a JSON string and then build out this BalancerConfig
-
-	// I think declaring this here inline is fine it's just a unit test
 
 	err := wrrL.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: &LBConfig{
@@ -223,14 +212,8 @@ func (s) TestUpdateClientConnState(t *testing.T) { // this is all Java has
 		},
 	})
 	if err != nil {
-		t.Fatalf("unexpected error from UpdateClientConnState(maybe log ccs): %v", err)
+		t.Fatalf("unexpected error from UpdateClientConnState: %v", err)
 	}
-
-	// Three tasks:
-	// 1. Get rid of non determinism? Is there non determinism? Run 100 times and figure out (no, why) json marshaling seems to be deterministic
-	// 2. Cleanup this file
-	// 3. Does this need another test case or is this single sanity check fine? My gut tells me the latter. that's all it needs
-	// (see tests for wt builder in cluster_resolver?) the latter chosen* one sanity check
 
 	// Note that these inline strings declared as the key in Targets built from
 	// Locality ID are not exactly what is shown in the example in the gRFC.
@@ -273,35 +256,3 @@ func (s) TestUpdateClientConnState(t *testing.T) { // this is all Java has
 		t.Fatalf("child received unexpected wtCfg, diff (-got, +want): %v", diff)
 	}
 }
-
-// know not to delete the dependencies in internal/
-
-// unit tests are good when test function - prime number prime number
-
-// unit tests setting up state
-// expect exact behavior
-// copy 50 times, 100 times, each 40 liner changes to 27 liner
-// functionality tests happen at package level balancer (API balancer)
-// behavior baked too hard into tests, priority lb policy tests gave Doug problems
-
-// Tests are often non software engineered in terms of factoring out into helpers
-
-// nothing factored out into every test - factoring things into logical operations
-// such as helpers...
-
-// testing at API level
-
-// Major concern is testing at API level
-
-// helper function in code well defined, unit test for that that's great
-
-// good test helpers if fine in Easwar's
-
-// 8 things to stimulate behavior in 100 times
-
-// tests need to be debuggable - if a test fails, how do you know what is wrong
-// failure - but why it failed, checking endpoint weights themselves
-// logical scope of the emissions is debugged
-// test multiple scenarios with ew, all scenarios get expected output
-
-// distribution simpler test check whole thing

@@ -70,7 +70,7 @@ var (
 		},
 	}
 	wrrLocalityLBConfigJSON, _ = json.Marshal(wrrLocalityLBConfig)
-	ringHashLBConfig = &internalserviceconfig.BalancerConfig{
+	ringHashLBConfig           = &internalserviceconfig.BalancerConfig{
 		Name:   ringhash.Name,
 		Config: &ringhash.LBConfig{MinRingSize: 10, MaxRingSize: 100},
 	}
@@ -396,28 +396,27 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 		wantCCS   balancer.ClientConnState
 	}{
 		{
-			name:      "happy-case-with-lrs",
+			name: "happy-case-with-lrs",
 			cdsUpdate: xdsresource.ClusterUpdate{
-				ClusterName: serviceName,
+				ClusterName:     serviceName,
 				LRSServerConfig: xdsresource.ClusterLRSServerSelf,
-				LBPolicyJSON: wrrLocalityLBConfigJSON,
+				LBPolicy:        wrrLocalityLBConfigJSON,
 			},
-			wantCCS:   edsCCS(serviceName, nil, true, wrrLocalityLBConfig, noopODLBCfg),
+			wantCCS: edsCCS(serviceName, nil, true, wrrLocalityLBConfig, noopODLBCfg),
 		},
 		{
-			name:      "happy-case-without-lrs",
+			name: "happy-case-without-lrs",
 			cdsUpdate: xdsresource.ClusterUpdate{
 				ClusterName: serviceName,
-				LBPolicyJSON: wrrLocalityLBConfigJSON,
+				LBPolicy:    wrrLocalityLBConfigJSON,
 			},
-			wantCCS:   edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg),
+			wantCCS: edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg),
 		},
 		{
 			name: "happy-case-with-ring-hash-lb-policy",
 			cdsUpdate: xdsresource.ClusterUpdate{
 				ClusterName: serviceName,
-				LBPolicy:    &xdsresource.ClusterLBPolicyRingHash{MinimumRingSize: 10, MaximumRingSize: 100},
-				LBPolicyJSON: ringHashLBConfigJSON,
+				LBPolicy:    ringHashLBConfigJSON,
 			},
 			wantCCS: edsCCS(serviceName, nil, false, &internalserviceconfig.BalancerConfig{
 				Name:   ringhash.Name,
@@ -429,20 +428,20 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 			cdsUpdate: xdsresource.ClusterUpdate{
 				ClusterName: serviceName,
 				OutlierDetection: &xdsresource.OutlierDetection{
-				Interval:                       10 * time.Second,
-				BaseEjectionTime:               30 * time.Second,
-				MaxEjectionTime:                300 * time.Second,
-				MaxEjectionPercent:             10,
-				SuccessRateStdevFactor:         1900,
-				EnforcingSuccessRate:           100,
-				SuccessRateMinimumHosts:        5,
-				SuccessRateRequestVolume:       100,
-				FailurePercentageThreshold:     85,
-				EnforcingFailurePercentage:     5,
-				FailurePercentageMinimumHosts:  5,
-				FailurePercentageRequestVolume: 50,
+					Interval:                       10 * time.Second,
+					BaseEjectionTime:               30 * time.Second,
+					MaxEjectionTime:                300 * time.Second,
+					MaxEjectionPercent:             10,
+					SuccessRateStdevFactor:         1900,
+					EnforcingSuccessRate:           100,
+					SuccessRateMinimumHosts:        5,
+					SuccessRateRequestVolume:       100,
+					FailurePercentageThreshold:     85,
+					EnforcingFailurePercentage:     5,
+					FailurePercentageMinimumHosts:  5,
+					FailurePercentageRequestVolume: 50,
 				},
-				LBPolicyJSON: wrrLocalityLBConfigJSON,
+				LBPolicy: wrrLocalityLBConfigJSON,
 			},
 			wantCCS: edsCCS(serviceName, nil, false, wrrLocalityLBConfig, outlierdetection.LBConfig{
 				Interval:           10 * time.Second,
@@ -530,7 +529,7 @@ func (s) TestHandleClusterUpdateError(t *testing.T) {
 	// newChildBalancer function as part of test setup.
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
@@ -618,7 +617,7 @@ func (s) TestResolverError(t *testing.T) {
 	// newChildBalancer function as part of test setup.
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
@@ -670,7 +669,7 @@ func (s) TestUpdateSubConnState(t *testing.T) {
 	// newChildBalancer function as part of test setup.
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -708,7 +707,7 @@ func (s) TestCircuitBreaking(t *testing.T) {
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: clusterName,
 		MaxRequests: &maxRequests,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(clusterName, &maxRequests, false, wrrLocalityLBConfig, noopODLBCfg)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -745,7 +744,7 @@ func (s) TestClose(t *testing.T) {
 	// newChildBalancer function as part of test setup.
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -819,7 +818,7 @@ func (s) TestExitIdle(t *testing.T) {
 	// newChildBalancer function as part of test setup.
 	cdsUpdate := xdsresource.ClusterUpdate{
 		ClusterName: serviceName,
-		LBPolicyJSON: wrrLocalityLBConfigJSON,
+		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
 	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
