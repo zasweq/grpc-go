@@ -21,7 +21,7 @@ package weightedroundrobin
 
 import (
 	"fmt"
-	
+
 	"google.golang.org/grpc/resolver"
 )
 
