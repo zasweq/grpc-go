@@ -584,9 +584,9 @@ func EndpointResourceWithOptionsMultipleLocalities(opts EndpointOptions) *v3endp
 
 		endpoints = append(endpoints, &v3endpointpb.LocalityLbEndpoints{
 			Locality: &v3corepb.Locality{
-				Region:  "region" + string(i),
-				Zone:    "zone" + string(i),
-				SubZone: "subzone" + string(i),
+				Region:  fmt.Sprintf("region%d", i),
+				Zone:    fmt.Sprintf("zone%d", i),
+				SubZone: fmt.Sprintf("subzone%d", i),
 			},
 			LbEndpoints:         lbEndpoints,
 			LoadBalancingWeight: &wrapperspb.UInt32Value{Value: opts.LocalityWeights[i]},
