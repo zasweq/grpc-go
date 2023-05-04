@@ -20,6 +20,7 @@ package xds
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"google.golang.org/grpc"
@@ -98,10 +99,24 @@ func (s) TestCustomLB(t *testing.T) {
 			return &testpb.SimpleResponse{}, nil
 		},
 	}
+	if err := backend.StartServer(); err != nil {
+		t.Fatalf("Failed to start backend: %v", err)
+	}
+	t.Logf("Started good TestService backend at: %q", backend.Address)
+	defer backend.Stop()
 
 	// I think error-code-0 = status.OK?
 
-	lbCfgJSON := `{
+	lbCfg := &rpcBehaviorLBConfig{
+		RPCBehavior: "error-code-0",
+	}
+	m, err := json.Marshal(lbCfg)
+	if err != nil {
+		t.Fatalf("Error marshaling JSON %v: %v", lbCfg, err)
+	}
+	lbCfgJSON := fmt.Sprintf(`{"loadBalancingConfig": [ {%q:%v} ] }`, name, string(m))
+
+	/*lbCfgJSON := `{
   "loadBalancingConfig": [
     {
       "test.RpcBehaviorLoadBalancer": {
@@ -109,7 +124,7 @@ func (s) TestCustomLB(t *testing.T) {
       }
     }
   ]
-}`
+}`*/
 
 	// could even move to testutils (this balancer + test) or something if this
 	// doesn't make sense
@@ -146,8 +161,8 @@ func (s) TestCustomLB(t *testing.T) {
 
 
 	// err received
-	if err := val.(error); err != nil { // check this assertion
+	if err, ok := val.(error); ok { // check this assertion
 		t.Fatalf("error received from errCh: %v", err)
-	}
+	} // should be nil
 	// nil is success
 }

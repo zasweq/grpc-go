@@ -90,8 +90,8 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 
 func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	// what do I do about this? what validations come in from ParseConfig here?
-	var lbCfg *rpcBehaviorLBConfig
-	if err := json.Unmarshal(s, &lbCfg); err != nil {
+	lbCfg := &rpcBehaviorLBConfig{}
+	if err := json.Unmarshal(s, lbCfg); err != nil {
 		return nil, fmt.Errorf("rpc-behavior-lb: unable to marshal rpcBehaviorLBConfig: %s, error: %v", string(s), err)
 	}
 
@@ -100,7 +100,7 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 
 	// just needs to work? Omit empty? Check for presence?
 
-
+	print("lbCfg.rpcBehavior: %v", lbCfg.RPCBehavior)
 	// it's not technically invalid if the field isn't present...
 	// up to control plane test, just make sure it marshals, and the behavior assumes to be right
 	return lbCfg, nil
@@ -116,7 +116,7 @@ type rpcBehaviorLBConfig struct { // shorten name?
 	// rpc behavior config? is this type already in the codebase? Figure out
 
 	// omit empty or keep it? it needs to be there, keep it and send it through hierarchy...
-	rpcBehavior string `json:"rpcBehavior,omitempty"`
+	RPCBehavior string `json:"rpcBehavior,omitempty"`
 }
 
 // parseconfig? Will be called from xDS right? that's the flow returns object
@@ -168,8 +168,9 @@ func (rpcblb *rpcBehaviorLB) UpdateClientConnState(s balancer.ClientConnState) e
 	// see xDS client PR: is this "round_robin" config or
 	// just the round robin config inline
 
-	rpcblb.UpdateClientConnState(balancer.ClientConnState{
-		BalancerConfig: roundrobin.BalancerConfig{}, // prepare inline json call the registry and pass it downward?
+	return rpcblb.child.UpdateClientConnState(balancer.ClientConnState{
+		// can I just leave this blank and see what happens?
+		// BalancerConfig: roundrobin.BalancerConfig{}, // prepare inline json call the registry and pass it downward?
 		ResolverState: s.ResolverState,
 	})
 }
@@ -223,7 +224,8 @@ func (rpcbbal *rpcBehaviorLB) UpdateState(state balancer.State) {
 	// does rpc behavior need to grab a mutex?
 	// worse case to prevent deadlocks read into local var and send later
 	rpcbbal.mu.Lock()
-	rpcBehavior := rpcbbal.cfg.rpcBehavior
+	print("rpcBehavior: ", rpcbbal.cfg.RPCBehavior)
+	rpcBehavior := rpcbbal.cfg.RPCBehavior
 	rpcbbal.mu.Unlock()
 
 	rpcbbal.ClientConn.UpdateState(balancer.State{
