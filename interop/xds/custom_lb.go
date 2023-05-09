@@ -91,30 +91,30 @@ type rpcBehaviorLB struct {
 	child balancer.Balancer
 }
 
-func (rpcblb *rpcBehaviorLB) UpdateClientConnState(s balancer.ClientConnState) error {
+func (b *rpcBehaviorLB) UpdateClientConnState(s balancer.ClientConnState) error {
 	lbCfg, ok := s.BalancerConfig.(*lbConfig)
 	if !ok {
 		return fmt.Errorf("test.RpcBehaviorLoadBalancer:received config with unexpected type %T: %s", s.BalancerConfig, pretty.ToJSON(s.BalancerConfig))
 	}
-	rpcblb.mu.Lock()
-	rpcblb.cfg = lbCfg
-	rpcblb.mu.Unlock()
-	return rpcblb.child.UpdateClientConnState(balancer.ClientConnState{
+	b.mu.Lock()
+	b.cfg = lbCfg
+	b.mu.Unlock()
+	return b.child.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState: s.ResolverState,
 	})
 }
 
 // Forward other balancer.Balancer operations.
-func (rpcblb *rpcBehaviorLB) ResolverError(err error) {
-	rpcblb.child.ResolverError(err)
+func (b *rpcBehaviorLB) ResolverError(err error) {
+	b.child.ResolverError(err)
 }
 
-func (rpcblb *rpcBehaviorLB) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
-	rpcblb.child.UpdateSubConnState(sc, state)
+func (b *rpcBehaviorLB) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
+	b.child.UpdateSubConnState(sc, state)
 }
 
-func (rpcblb *rpcBehaviorLB) Close() {
-	rpcblb.child.Close()
+func (b *rpcBehaviorLB) Close() {
+	b.child.Close()
 }
 
 // rpcBehaviorPicker wraps a picker and adds the rpc-behavior metadata field
@@ -125,16 +125,16 @@ type rpcBehaviorPicker struct {
 }
 
 // Pick appends the rpc-behavior metadata entry to the pick result of the child.
-func (rpcbp *rpcBehaviorPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
-	pr, err := rpcbp.childPicker.Pick(info)
+func (p *rpcBehaviorPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	pr, err := p.childPicker.Pick(info)
 	if err != nil {
 		return balancer.PickResult{}, err
 	}
 
 	if pr.Metadata == nil {
-		pr.Metadata = metadata.Pairs("rpc-behavior", rpcbp.rpcBehavior)
+		pr.Metadata = metadata.Pairs("rpc-behavior", p.rpcBehavior)
 	} else {
-		pr.Metadata.Append("rpc-behavior", rpcbp.rpcBehavior)
+		pr.Metadata.Append("rpc-behavior", p.rpcBehavior)
 	}
 
 	return pr, nil
@@ -147,12 +147,12 @@ func newRPCBehaviorPicker(childPicker balancer.Picker, rpcBehavior string) *rpcB
 	}
 }
 
-func (rpcbbal *rpcBehaviorLB) UpdateState(state balancer.State) {
-	rpcbbal.mu.Lock()
-	rpcBehavior := rpcbbal.cfg.RPCBehavior
-	rpcbbal.mu.Unlock()
+func (b *rpcBehaviorLB) UpdateState(state balancer.State) {
+	b.mu.Lock()
+	rpcBehavior := b.cfg.RPCBehavior
+	b.mu.Unlock()
 
-	rpcbbal.ClientConn.UpdateState(balancer.State{
+	b.ClientConn.UpdateState(balancer.State{
 		ConnectivityState: state.ConnectivityState,
 		Picker:            newRPCBehaviorPicker(state.Picker, rpcBehavior),
 	})
