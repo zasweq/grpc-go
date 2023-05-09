@@ -20,24 +20,23 @@ package xds
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"testing"
+	"time"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/internal"
+	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/internal/testutils"
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
+	testpb "google.golang.org/grpc/interop/grpc_testing"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/serviceconfig"
-	"testing"
-	"time"
-
-	"google.golang.org/grpc/internal/grpctest"
-	testpb "google.golang.org/grpc/interop/grpc_testing"
 )
 
 var defaultTestTimeout = 5 * time.Second
@@ -50,43 +49,24 @@ func Test(t *testing.T) {
 	grpctest.RunSubTests(t, s{})
 }
 
-// configure rr as top level - through this wrapper - assert it has correct metadata on client/server side
-
-
-// TestCustomLB tests the custom lb for the interop client. It configures the
-// custom lb as the top level load balancing policy of the channel, then asserts
-// it can successfully make an RPC and also that the rpc behavior the custom lb
+// TestCustomLB tests the Custom LB for the interop client. It configures the
+// custom lb as the top level Load Balancing policy of the channel, then asserts
+// it can successfully make an RPC and also that the rpc behavior the Custom LB
 // is configured with makes it's way to the server in metadata.
 func (s) TestCustomLB(t *testing.T) {
-	// setup backends, get their addresses
-	// setup one backend which verifies the metadata...
-
-	mr := manual.NewBuilderWithScheme("customlb-e2e")
-	defer mr.Close()
-	// either err chan or send it and verify
-
-	// timeout or error received from this channel fail out
 	errCh := testutils.NewChannel()
-
-	// where is the md? the context right? see o11y tests for example
-
-	// Setup a backend which verifies metadata is present in the response.
-
+	// Setup a backend which verifies the expected rpc-behavior metadata is
+	// present in the request.
 	backend := &stubserver.StubServer{
 		UnaryCallF: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
-			// make sure has
-			// rpc-behavior, if not send error
-
-			// see o11y tests for how to get metadata
-
-			md, ok := metadata.FromIncomingContext(ctx) // check if this works, if not maybe use another helper?
+			md, ok := metadata.FromIncomingContext(ctx)
 			if !ok {
 				errCh.Send(errors.New("failed to receive metadata"))
 				return &testpb.SimpleResponse{}, nil
 			}
 			rpcBMD := md.Get("rpc-behavior")
 			if len(rpcBMD) != 1 {
-				errCh.Send(errors.New("not one value for metadata key rpc-behavior"))
+				errCh.Send(errors.New("only one value received for metadata key rpc-behavior"))
 				return &testpb.SimpleResponse{}, nil
 			}
 			wantVal := "error-code-0"
@@ -95,7 +75,7 @@ func (s) TestCustomLB(t *testing.T) {
 				return &testpb.SimpleResponse{}, nil
 			}
 			// Success.
-			errCh.Send(nil) // sync concerns for this send? or does it spawn a goroutine and just work, well just try out...
+			errCh.Send(nil)
 			return &testpb.SimpleResponse{}, nil
 		},
 	}
@@ -105,30 +85,19 @@ func (s) TestCustomLB(t *testing.T) {
 	t.Logf("Started good TestService backend at: %q", backend.Address)
 	defer backend.Stop()
 
-	// I think error-code-0 = status.OK?
+	lbCfgJSON := `{
+  		"loadBalancingConfig": [
+    		{
+      			"test.RpcBehaviorLoadBalancer": {
+					"rpcBehavior": "error-code-0"
+      		}
+    	}
+  	]
+	}`
 
-	lbCfg := &rpcBehaviorLBConfig{
-		RPCBehavior: "error-code-0",
-	}
-	m, err := json.Marshal(lbCfg)
-	if err != nil {
-		t.Fatalf("Error marshaling JSON %v: %v", lbCfg, err)
-	}
-	lbCfgJSON := fmt.Sprintf(`{"loadBalancingConfig": [ {%q:%v} ] }`, name, string(m))
-
-	/*lbCfgJSON := `{
-  "loadBalancingConfig": [
-    {
-      "test.RpcBehaviorLoadBalancer": {
-        "rpcBehavior": "error-code-0"
-      }
-    }
-  ]
-}`*/
-
-	// could even move to testutils (this balancer + test) or something if this
-	// doesn't make sense
 	sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(lbCfgJSON)
+	mr := manual.NewBuilderWithScheme("customlb-e2e")
+	defer mr.Close()
 	mr.InitialState(resolver.State{
 		Addresses: []resolver.Address{
 			{Addr: backend.Address},
@@ -145,24 +114,22 @@ func (s) TestCustomLB(t *testing.T) {
 	defer cancel()
 	testServiceClient := testgrpc.NewTestServiceClient(cc)
 
-	// make a unary rpc, verify server side gets metadata
+	// Make a Unary RPC. This RPC should be successful due to the round_robin
+	// leaf balancer. Also, the custom load balancer should inject the
+	// "rpc-behavior" string it is configured with into the metadata sent to
+	// server.
 	if _, err := testServiceClient.UnaryCall(ctx, &testpb.SimpleRequest{}); err != nil {
 		t.Fatalf("EmptyCall() failed: %v", err)
 	}
 
-
-	// recv on channel here to verify it received metadata.
-	// "rpc-behavior": metadata object specified - status-code-n
-	// ctx time out
 	val, err := errCh.Receive(ctx)
 	if err != nil {
 		t.Fatalf("error receiving from errCh: %v", err)
 	}
 
-
-	// err received
-	if err, ok := val.(error); ok { // check this assertion
-		t.Fatalf("error received from errCh: %v", err)
-	} // should be nil
-	// nil is success
+	// Should receive nil on the error channel which implies backend verified it
+	// correctly received the correct "rpc-behavior" metadata.
+	if err, ok := val.(error); ok {
+		t.Fatalf("error in backend verifications on metadata received: %v", err)
+	}
 }

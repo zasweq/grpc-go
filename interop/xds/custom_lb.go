@@ -16,8 +16,6 @@
  *
  */
 
-
-// Correct package?
 package xds
 
 import (
@@ -25,54 +23,28 @@ import (
 	"fmt"
 	"sync"
 
-	"google.golang.org/grpc/internal/pretty"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/roundrobin"
+	"google.golang.org/grpc/internal/pretty"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/serviceconfig"
 )
-
-// fix flaky test maybe
-
-// in PR: Link to Java and C
-// and test case with all validations and see it just needs to register this custom lb
-// explain test case
-
-// typed struct comes in off wire and I have code for taking that type
-// and pulling it off registry. specify this in pr description - test has scaffolding you need
-
-
-
-// in json:
-// "rpc-behavior": arbitrary string that gets marshaled into rpc-behavior...
-
-// example:
-// "data": "{ \"rpcBehavior\": \"error-code-15\" }"
-
-// define the rpcBehavior as a string
-
-// rpcBehavior string "rpcBehavior"
-
-// The rpcBehavior field value in the config should be used as the header value. - aka a string
-
-
-// in metadata:
-// "rpc-behavior": "error-code-int"
 
 func init() {
 	balancer.Register(bb{})
 }
 
-const name = "test.RpcBehaviorLoadBalancer" // export? but nothings going to read it just need to register
+const name = "test.RpcBehaviorLoadBalancer"
 
-type bb struct {}
+type bb struct{}
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
 	b := &rpcBehaviorLB{
 		ClientConn: cc,
 	}
 
-	// rr child to complete balancer tree and have RPCs actually work.
+	// round_robin child to complete balancer tree with a usable leaf policy and
+	// have RPCs actually work.
 	builder := balancer.Get(roundrobin.Name)
 	if builder == nil {
 		// Shouldn't happen, defensive programming. Registered from import of
@@ -89,20 +61,10 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 }
 
 func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	// what do I do about this? what validations come in from ParseConfig here?
-	lbCfg := &rpcBehaviorLBConfig{}
+	lbCfg := &lbConfig{}
 	if err := json.Unmarshal(s, lbCfg); err != nil {
-		return nil, fmt.Errorf("rpc-behavior-lb: unable to marshal rpcBehaviorLBConfig: %s, error: %v", string(s), err)
+		return nil, fmt.Errorf("rpc-behavior-lb: unable to marshal lbConfig: %s, error: %v", string(s), err)
 	}
-
-	// what validations do you even need to do here? I'm assuming def on the
-	// actual rpc-behavior object itself?
-
-	// just needs to work? Omit empty? Check for presence?
-
-	print("lbCfg.rpcBehavior: %v", lbCfg.RPCBehavior)
-	// it's not technically invalid if the field isn't present...
-	// up to control plane test, just make sure it marshals, and the behavior assumes to be right
 	return lbCfg, nil
 
 }
@@ -111,66 +73,33 @@ func (bb) Name() string {
 	return name
 }
 
-type rpcBehaviorLBConfig struct { // shorten name?
+type lbConfig struct {
 	serviceconfig.LoadBalancingConfig `json:"-"`
-	// rpc behavior config? is this type already in the codebase? Figure out
-
-	// omit empty or keep it? it needs to be there, keep it and send it through hierarchy...
-	RPCBehavior string `json:"rpcBehavior,omitempty"`
+	RPCBehavior                       string `json:"rpcBehavior,omitempty"`
 }
 
-// parseconfig? Will be called from xDS right? that's the flow returns object
-// "{ \"rpcBehavior\": \"error-code-15\" }"
-// converts this JSON ^^^ into an internal object
-
-// {"childPolicy": [{"round_robin": {}}]}}]`
-// this {}:
-// balancer.Get on the name
-// pass the {} to that ConfigParser, returns a rr config
-
-// import rr
-// or prepare an internalserviceconfig.BalancerConfig{"round_robin": {}} rather than persisting config
-// this will cause the config parser to get it implicitly
-
-
-
-// lb that plumbs rpc behavior into it's trailers - will be configured through custom lb interop tests
-
-
 // rpcBehaviorLB is a load balancer that wraps a round robin balancer and
-// appends the rpc-behavior metadata field to any metadata in pick results.
+// appends the rpc-behavior metadata field to any metadata in pick results based
+// on what is specified in configuration.
 type rpcBehaviorLB struct {
 	// embed a ClientConn to wrap only UpdateState() operation
 	balancer.ClientConn
 
-	mu sync.Mutex
-	cfg *rpcBehaviorLBConfig
+	mu  sync.Mutex
+	cfg *lbConfig
 
 	child balancer.Balancer
 }
 
-// plumb this wrapper into tests to see if it works
-
 func (rpcblb *rpcBehaviorLB) UpdateClientConnState(s balancer.ClientConnState) error {
- 	lbCfg, ok := s.BalancerConfig.(*rpcBehaviorLBConfig)
- 	if !ok {
- 		return fmt.Errorf("received config with unexpected type %T: %s", s.BalancerConfig, pretty.ToJSON(s.BalancerConfig)) // or does this need ErrBadResolver state to trigger something?
+	lbCfg, ok := s.BalancerConfig.(*lbConfig)
+	if !ok {
+		return fmt.Errorf("test.RpcBehaviorLoadBalancer:received config with unexpected type %T: %s", s.BalancerConfig, pretty.ToJSON(s.BalancerConfig))
 	}
 	rpcblb.mu.Lock()
 	rpcblb.cfg = lbCfg
 	rpcblb.mu.Unlock()
-	// option 1: internal service config name value marshal into json to call rr
-
-	// or get config parser from registry and pass in a config that way
-
-	// [{"round_robin": {}}]
-
-	// see xDS client PR: is this "round_robin" config or
-	// just the round robin config inline
-
 	return rpcblb.child.UpdateClientConnState(balancer.ClientConnState{
-		// can I just leave this blank and see what happens?
-		// BalancerConfig: roundrobin.BalancerConfig{}, // prepare inline json call the registry and pass it downward?
 		ResolverState: s.ResolverState,
 	})
 }
@@ -212,37 +141,19 @@ func (rpcbp *rpcBehaviorPicker) Pick(info balancer.PickInfo) (balancer.PickResul
 }
 
 func newRPCBehaviorPicker(childPicker balancer.Picker, rpcBehavior string) *rpcBehaviorPicker {
-	// do I even need this helper or should I just allocate inline?
 	return &rpcBehaviorPicker{
 		childPicker: childPicker,
 		rpcBehavior: rpcBehavior,
 	}
 }
 
-
 func (rpcbbal *rpcBehaviorLB) UpdateState(state balancer.State) {
-	// does rpc behavior need to grab a mutex?
-	// worse case to prevent deadlocks read into local var and send later
 	rpcbbal.mu.Lock()
-	print("rpcBehavior: ", rpcbbal.cfg.RPCBehavior)
 	rpcBehavior := rpcbbal.cfg.RPCBehavior
 	rpcbbal.mu.Unlock()
 
 	rpcbbal.ClientConn.UpdateState(balancer.State{
 		ConnectivityState: state.ConnectivityState,
-		Picker: newRPCBehaviorPicker(state.Picker, rpcBehavior),
+		Picker:            newRPCBehaviorPicker(state.Picker, rpcBehavior),
 	})
 }
-
-// sync:
-// UpdateClientConnState()
-
-// mu grab
-// write config
-// mu unlock
-
-// UpdateCCS
-// UpdateState
-// mu grab
-// read cfg
-// mu unlock
