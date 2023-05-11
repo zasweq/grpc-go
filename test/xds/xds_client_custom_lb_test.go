@@ -184,31 +184,27 @@ func (s) TestWrrLocality(t *testing.T) {
 				{Addr: backend3.Address},
 			},
 		},
-
-		// Clean comment here explaining this in depth...
-
-		// should the balancer register this?
-		{ // configure wrr and don't send it load reports. It should rr over addresses as above.
+		// Sanity check for weighted round robin. Don't need to test super
+		// specific behaviors, as that is covered in unit tests. Set up weighted
+		// round robin as the endpoint picking policy with per RPC load reports
+		// enabled. Due the server not sending trailers with load reports, the
+		// weighted round robin policy should essentially function as round
+		// robin, and thus should have the same distribution as round robin
+		// above.
+		{
 			name: "custom_lb_child_wrr/",
 			wrrLocalityConfiguration: wrrLocality(&v3clientsideweightedroundrobin.ClientSideWeightedRoundRobin{
-				// do I need to register a server side service or just make sure it works?
-				// oob will never hit? how does service work in this case? Nothing is configured so does it just error?
-				// per rpc load reports don't come back nothing happpens
-				// no load reports are set so
 				EnableOobLoadReport: &wrapperspb.BoolValue{
 					Value: false,
-				}, // bool? overall, map this configuration to vvv (rr or pick_first)
-				// corresponding to either rr or pick first
-				// OobReportingPeriod: , // duration - not set since oob load report isn't set
-				BlackoutPeriod: &durationpb.Duration{Seconds: 10}, // duration - just long enough to not trigger
-				WeightExpirationPeriod: &durationpb.Duration{Seconds: 10}, // duration
-				WeightUpdatePeriod: &durationpb.Duration{Seconds: 1}, // duration
-				ErrorUtilizationPenalty: &wrapperspb.FloatValue{Value: 1}, // The multiplier used to adjust endpoint weights with the error rate calculated as eps/qps. Default is 1.0.
-			}), // I think this is a top level support
-
-			// Doesn't need to test behavior, just sanity
-			// what happens if load reports don't come through? rr right because weight is 0?
-
+				},
+				// BlackoutPeriod long enough to cause load report weights to
+				// trigger in the scope of test case, but no load reports
+				// configured anyway.
+				BlackoutPeriod: &durationpb.Duration{Seconds: 10},
+				WeightExpirationPeriod: &durationpb.Duration{Seconds: 10},
+				WeightUpdatePeriod: &durationpb.Duration{Seconds: 1},
+				ErrorUtilizationPenalty: &wrapperspb.FloatValue{Value: 1},
+			}),
 			addressDistributionWant: []resolver.Address{
 				{Addr: backend1.Address},
 				{Addr: backend1.Address},
@@ -246,7 +242,7 @@ func (s) TestWrrLocality(t *testing.T) {
 				{Addr: backend5.Address},
 				{Addr: backend5.Address},
 				{Addr: backend5.Address},
-			}, // 1 2 locality weight, pick first or rr will map to above distribution
+			},
 		},
 	}
 	for _, test := range tests {

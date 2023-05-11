@@ -166,15 +166,6 @@ func (s) TestConvertToServiceConfigSuccess(t *testing.T) {
 			},
 			rhDisabled: true,
 		},
-		/*{
-			name: "weighted_round_robin",
-
-			wantConfig: &internalserviceconfig.BalancerConfig{
-				Name: "weighted_round_robin_experimental",
-				// fuck how do we test this, it's not exported...here or xDS client or let e2e tests handle it?
-				Config: weightedroundrobin.
-			},
-		},*/
 		{
 			name: "custom_lb_type_v3_struct",
 			policy: &v3clusterpb.LoadBalancingPolicy{
