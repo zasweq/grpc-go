@@ -25,10 +25,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	v1xdsudpatypepb "github.com/cncf/xds/go/udpa/type/v1"
 	v3xdsxdstypepb "github.com/cncf/xds/go/xds/type/v3"
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	v3clientsideweightedroundrobin "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/client_side_weighted_round_robin/v3"
 	v3ringhashpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/ring_hash/v3"
 	v3wrrlocalitypb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
 	"github.com/golang/protobuf/proto"
@@ -86,6 +88,13 @@ func convertToServiceConfig(lbPolicy *v3clusterpb.LoadBalancingPolicy, depth int
 				return nil, fmt.Errorf("failed to unmarshal resource: %v", err)
 			}
 			return convertWrrLocality(wrrlProto, depth)
+		case "type.googleapis.com/envoy.extensions.load_balancing_policies.client_side_weighted_round_robin.v3.ClientSideWeightedRoundRobin":
+			// gets a []byte from control plane - unmarshal into a defined proto type
+			cswrrProto := &v3clientsideweightedroundrobin.ClientSideWeightedRoundRobin{}
+			if err := proto.Unmarshal(policy.GetTypedExtensionConfig().GetTypedConfig().GetValue(), cswrrProto); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal resource: %v", err)
+			}
+			return convertClientSideWRR(cswrrProto)
 		case "type.googleapis.com/xds.type.v3.TypedStruct":
 			tsProto := &v3xdsxdstypepb.TypedStruct{}
 			if err := proto.Unmarshal(policy.GetTypedExtensionConfig().GetTypedConfig().GetValue(), tsProto); err != nil {
@@ -117,6 +126,15 @@ func convertToServiceConfig(lbPolicy *v3clusterpb.LoadBalancingPolicy, depth int
 	return nil, fmt.Errorf("no supported policy found in policy list +%v", lbPolicy)
 }
 
+// tests take json -> bc declared since this is intended usage of this anyway
+
+// something for ring hash json for marshaling safety
+
+type ringHashLBConfig struct {
+	MinRingSize uint64 `json:"minRingSize,omitempty"`
+	MaxRingSize uint64 `json:"maxRingSize,omitempty"`
+}
+
 // convertRingHash converts a proto representation of the ring_hash LB policy's
 // configuration to gRPC JSON format.
 func convertRingHash(cfg *v3ringhashpb.RingHash) (json.RawMessage, error) {
@@ -132,8 +150,24 @@ func convertRingHash(cfg *v3ringhashpb.RingHash) (json.RawMessage, error) {
 		maxSize = max.GetValue()
 	}
 
-	lbCfgJSON := []byte(fmt.Sprintf("{\"minRingSize\": %d, \"maxRingSize\": %d}", minSize, maxSize))
-	return makeBalancerConfigJSON("ring_hash_experimental", lbCfgJSON), nil
+	rhCfg := &ringHashLBConfig{ // it marshals a * right?
+		MinRingSize: minSize,
+		MaxRingSize: maxSize,
+	}
+
+	rhCfgJSON, err := json.Marshal(rhCfg)
+	if err != nil {
+		// maybe log type
+		return nil, fmt.Errorf("error marshaling JSON: %v", err) // for type rhCfg?
+	}
+
+	// lbCfgJSON := []byte(fmt.Sprintf("{\"minRingSize\": %d, \"maxRingSize\": %d}", minSize, maxSize))
+	return makeBalancerConfigJSON("ring_hash_experimental", rhCfgJSON), nil
+}
+
+// struct here representing wrr locality json for safety
+type wrrLocalityLBConfig struct {
+	ChildPolicy json.RawMessage `json:"childPolicy,omitempty"` // is this right? I think so because childPolicy is rawJSON and this will just marshal? Will it solve anything? unsanitized rawJSON?
 }
 
 func convertWrrLocality(cfg *v3wrrlocalitypb.WrrLocality, depth int) (json.RawMessage, error) {
@@ -141,7 +175,15 @@ func convertWrrLocality(cfg *v3wrrlocalitypb.WrrLocality, depth int) (json.RawMe
 	if err != nil {
 		return nil, fmt.Errorf("error converting endpoint picking policy: %v for %+v", err, cfg)
 	}
-	lbCfgJSON := []byte(fmt.Sprintf(`{"childPolicy": %s}`, epJSON))
+	wrrLCfg := wrrLocalityLBConfig{
+		ChildPolicy: epJSON,
+	}
+	lbCfgJSON, err := json.Marshal(wrrLCfg) // sanitizes quotes like sql?
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling JSON: %v", err) // what's a better error message
+	}
+
+	// everything should work exactly the same? alongside scaled up tests for ignoring type not found
 	return makeBalancerConfigJSON("xds_wrr_locality_experimental", lbCfgJSON), nil
 }
 
@@ -172,6 +214,99 @@ func convertCustomPolicy(typeURL string, s *structpb.Struct) (json.RawMessage, b
 	return makeBalancerConfigJSON(name, rawJSON), false, nil
 }
 
-func makeBalancerConfigJSON(name string, value json.RawMessage) []byte {
-	return []byte(fmt.Sprintf(`[{%q: %s}]`, name, value))
+// wrr struct that marshals into same json for marshaling safety
+type wrrLBConfig struct {
+	EnableOOBLoadReport bool `json:"enableOobLoadReport,omitempty"`
+	OOBReportingPeriod time.Duration `json:"oobReportingPeriod,omitempty"`
+	BlackoutPeriod time.Duration `json:"blackoutPeriod,omitempty"`
+	WeightExpirationPeriod time.Duration `json:"weightExpirationPeriod,omitempty"`
+	WeightUpdatePeriod time.Duration `json:"weightUpdatePeriod,omitempty"`
+	ErrorUtilizationPenalty float64 `json:"errorUtilizationPenalty,omitempty"`
 }
+
+// send this empty proto and expect default config marshaled to
+// goes through ParseConfig of WRR as well so it'll get the default there as well right
+func convertClientSideWRR(cfg *v3clientsideweightedroundrobin.ClientSideWeightedRoundRobin) (json.RawMessage, error) {
+	// cfg. // do I need cfg
+
+	/*
+	if min := cfg.GetMinimumRingSize(); min != nil {
+			minSize = min.GetValue()
+		}
+		if max := cfg.GetMaximumRingSize(); max != nil {
+			maxSize = max.GetValue()
+		}
+	*/
+	const (
+		defaultEnableOOBLoadReport = false
+		defaultOOBReportingPeriod = 10 * time.Second
+		defaultBlackoutPeriod = 10 * time.Second
+		defaultWeightExpirationPeriod = 3 * time.Minute
+		defaultWeightUpdatePeriod = time.Second
+		defaultErrorUtilizationPenalty = float32(1.0)
+	)
+	enableOOBLoadReport := defaultEnableOOBLoadReport/*need to populate with defaults here - see ParseConfig on the balancer*/
+	if enableOOBLoadReportCfg := cfg.GetEnableOobLoadReport(); enableOOBLoadReportCfg != nil {
+		// think of better names
+		enableOOBLoadReport = enableOOBLoadReportCfg.GetValue() // could be zero value, but that's fine
+	}
+	oobReportingPeriod := defaultOOBReportingPeriod /*default*/
+	if oobReportingPeriodCfg := cfg.GetOobReportingPeriod(); oobReportingPeriodCfg != nil {
+		oobReportingPeriod = oobReportingPeriodCfg.AsDuration()
+	}
+
+	blackoutPeriod := defaultBlackoutPeriod
+	if blackoutPeriodCfg := cfg.GetBlackoutPeriod(); blackoutPeriodCfg != nil {
+		blackoutPeriod = blackoutPeriodCfg.AsDuration() // I think this is what you need here
+	}
+
+	weightExpirationPeriod := defaultWeightExpirationPeriod
+	if weightExpirationPeriodCfg := cfg.GetBlackoutPeriod(); weightExpirationPeriodCfg != nil {
+		weightExpirationPeriod = weightExpirationPeriodCfg.AsDuration()
+	}
+
+	weightUpdatePeriod := defaultWeightUpdatePeriod
+	if weightUpdatePeriodCfg := cfg.GetWeightUpdatePeriod(); weightUpdatePeriodCfg != nil {
+		weightUpdatePeriod = weightUpdatePeriodCfg.AsDuration() // what does this conversion do
+	}
+
+	errorUtilizationPenalty := defaultErrorUtilizationPenalty
+	if errorUtilizationPenaltyCfg := cfg.GetErrorUtilizationPenalty(); errorUtilizationPenaltyCfg != nil {
+		errorUtilizationPenalty = errorUtilizationPenaltyCfg.GetValue()
+	}
+
+		// give it defaults just like ring hash (Eric talked to mea bout that),
+		// also gives defaults in ParseConfig in the balancer implementation but that's fine
+	wrrLBConfig := &wrrLBConfig{
+		EnableOOBLoadReport: enableOOBLoadReport, // protects pnaic? how does it do it for say ring hash?
+		OOBReportingPeriod: oobReportingPeriod,
+		BlackoutPeriod: blackoutPeriod,
+		WeightExpirationPeriod: weightExpirationPeriod,
+		WeightUpdatePeriod: weightUpdatePeriod,
+		ErrorUtilizationPenalty: float64(errorUtilizationPenalty), // upcast so you're good here I think
+	}
+
+	rawJSON, err := json.Marshal(wrrLBConfig)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling JSON: %v", err)
+	}
+
+	// name: rawJSON, does this need to be a balancer type?
+
+	// still call balancerconfigjson
+	return makeBalancerConfigJSON("weighted_round_robin_experimental", rawJSON), nil
+}
+
+// everything here as already been escaped, no need for a seperate struct
+func makeBalancerConfigJSON(name string, value json.RawMessage) []byte {
+	// if we need a type fill it out here
+	print(fmt.Sprintf(`[{%q: %s}]`, name, value))
+	return []byte(fmt.Sprintf(`[{%q: %s}]`, name, value))
+} // does this thing need a struct?
+
+
+// after two prs merged scramble to pass interop Friday for Custom LB
+
+// mention I can't test because wrr config isn't exported
+
+// pull xDS e2e test from left side - should be rr with no OOB reports received
