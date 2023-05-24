@@ -20,7 +20,6 @@ package matcher
 
 import (
 	"fmt"
-	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"regexp"
 	"strconv"
 	"strings"
@@ -251,9 +250,9 @@ type HeaderStringMatcher struct {
 }
 
 // I think this is cleaner abstraction
-func NewHeaderStringMatcher(key string, smp *v3matcherpb.StringMatcher /*either or option here...*/, invert bool) *HeaderStringMatcher {
+func NewHeaderStringMatcher(key string, sm StringMatcher /*either or option here...*/, invert bool) *HeaderStringMatcher {
 	// Either construct the object here or take the object itself, time you convert
-	sm , _ := StringMatcherFromProto(smp) // Ignore error because if returns error, string matcher is simply a no-op that always is false. Should this be validated in the client or are we good here (this could be internal specific checks)?
+	// sm , _ := StringMatcherFromProto(smp) // Ignore error because if returns error, string matcher is simply a no-op that always is false. Should this be validated in the client or are we good here (this could be internal specific checks)?
 	// if errors persist nil
 
 	return &HeaderStringMatcher{
@@ -286,7 +285,7 @@ func (hsm *HeaderStringMatcher) Match(md metadata.MD) bool {
 
 // HeaderMatcher type, this is what I want
 func (hsm *HeaderStringMatcher) String() string {
-	return fmt.Sprintf("headerString:%v:%v" /*key and suffix like above? What are those?*/)
+	return fmt.Sprintf("headerString:%v:%v", hsm.key, hsm.stringMatcher /*key and suffix like above? What are those?*/)
 }
 
 

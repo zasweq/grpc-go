@@ -20,6 +20,7 @@ package xdsresource
 import (
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/internal/xds/matcher"
 	"math"
 	"regexp"
 	"testing"
@@ -923,6 +924,7 @@ func (s) TestUnmarshalRouteConfig(t *testing.T) {
 }
 
 func (s) TestRoutesProtoToSlice(t *testing.T) {
+	sm, _ := matcher.StringMatcherFromProto(&v3matcherpb.StringMatcher{MatchPattern: &v3matcherpb.StringMatcher_Exact{Exact: "tv"}})
 	var (
 		goodRouteWithFilterConfigs = func(cfgs map[string]*anypb.Any) []*v3routepb.Route {
 			// Sets per-filter config in cluster "B" and in the route.
@@ -1123,7 +1125,8 @@ func (s) TestRoutesProtoToSlice(t *testing.T) {
 					{
 						Name:        "th",
 						InvertMatch: newBoolP(false),
-						StringMatch: &v3matcherpb.StringMatcher{MatchPattern: &v3matcherpb.StringMatcher_Exact{Exact: "tv"}},
+						// call convert sm, _ := ConvertToStringMatcher() and get the sm var
+						StringMatch: &sm, // needs to compare contents
 					},
 				},
 				Fraction:         newUInt32P(10000),

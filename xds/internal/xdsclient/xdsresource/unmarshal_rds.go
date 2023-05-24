@@ -19,6 +19,7 @@ package xdsresource
 
 import (
 	"fmt"
+	"google.golang.org/grpc/internal/xds/matcher"
 	"math"
 	"regexp"
 	"strings"
@@ -280,7 +281,21 @@ func routesProtoToSlice(routes []*v3routepb.Route, csps map[string]clusterspecif
 				// ht.StringMatch is a matcherv3.StringMatch
 				// Send this out here as a pointer or not, or convert inline?
 				// If you convert here, can nack, since proto -> internal throws an error, is this really correct validation, Doug will comment otherwise though
-				header.StringMatch = ht.StringMatch // still nil safe and don't need getters right
+
+				/*
+				matcher, err := matcher.StringMatcherFromProto(m) // nacks bad String Matcher, so I'm assuming the rules apply across the client
+					if err != nil {
+						return nil, err
+					}
+				*/
+
+				sm, err := matcher.StringMatcherFromProto(ht.StringMatch)
+				if err != nil {
+					return nil, nil, fmt.Errorf("route %+v has an invalid string matcher: %v", err, ht.StringMatch)
+				}
+				header.StringMatch = &sm
+
+				// header.StringMatch = ht.StringMatch // still nil safe and don't need getters right
 			default:
 				return nil, nil, fmt.Errorf("route %+v has an unrecognized header matcher: %+v", r, ht)
 			}

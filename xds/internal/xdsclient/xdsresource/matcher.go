@@ -71,7 +71,10 @@ func RouteToMatcher(r *Route) (*CompositeMatcher, error) {
 
 			// only place you need it, otherwise headermatchers are called from
 			// RBAC flow (logically takes headers)
-			matcherT = matcher.NewHeaderStringMatcher(h.Name, h.StringMatch/*branch on what you persist*/, invert) /*What do I pass in here? the object*/
+
+			// to test now create this with data structures that you get from calling proto to helper?
+			// or just define helper inline, I think former
+			matcherT = matcher.NewHeaderStringMatcher(h.Name, *h.StringMatch/*branch on what you persist*/, invert) /*What do I pass in here? the object*/
 		default:
 			return nil, fmt.Errorf("illegal route: missing header_match_specifier")
 		}
