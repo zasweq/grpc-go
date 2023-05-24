@@ -18,6 +18,7 @@
 package xdsresource
 
 import (
+	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"regexp"
 	"time"
 
@@ -171,6 +172,7 @@ type HeaderMatcher struct {
 	SuffixMatch  *string
 	RangeMatch   *Int64Range
 	PresentMatch *bool
+	StringMatch  *v3matcherpb.StringMatcher /*pointer to string matcvher*/
 }
 
 // Int64Range is a range for header range match.

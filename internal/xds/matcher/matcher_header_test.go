@@ -19,6 +19,7 @@
 package matcher
 
 import (
+	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"regexp"
 	"testing"
 
@@ -467,3 +468,77 @@ func TestHeaderSuffixMatcherMatch(t *testing.T) {
 		})
 	}
 }
+
+// TestHeaderStringMatch here
+func TestHeaderStringMatch(t *testing.T) {
+	tests := []struct {
+		name string
+		key string
+		// which type to plumb? you'd have to pass it a string match
+		sm *v3matcherpb.StringMatcher
+		md metadata.MD
+		invert bool
+		want bool
+	}{
+		{
+			name: "should-match",
+			key: "th",
+			sm: &v3matcherpb.StringMatcher{
+				MatchPattern: &v3matcherpb.StringMatcher_Exact{
+					Exact: "tv",
+				},
+				IgnoreCase: false,
+			}, // match on tv - there's more than one behavior here but maybe that's covered by unit tests for sm
+			md: metadata.Pairs("th", "tv"),
+			invert: false,
+			want: true,
+		},
+		{
+			name: "not match",
+			key: "th",
+			sm: &v3matcherpb.StringMatcher{
+				MatchPattern: &v3matcherpb.StringMatcher_Contains{
+					Contains: "tv",
+				},
+				IgnoreCase: false,
+			},
+			md: metadata.Pairs("th", "not-match"),
+			invert: false,
+			want: false,
+		},
+		// Or make vvv into one test case
+		{
+			name: "not match plus invert", // how would this work?
+			key: "th",
+		},
+		{
+			// same thing as above, is it for one metadata or for all metadata
+			name: "invert string match",
+			key: "th",
+			sm: &v3matcherpb.StringMatcher{
+				MatchPattern: &v3matcherpb.StringMatcher_Contains{
+					Contains: "tv",
+				},
+				IgnoreCase: false,
+			},
+			md: metadata.Pairs("th", "not-match"),
+			invert: true,
+			want: true,
+		}, // the invert just nots the string match right
+		{
+			name: "invalid proto should always be false",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			hsm := NewHeaderStringMatcher(test.key, test.sm, test.invert)
+			if got := hsm.Match(test.md); got != tt.want {
+				t.Errorf("match() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// I don't think you need anything but this layer nad xDS client layer
+
+// These two are the only layers that need testing, I think this is all you need

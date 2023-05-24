@@ -20,6 +20,7 @@ package matcher
 
 import (
 	"fmt"
+	v3matcherpb "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"regexp"
 	"strconv"
 	"strings"
@@ -241,3 +242,68 @@ func (hcm *HeaderContainsMatcher) Match(md metadata.MD) bool {
 func (hcm *HeaderContainsMatcher) String() string {
 	return fmt.Sprintf("headerContains:%v%v", hcm.key, hcm.contains)
 }
+
+
+type HeaderStringMatcher struct {
+	key string
+	stringMatcher StringMatcher // either the proto string matcher or the internal type string matcher
+	invert bool // I still think you need to account for this bool which maps to all matcher values
+}
+
+// I think this is cleaner abstraction
+func NewHeaderStringMatcher(key string, smp *v3matcherpb.StringMatcher /*either or option here...*/, invert bool) *HeaderStringMatcher {
+	// Either construct the object here or take the object itself, time you convert
+	sm , _ := StringMatcherFromProto(smp) // Ignore error because if returns error, string matcher is simply a no-op that always is false. Should this be validated in the client or are we good here (this could be internal specific checks)?
+	// if errors persist nil
+
+	return &HeaderStringMatcher{
+		key: key,
+		stringMatcher: sm,
+		invert: invert,
+	}
+}
+
+func (hsm *HeaderStringMatcher) Match(md metadata.MD) bool {
+	// error case:
+	//         return false
+
+	// md comes in, then you need to call
+
+
+
+	// sm := StringMatcherFromProto(/*either persist this proto type or convert earlier*/)
+	// docstring for proto: "header match will be performed based on the string match of the header value"
+	// the header "value" singular?
+	v, ok := mdValuesFromOutgoingCtx(md, hsm.key)
+	if !ok {
+		return false
+	}
+	// why does this != invert work?
+	return hsm.stringMatcher.Match(v) != hsm.invert // is this what you call with this takes a string parameter, what metadata do you match it to
+
+	// hsm.invert // how does this get taken into account here - what exactly does the docstring say?
+}
+
+// HeaderMatcher type, this is what I want
+func (hsm *HeaderStringMatcher) String() string {
+	return fmt.Sprintf("headerString:%v:%v" /*key and suffix like above? What are those?*/)
+}
+
+
+// Three layers of tests
+// This (invalid should never match), write other cases
+// xDS Client layer - just stick what it gets onto update
+// RDS based off this, should route based off certain rules or maybe this is too specific
+
+// Change emissions to validate and use it in the client (since these validations are already there it's logically equivalent to how we do in other parts of client)
+// change the function call to validate and emit the new object, send that through the layers
+// nack bad string matcher, but I think other places in the codebase nack from that so I think we're good
+
+// deterministically order based on multiple fields rather than my sort function
+
+
+// Take a look at router filter PRs
+// issue
+
+// first error message and why there was a dependency thought
+// then review change of terminal filter
