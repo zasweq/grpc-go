@@ -341,7 +341,7 @@ func securityConfigFromCommonTLSContextWithDeprecatedFields(common *v3tlspb.Comm
 		var matchers []matcher.StringMatcher
 		if def := combined.GetDefaultValidationContext(); def != nil {
 			for _, m := range def.GetMatchSubjectAltNames() {
-				matcher, err := matcher.StringMatcherFromProto(m) // nacks bad String Matcher, so I'm assuming the rules apply across the client
+				matcher, err := matcher.StringMatcherFromProto(m)
 				if err != nil {
 					return nil, err
 				}

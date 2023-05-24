@@ -468,47 +468,44 @@ func TestHeaderSuffixMatcherMatch(t *testing.T) {
 	}
 }
 
-// TestHeaderStringMatch here
 func TestHeaderStringMatch(t *testing.T) {
 	tests := []struct {
-		name string
-		key string
-		// which type to plumb? you'd have to pass it a string match
-		sm StringMatcher
-		md metadata.MD
+		name   string
+		key    string
+		sm     StringMatcher
+		md     metadata.MD
 		invert bool
-		want bool
+		want   bool
 	}{
 		{
 			name: "should-match",
-			key: "th",
+			key:  "th",
 			sm: StringMatcher{
 				exactMatch: newStringP("tv"),
 			},
-			md: metadata.Pairs("th", "tv"),
+			md:     metadata.Pairs("th", "tv"),
 			invert: false,
-			want: true,
+			want:   true,
 		},
 		{
 			name: "not match",
-			key: "th",
+			key:  "th",
 			sm: StringMatcher{
 				containsMatch: newStringP("tv"),
 			},
-			md: metadata.Pairs("th", "not-match"),
+			md:     metadata.Pairs("th", "not-match"),
 			invert: false,
-			want: false,
+			want:   false,
 		},
 		{
-			// same thing as above, is it for one metadata or for all metadata
 			name: "invert string match",
-			key: "th",
+			key:  "th",
 			sm: StringMatcher{
 				containsMatch: newStringP("tv"),
 			},
-			md: metadata.Pairs("th", "not-match"),
+			md:     metadata.Pairs("th", "not-match"),
 			invert: true,
-			want: true,
+			want:   true,
 		},
 	}
 	for _, test := range tests {
@@ -520,7 +517,3 @@ func TestHeaderStringMatch(t *testing.T) {
 		})
 	}
 }
-
-// I don't think you need anything but this layer nad xDS client layer
-
-// These two are the only layers that need testing, I think this is all you need

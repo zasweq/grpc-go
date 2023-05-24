@@ -20,7 +20,6 @@ package xdsresource
 import (
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/internal/xds/matcher"
 	"math"
 	"regexp"
 	"testing"
@@ -34,6 +33,7 @@ import (
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/pretty"
 	"google.golang.org/grpc/internal/testutils"
+	"google.golang.org/grpc/internal/xds/matcher"
 	"google.golang.org/grpc/xds/internal/clusterspecifier"
 	"google.golang.org/grpc/xds/internal/httpfilter"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
@@ -1089,8 +1089,6 @@ func (s) TestRoutesProtoToSlice(t *testing.T) {
 		},
 		{
 			name: "good with string matcher",
-			// routes: , // only the bare minimum you need to test or not lol and see if Doug gets mad
-			// wantRoutes: , // same thing
 			routes: []*v3routepb.Route{
 				{
 					Match: &v3routepb.RouteMatch{
@@ -1125,8 +1123,7 @@ func (s) TestRoutesProtoToSlice(t *testing.T) {
 					{
 						Name:        "th",
 						InvertMatch: newBoolP(false),
-						// call convert sm, _ := ConvertToStringMatcher() and get the sm var
-						StringMatch: &sm, // needs to compare contents
+						StringMatch: &sm,
 					},
 				},
 				Fraction:         newUInt32P(10000),

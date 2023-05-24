@@ -45,7 +45,6 @@ func RouteToMatcher(r *Route) (*CompositeMatcher, error) {
 	headerMatchers := make([]matcher.HeaderMatcher, 0, len(r.Headers))
 	for _, h := range r.Headers {
 		var matcherT matcher.HeaderMatcher
-		// This is a seperate layer/bool to ignore_case
 		invert := h.InvertMatch != nil && *h.InvertMatch
 		switch {
 		case h.ExactMatch != nil && *h.ExactMatch != "":
@@ -60,21 +59,8 @@ func RouteToMatcher(r *Route) (*CompositeMatcher, error) {
 			matcherT = matcher.NewHeaderRangeMatcher(h.Name, h.RangeMatch.Start, h.RangeMatch.End, invert)
 		case h.PresentMatch != nil:
 			matcherT = matcher.NewHeaderPresentMatcher(h.Name, *h.PresentMatch, invert)
-		case h.StringMatch != nil: // invariant, based off presence, nil or not nil
-			// constructor API for string matcher:
-			// // Returns a non-nil error if matcherProto is invalid.
-			//func StringMatcherFromProto(matcherProto *v3matcherpb.StringMatcher) (StringMatcher, error) {
-			// pass a proto or hold a string matcher? but wb this invert bool, does it also get taken unto account?
-
-			// String Matcher from proto takes into account field
-			// I think invert keeps it, superset so I think keep taking into account
-
-			// only place you need it, otherwise headermatchers are called from
-			// RBAC flow (logically takes headers)
-
-			// to test now create this with data structures that you get from calling proto to helper?
-			// or just define helper inline, I think former
-			matcherT = matcher.NewHeaderStringMatcher(h.Name, *h.StringMatch/*branch on what you persist*/, invert) /*What do I pass in here? the object*/
+		case h.StringMatch != nil:
+			matcherT = matcher.NewHeaderStringMatcher(h.Name, *h.StringMatch, invert)
 		default:
 			return nil, fmt.Errorf("illegal route: missing header_match_specifier")
 		}
