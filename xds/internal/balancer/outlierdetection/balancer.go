@@ -81,7 +81,65 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 }
 
 func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	var lbCfg *LBConfig
+	// json nil || not nil has to trigger these defaults somehow
+	const (
+		defaultInterval                       = 10 * time.Second
+		defaultBaseEjectionTime               = 30 * time.Second
+		defaultMaxEjectionTime                = 300 * time.Second
+		defaultMaxEjectionPercent             = 10
+		defaultSuccessRateStdevFactor         = 1900
+		defaultEnforcingSuccessRate           = 100
+		defaultSuccessRateMinimumHosts        = 5
+		defaultSuccessRateRequestVolume       = 100
+		defaultFailurePercentageThreshold     = 85
+		defaultEnforcingFailurePercentage     = 0
+		defaultFailurePercentageMinimumHosts  = 5
+		defaultFailurePercentageRequestVolume = 50
+	)
+
+	// this is a layered structure
+	// one with the layers of just the config stuff, one with the layers of
+	// the new one
+	lbCfg := &LBConfig{
+		// Default values as documented in A50.
+		// these are now iserviceconfig.Duration
+		Interval: defaultInterval, // once rebase switch to iserviceconfig.Duration(defaultInterval), and all below as well
+		BaseEjectionTime: defaultBaseEjectionTime,
+		MaxEjectionTime: defaultMaxEjectionTime,
+		MaxEjectionPercent: defaultMaxEjectionPercent,
+		// ONLY IF SET PICK UP DEFAULTS
+		// I think now these nil successrateejection fields get their defaults
+		// nil now but if the JSON has them the next layer
+		// needs to set if present
+	}
+	// if json sre != unset - marshal with defaults the second layer
+	// if json fpe != unset - marshal with defaults the second layer
+
+	// can I do so here?
+	/*
+	// only have these vvv override if sre is set but the fields within sre aren't set...
+	defaultSuccessRateStdevFactor         = 1900
+	defaultEnforcingSuccessRate           = 100
+	defaultSuccessRateMinimumHosts        = 5
+	defaultSuccessRateRequestVolume       = 100
+	*/
+
+
+	/*
+	// only have these vvv override if fpe is set but the fields within fpe aren't set...
+	defaultFailurePercentageThreshold     = 85
+	defaultEnforcingFailurePercentage     = 0
+	defaultFailurePercentageMinimumHosts  = 5
+	defaultFailurePercentageRequestVolume = 50
+	*/
+
+
+	// but this ternary operator gets communicated from JSON (see function argument).
+	// Thus, find this, maybe find example or something?
+
+	// Do this like Doug did, set the defaults and overwrite from JSON is set (see his codeblock)
+
+	// var lbCfg *LBConfig
 	if err := json.Unmarshal(s, &lbCfg); err != nil { // Validates child config if present as well.
 		return nil, fmt.Errorf("xds: unable to unmarshal LBconfig: %s, error: %v", string(s), err)
 	}
@@ -94,6 +152,8 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 	// method. "When parsing a config from JSON, if any of these requirements is
 	// violated, that should be treated as a parsing error." - A50
 
+	// I think the validations still holds up, if default gets set picks up that
+	// and then these validations don't hit. These validations don't hit.
 	switch {
 	// "The google.protobuf.Duration fields interval, base_ejection_time, and
 	// max_ejection_time must obey the restrictions in the
@@ -122,9 +182,25 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 		return nil, fmt.Errorf("OutlierDetectionLoadBalancingConfig.FailurePercentageEjection.threshold = %v; must be <= 100", lbCfg.FailurePercentageEjection.Threshold)
 	case lbCfg.FailurePercentageEjection != nil && lbCfg.FailurePercentageEjection.EnforcementPercentage > 100:
 		return nil, fmt.Errorf("OutlierDetectionLoadBalancingConfig.FailurePercentageEjection.enforcement_percentage = %v; must be <= 100", lbCfg.FailurePercentageEjection.EnforcementPercentage)
-	case lbCfg.ChildPolicy == nil:
+	case lbCfg.ChildPolicy == nil: // still persists because child policy set in JSON.
 		return nil, errors.New("OutlierDetectionLoadBalancingConfig.child_policy must be present")
 	}
+
+	// ^^^ still needs to do the validations I think
+
+	// but on struct -> json need *
+
+	// Doug said in this flow it works correctly wrt ternary
+
+	// json nil || not nil when you unmarshal?
+
+	// however, needs the fields to be set based off ^^^, don't check this on config type right?
+
+	// how is the JSON nil/not nil branch represented?
+
+
+
+
 
 	return lbCfg, nil
 }

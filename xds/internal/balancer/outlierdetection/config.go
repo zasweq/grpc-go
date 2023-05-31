@@ -22,6 +22,8 @@ import (
 	"google.golang.org/grpc/serviceconfig"
 )
 
+// Do I also need to switch these structs to pointers? to encapsulate the ternary operator
+
 // SuccessRateEjection is parameters for the success rate ejection algorithm.
 // This algorithm monitors the request success rate for all endpoints and ejects
 // individual endpoints whose success rates are statistical outliers.

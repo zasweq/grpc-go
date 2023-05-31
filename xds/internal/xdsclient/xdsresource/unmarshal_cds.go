@@ -33,7 +33,7 @@ import (
 
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/pretty"
-	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
+	iserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/internal/xds/matcher"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdslbregistry"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
@@ -118,7 +118,7 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 
 	// Process outlier detection received from the control plane iff the
 	// corresponding environment variable is set.
-	var od *OutlierDetection
+	var od json.RawMessage
 	if envconfig.XDSOutlierDetection {
 		var err error
 		if od, err = outlierConfigFromCluster(cluster); err != nil {
@@ -134,7 +134,7 @@ func validateClusterAndConstructClusterUpdate(cluster *v3clusterpb.Cluster) (Clu
 		// "It will be the responsibility of the XdsClient to validate the
 		// converted configuration. It will do this by having the gRPC LB policy
 		// registry parse the configuration." - A52
-		bc := &internalserviceconfig.BalancerConfig{}
+		bc := &iserviceconfig.BalancerConfig{}
 		if err := json.Unmarshal(lbPolicy, bc); err != nil {
 			return ClusterUpdate{}, fmt.Errorf("JSON generated from xDS LB policy registry: %s is invalid: %v", pretty.FormatJSON(lbPolicy), err)
 		}
@@ -490,15 +490,76 @@ func circuitBreakersFromCluster(cluster *v3clusterpb.Cluster) *uint32 {
 	return nil
 }
 
+func durationp(d time.Duration) *time.Duration {
+	return &d
+}
+
+// idurationp takes a time.Duration and converts to a pointer
+// to internal duration
+func idurationp(d time.Duration) *iserviceconfig.Duration {
+	id := iserviceconfig.Duration(d)
+	return &id
+}
+
+func uint32p(i uint32) *uint32 {
+	return &i
+}
+
+// do these need json annotations? I think, keep omit empty?
+// we're deleting exported structs anyway so no need for namespacing/name collisions
+type successRateEjection struct {
+	stdevFactor *uint32
+	enforcementPercentage *uint32
+	minimumHosts *uint32
+	requestVolume *uint32
+}
+
+type failurePercentageEjection struct {
+	threshold *uint32
+	enforcementPercentage *uint32
+	minimumHosts *uint32
+	requestVolume *uint32
+}
+
+// intermediate
+type odLBConfig struct {
+	// pointers? Need distinction between the two (set or not set to pick up defaults)
+	interval *iserviceconfig.Duration
+	baseEjectionTime *iserviceconfig.Duration
+	maxEjectionTime *iserviceconfig.Duration
+	maxEjectionPercent *uint32
+	successRateEjection *successRateEjection
+	failurePercentageEjection *failurePercentageEjection
+}
+
 // outlierConfigFromCluster extracts the relevant outlier detection
 // configuration from the received cluster resource. Returns nil if no
 // OutlierDetection field set in the cluster resource.
-func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (*OutlierDetection, error) {
+func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, error) { // need to change desired things in unit tests.
 	od := cluster.GetOutlierDetection()
-	if od == nil {
+	if od == nil { // causes the zero value to be produced? I think this is the correct behavior - create zero value config, yup, I can see it in cds
 		return nil, nil
 	}
-	const (
+
+	// this scope needs to change to just account for default:
+
+	// this line:
+	/*
+	If the outlier_detection field is set in the Cluster resource, if the
+	enforcing_success_rate field is set to 0, the config success_rate_ejection
+	field will be null and all success_rate_* fields will be ignored. If the
+	enforcing_failure_percent field is set to 0 or null, the config
+	failure_percent_ejection field will be null and all failure_percent_* fields
+	will be ignored. Then the message fields will be mapped to config fields as
+	follows:
+	*/
+
+	// thus in xDS flow,
+	// if nothing is set success rate is turned on by default. Test this scenario?
+	// also triage no-op configs wrt max interval, that is now incorrect
+
+	// move this shit to ParseConfig()
+	/*const (
 		defaultInterval                       = 10 * time.Second
 		defaultBaseEjectionTime               = 30 * time.Second
 		defaultMaxEjectionTime                = 300 * time.Second
@@ -511,38 +572,49 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (*OutlierDetection, 
 		defaultEnforcingFailurePercentage     = 0
 		defaultFailurePercentageMinimumHosts  = 5
 		defaultFailurePercentageRequestVolume = 50
-	)
+	)*/
+
+	// Holy **** I'll have to change a million tests
+
+
 	// "The google.protobuf.Duration fields interval, base_ejection_time, and
 	// max_ejection_time must obey the restrictions in the
 	// google.protobuf.Duration documentation and they must have non-negative
-	// values." - A50
-	interval := defaultInterval
+	// values." - A50 is this the correct rules corresponding then?
+
+	// same thing here wrt duration pointers?
+
+	// interval := defaultInterval
+	var interval *iserviceconfig.Duration
 	if i := od.GetInterval(); i != nil {
-		if err := i.CheckValid(); err != nil {
+		// yeah still want this
+		if err := i.CheckValid(); err != nil { // what to do with this check? Move to ParseConfig or check here? Maybe here?
 			return nil, fmt.Errorf("outlier_detection.interval is invalid with error: %v", err)
 		}
-		if interval = i.AsDuration(); interval < 0 {
-			return nil, fmt.Errorf("outlier_detection.interval = %v; must be a valid duration and >= 0", interval)
+		if interval = idurationp(i.AsDuration()); *interval < 0 {
+			return nil, fmt.Errorf("outlier_detection.interval = %v; must be a valid duration and >= 0", *interval) // or does this log pointer automatically?
 		}
 	}
 
-	baseEjectionTime := defaultBaseEjectionTime
+	// baseEjectionTime := defaultBaseEjectionTime
+	var baseEjectionTime *iserviceconfig.Duration
 	if bet := od.GetBaseEjectionTime(); bet != nil {
 		if err := bet.CheckValid(); err != nil {
 			return nil, fmt.Errorf("outlier_detection.base_ejection_time is invalid with error: %v", err)
 		}
-		if baseEjectionTime = bet.AsDuration(); baseEjectionTime < 0 {
-			return nil, fmt.Errorf("outlier_detection.base_ejection_time = %v; must be >= 0", baseEjectionTime)
+		if baseEjectionTime = idurationp(bet.AsDuration()); *baseEjectionTime < 0 {
+			return nil, fmt.Errorf("outlier_detection.base_ejection_time = %v; must be >= 0", *baseEjectionTime)
 		}
 	}
 
-	maxEjectionTime := defaultMaxEjectionTime
+	// maxEjectionTime := defaultMaxEjectionTime
+	var maxEjectionTime *iserviceconfig.Duration
 	if met := od.GetMaxEjectionTime(); met != nil {
 		if err := met.CheckValid(); err != nil {
 			return nil, fmt.Errorf("outlier_detection.max_ejection_time is invalid: %v", err)
 		}
-		if maxEjectionTime = met.AsDuration(); maxEjectionTime < 0 {
-			return nil, fmt.Errorf("outlier_detection.max_ejection_time = %v; must be >= 0", maxEjectionTime)
+		if maxEjectionTime = idurationp(met.AsDuration()); *maxEjectionTime < 0 {
+			return nil, fmt.Errorf("outlier_detection.max_ejection_time = %v; must be >= 0", *maxEjectionTime)
 		}
 	}
 
@@ -550,64 +622,167 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (*OutlierDetection, 
 	// failure_percentage_threshold, and enforcing_failure_percentage must have
 	// values less than or equal to 100. If any of these requirements is
 	// violated, the Cluster resource should be NACKed." - A50
-	maxEjectionPercent := uint32(defaultMaxEjectionPercent)
+
+	/*
+
+	The outlier_detection field of the Cluster resource should have its fields
+	validated according to the rules for the corresponding LB policy config
+	fields in the above "Validation" section. If any of these requirements is
+	violated, the Cluster resource should be NACKed.
+
+	Looks like we keep NACK?
+
+	*/
+
+	// need this var to have ternary
+	var maxEjectionPercent *uint32
 	if mep := od.GetMaxEjectionPercent(); mep != nil {
-		if maxEjectionPercent = mep.GetValue(); maxEjectionPercent > 100 {
-			return nil, fmt.Errorf("outlier_detection.max_ejection_percent = %v; must be <= 100", maxEjectionPercent)
+		// if it hits here not nil - even if it's zero set
+		if maxEjectionPercent = uint32p(mep.GetValue()); *maxEjectionPercent > 100 {
+			return nil, fmt.Errorf("outlier_detection.max_ejection_percent = %v; must be <= 100", *maxEjectionPercent)
 		}
 	}
-	enforcingSuccessRate := uint32(defaultEnforcingSuccessRate)
+	// "if the enforcing_success_rate field is set to 0, the config
+	// success_rate_ejection field will be null and all success_rate_* fields
+	// will be ignored." - A50
+	var enforcingSuccessRate *uint32
 	if esr := od.GetEnforcingSuccessRate(); esr != nil {
-		if enforcingSuccessRate = esr.GetValue(); enforcingSuccessRate > 100 {
-			return nil, fmt.Errorf("outlier_detection.enforcing_success_rate = %v; must be <= 100", enforcingSuccessRate)
+		// if it hits here not nil - even if it's zero set
+		if enforcingSuccessRate = uint32p(esr.GetValue()); *enforcingSuccessRate > 100 {
+			return nil, fmt.Errorf("outlier_detection.enforcing_success_rate = %v; must be <= 100", *enforcingSuccessRate)
 		}
 	}
-	failurePercentageThreshold := uint32(defaultFailurePercentageThreshold)
+	var failurePercentageThreshold *uint32
 	if fpt := od.GetFailurePercentageThreshold(); fpt != nil {
-		if failurePercentageThreshold = fpt.GetValue(); failurePercentageThreshold > 100 {
-			return nil, fmt.Errorf("outlier_detection.failure_percentage_threshold = %v; must be <= 100", failurePercentageThreshold)
+		// if it hits here not nil - even if it's zero set
+		if failurePercentageThreshold = uint32p(fpt.GetValue()); *failurePercentageThreshold > 100 {
+			return nil, fmt.Errorf("outlier_detection.failure_percentage_threshold = %v; must be <= 100", *failurePercentageThreshold)
 		}
 	}
-	enforcingFailurePercentage := uint32(defaultEnforcingFailurePercentage)
+	// "If the enforcing_failure_percent field is set to 0 or null, the config
+	// failure_percent_ejection field will be null and all failure_percent_*
+	// fields will be ignored." - A50
+	var enforcingFailurePercentage *uint32
 	if efp := od.GetEnforcingFailurePercentage(); efp != nil {
-		if enforcingFailurePercentage = efp.GetValue(); enforcingFailurePercentage > 100 {
-			return nil, fmt.Errorf("outlier_detection.enforcing_failure_percentage = %v; must be <= 100", enforcingFailurePercentage)
+		if enforcingFailurePercentage = uint32p(efp.GetValue()); *enforcingFailurePercentage > 100 {
+			return nil, fmt.Errorf("outlier_detection.enforcing_failure_percentage = %v; must be <= 100", *enforcingFailurePercentage)
+		}
+	} // are these nack validations correct?
+
+	var successRateStdevFactor *uint32
+	if srsf := od.GetSuccessRateStdevFactor(); srsf != nil {
+		successRateStdevFactor = uint32p(srsf.GetValue())
+	}
+	var successRateMinimumHosts *uint32
+	if srmh := od.GetSuccessRateMinimumHosts(); srmh != nil {
+		successRateMinimumHosts = uint32p(srmh.GetValue())
+	}
+	var successRateRequestVolume *uint32
+	if srrv := od.GetSuccessRateRequestVolume(); srrv != nil {
+		successRateRequestVolume = uint32p(srrv.GetValue())
+	}
+	var failurePercentageMinimumHosts *uint32
+	if fpmh := od.GetFailurePercentageMinimumHosts(); fpmh != nil {
+		failurePercentageMinimumHosts = uint32p(fpmh.GetValue())
+	}
+	var failurePercentageRequestVolume *uint32
+	if fprv := od.GetFailurePercentageRequestVolume(); fprv != nil {
+		failurePercentageRequestVolume = uint32p(fprv.GetValue())
+	}
+	// json.RawMessage is a []byte, so can be nil vs. not nil
+	// determined by proto presence/presence of JSON nil or not nil in emission
+	// Also handle the conversion into layered here
+
+	// to prepare JSON and create a distinction between nil (don't set) and 0
+	// (set the JSON field to 0)
+	// prepared JSON - presence is what determines default or not so need an intermediate to convey this presence
+	// intermediary struct JSON with presence or not
+	// Thus, to take proto with not set vs. set(zero and non zero)...and also create a layered structure,
+	// and take that layered structure -> JSON, need an intermediary here. How does custom lb do it? Oh registry with no dependencies
+
+	// thus even the second layer can be set or not set
+
+	// use successrateenforcement percentage to prepare this layered intermediate config
+
+	// emit json - since there's nothing in spec that defines the data type
+	// passed from client to CDS
+
+
+
+
+	// in cds if json is nil no-op if not nil...take the JSON, marshal in
+	// ParseConfig into balancer (presence or not determines overwriting
+	// defaults), not set enforcing percentage will create first layer than get
+	// overwritten with 100
+
+	//
+
+
+
+	json.RawMessage{}
+	// ParseConfig
+	// defaults override nil only
+	// 0 stays 0 if set (all set values keep their set values)
+
+	// so pass nil || set here vvv
+
+	// these local vars I read have the three possible states
+
+	// "if the enforcing_success_rate field is set to 0, the config
+	// success_rate_ejection field will be null and all success_rate_* fields
+	// will be ignored." - A50
+	// var sre *successRateEjection
+	var sre *successRateEjection
+	if enforcingSuccessRate == nil || *enforcingSuccessRate != 0 {
+		// sre = , // with fields set
+		sre = &successRateEjection{
+			stdevFactor: successRateStdevFactor, // does nil equal empty here? I thinkkk so zero value
+			enforcementPercentage: enforcingSuccessRate,
+			minimumHosts: successRateMinimumHosts,
+			requestVolume: successRateRequestVolume,
 		}
 	}
 
-	successRateStdevFactor := uint32(defaultSuccessRateStdevFactor)
-	if srsf := od.GetSuccessRateStdevFactor(); srsf != nil {
-		successRateStdevFactor = srsf.GetValue()
-	}
-	successRateMinimumHosts := uint32(defaultSuccessRateMinimumHosts)
-	if srmh := od.GetSuccessRateMinimumHosts(); srmh != nil {
-		successRateMinimumHosts = srmh.GetValue()
-	}
-	successRateRequestVolume := uint32(defaultSuccessRateRequestVolume)
-	if srrv := od.GetSuccessRateRequestVolume(); srrv != nil {
-		successRateRequestVolume = srrv.GetValue()
-	}
-	failurePercentageMinimumHosts := uint32(defaultFailurePercentageMinimumHosts)
-	if fpmh := od.GetFailurePercentageMinimumHosts(); fpmh != nil {
-		failurePercentageMinimumHosts = fpmh.GetValue()
-	}
-	failurePercentageRequestVolume := uint32(defaultFailurePercentageRequestVolume)
-	if fprv := od.GetFailurePercentageRequestVolume(); fprv != nil {
-		failurePercentageRequestVolume = fprv.GetValue()
+	// json.Marshal(&s{}) -> '{}' if this is == nil, then
+	// we're fine, if not just set the field based off nil
+	// if !nil
+	//     set field
+
+	// "If the enforcing_failure_percent field is set to 0 or null, the config
+	// failure_percent_ejection field will be null and all failure_percent_*
+	// fields will be ignored." - A50
+	// var fpe *failurePercentageEjection
+	var fpe *failurePercentageEjection
+	if enforcingFailurePercentage != nil && *enforcingFailurePercentage != 0 {
+		fpe = &failurePercentageEjection{
+			threshold: failurePercentageThreshold,
+			enforcementPercentage: enforcingFailurePercentage,
+			minimumHosts: failurePercentageMinimumHosts,
+			requestVolume: failurePercentageRequestVolume,
+		}
 	}
 
-	return &OutlierDetection{
-		Interval:                       interval,
-		BaseEjectionTime:               baseEjectionTime,
-		MaxEjectionTime:                maxEjectionTime,
-		MaxEjectionPercent:             maxEjectionPercent,
-		EnforcingSuccessRate:           enforcingSuccessRate,
-		FailurePercentageThreshold:     failurePercentageThreshold,
-		EnforcingFailurePercentage:     enforcingFailurePercentage,
-		SuccessRateStdevFactor:         successRateStdevFactor,
-		SuccessRateMinimumHosts:        successRateMinimumHosts,
-		SuccessRateRequestVolume:       successRateRequestVolume,
-		FailurePercentageMinimumHosts:  failurePercentageMinimumHosts,
-		FailurePercentageRequestVolume: failurePercentageRequestVolume,
-	}, nil
+	odLBCfg := &odLBConfig{
+		interval: interval,
+		baseEjectionTime: baseEjectionTime,
+		maxEjectionTime: maxEjectionTime,
+		maxEjectionPercent: maxEjectionPercent,
+		successRateEjection: sre,
+		failurePercentageEjection: fpe,
+	} // marshal this stuff into json
+
+
+	// json marshal error to trigger nack? is that the correct behavior? I think json preperation in registry
+	// also causes NACK.
+	// I think this is all you need except also struct tags and omit empty of course
+	odLBCfgJSON, err := json.Marshal(odLBCfg)
+	if err != nil { // NACK just like xDS LB policy registry if it errors preparing JSON
+		return nil, err
+	}
+	// switch to JSON - now this also needs an OD config to verify
+	// json.Unmarshal into OD Config...just for this layer
+	// wait this also accounts for the not set vs. set and 0 and changes the
+	// structure so you can check that language logic of the second layer messages
+
+	return odLBCfgJSON, nil
 }

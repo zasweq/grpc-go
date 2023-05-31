@@ -75,11 +75,23 @@ type bb struct{}
 
 // Build creates a new CDS balancer with the ClientConn.
 func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
+	builder := balancer.Get(outlierdetection.Name)
+	if builder == nil {
+		// Shouldn't happen, registered through imported Outlier Detection,
+		// defensive programming.
+		return nil
+	}
+	odParser, ok := builder.(balancer.ConfigParser)
+	if !ok {
+		// Shouldn't happen, imported Outlier Detection builder has this method.
+		return nil
+	}
 	b := &cdsBalancer{
 		bOpts:    opts,
 		updateCh: buffer.NewUnbounded(),
 		closed:   grpcsync.NewEvent(),
 		done:     grpcsync.NewEvent(),
+		odParser: odParser,
 		xdsHI:    xdsinternal.NewHandshakeInfo(nil, nil),
 	}
 	b.logger = prefixLogger((b))
@@ -160,6 +172,7 @@ type cdsBalancer struct {
 	logger         *grpclog.PrefixLogger
 	closed         *grpcsync.Event
 	done           *grpcsync.Event
+	odParser       balancer.ConfigParser
 
 	// The certificate providers are cached here to that they can be closed when
 	// a new provider is to be created.
@@ -271,34 +284,87 @@ func buildProviderFunc(configs map[string]*certprovider.BuildableConfig, instanc
 	return provider, nil
 }
 
-func outlierDetectionToConfig(od *xdsresource.OutlierDetection) outlierdetection.LBConfig { // Already validated - no need to return error
+// I think an error needs to be emitted from this helper
+// fill out nested od config based off rules
+
+// marshal to JSON (making sure ternary stuff keeps getting taken into account)
+
+// ParseConfig() on that JSON, pass the opaque struct returned from that downward
+
+// so gets xDS Defaults (through rules + defaults), such as 100 because goes
+// through rule and then ParseConfig
+
+
+
+// need to test the user flow of JSON picking up nil and setting defaults
+// vs. a set 0 and keeping
+// ^^^ Do this in ParseConfig() of Outlier Detection
+
+// make sure Outlier Detection config has correct omit empty annotations etc.
+
+// instead of xdsresource.OutlierDetection this gets called with raw JSON
+// which still has the nil vs. not nil branch
+
+// cause an error from UpdateCCS - also now a pointer gets sent downward.
+func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (*outlierdetection.LBConfig, error) { // Already validated - no need to return error
 	if od == nil {
-		// "If the outlier_detection field is not set in the Cluster message, a
-		// "no-op" outlier_detection config will be generated, with interval set
-		// to the maximum possible value and all other fields unset." - A50
-		return outlierdetection.LBConfig{
-			Interval: 1<<63 - 1,
-		}
+		// "In the cds LB policy, if the outlier_detection field is not set in
+		// the Cluster resource, a "no-op" outlier_detection config will be
+		// generated in the corresponding DiscoveryMechanism config, with all
+		// fields unset." - A50
+		return &outlierdetection.LBConfig{}, nil // Change this throughout codebase, search for it (Interval: 1<<63 - 1) and change it
 	}
 
 	// "if the enforcing_success_rate field is set to 0, the config
 	// success_rate_ejection field will be null and all success_rate_* fields
 	// will be ignored." - A50
+
+	// continue to prepare config here...other possibility is what triggers config preparation or just put other possiblity in conditional
+	// but first if:
+	// if !set and zero (other possiblity: null || set and unzero)
+	//        sre = ....
+
+	// intermediate nested
+	// convert nested to JSON
+	// JSON -> ParseConfig()
+
+	// Pass downward
+
+	// this od parser needs to persist over time - I think create this at balancer build time. and call it here.
+	// cause build to fail if not registered?
+	cfg, err := b.odParser.ParseConfig(od)
+	// This shouldn't happen, validated in client?
+	// this call overwrites unset in the layered structure with defaults...the layered structure emitted from client
+	if err != nil {
+		return nil, err
+	}
+	odCfg, ok := cfg.(*outlierdetection.LBConfig) // we want a pointer since the interface zero value is a pointer...this is a struct so needs a pointer
+	if !ok {
+		// Shouldn't happen, Parser built at build time with Outlier Detection
+		// builder pulled from gRPC LB Registry.
+		return nil, fmt.Errorf("odParser returned config with unexpected type %T: %v", s.BalancerConfig, s.BalancerConfig)
+	}
+
+	// this branching logic all now gets handled in the client...
+	//
+	/*
 	var sre *outlierdetection.SuccessRateEjection
-	if od.EnforcingSuccessRate != 0 {
+	if od.EnforcingSuccessRate == nil || *od.EnforcingSuccessRate != 0 { // exits early out of the or right?
 		sre = &outlierdetection.SuccessRateEjection{
 			StdevFactor:           od.SuccessRateStdevFactor,
-			EnforcementPercentage: od.EnforcingSuccessRate,
+			EnforcementPercentage: od.EnforcingSuccessRate, // this can now be nil, do pointers have to be JSON?
 			MinimumHosts:          od.SuccessRateMinimumHosts,
 			RequestVolume:         od.SuccessRateRequestVolume,
 		}
 	}
 
+	// if !((set and zero) || null) other possiblity: set and non zero (need the nil check regardless
+
 	// "If the enforcing_failure_percent field is set to 0 or null, the config
 	// failure_percent_ejection field will be null and all failure_percent_*
 	// fields will be ignored." - A50
 	var fpe *outlierdetection.FailurePercentageEjection
-	if od.EnforcingFailurePercentage != 0 {
+	if od.EnforcingFailurePercentage == nil || *od.EnforcingFailurePercentage == 0 {
 		fpe = &outlierdetection.FailurePercentageEjection{
 			Threshold:             od.FailurePercentageThreshold,
 			EnforcementPercentage: od.EnforcingFailurePercentage,
@@ -307,6 +373,17 @@ func outlierDetectionToConfig(od *xdsresource.OutlierDetection) outlierdetection
 		}
 	}
 
+	// this needs to change to get JSON and call the od parser?
+
+	// balancer.Get on the first one...?
+
+
+	// but the marshaling into JSON keeps the layered structure here - so need an intermediary?
+
+	// marshal into JSON while keeping the ternary operator, Doug said this flow/way needs pointer declarations
+
+	// flat structure than convert - wait where does ParseConfig ever get called in the system?
+
 	return outlierdetection.LBConfig{
 		Interval:                  internalserviceconfig.Duration(od.Interval),
 		BaseEjectionTime:          internalserviceconfig.Duration(od.BaseEjectionTime),
@@ -314,8 +391,34 @@ func outlierDetectionToConfig(od *xdsresource.OutlierDetection) outlierdetection
 		MaxEjectionPercent:        od.MaxEjectionPercent,
 		SuccessRateEjection:       sre,
 		FailurePercentageEjection: fpe,
-	}
+	}*/
+
+	return odCfg, nil // still this in UpdateCCS? Now child type has to be this. Or the type hierarchy of how this gets passed down needs to be this.
 }
+
+// emit the proto inline
+
+// Is the marshaling step correct
+// string is JSON, map of string key, arbitrary, string we impose structure to
+// empty vs. not empty is the condition we want to have a distinction in JSON
+
+// marshaling requires ocnditionally marshal, field is misisng or zero
+// spit out 0
+// don't emit field at all
+// proto -> JSON
+
+// the reason i was saying you need pointer types is because you need to be able
+// to serialize with an explicit zero OR serialize with a field missing
+// fill out config -> JSON
+
+// JSON -> back is Unmarshaling, if field isn't present use defaults
+
+// Unmarshal deserialize
+
+// weighted round robin 0 set overwrites
+// not set doesn't overwrite
+
+// only update fields that is fine when it's parsing
 
 // handleWatchUpdate handles a watch update from the xDS Client. Good updates
 // lead to clientConn updates being invoked on the underlying cluster_resolver balancer.
@@ -390,7 +493,16 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			b.logger.Infof("Unexpected cluster type %v when handling update from cluster handler", cu.ClusterType)
 		}
 		if envconfig.XDSOutlierDetection {
-			dms[i].OutlierDetection = outlierDetectionToConfig(cu.OutlierDetection)
+			// Either a: perist this as serviceconfig.LoadBalancingConfig
+			// or keep as is and typecase and error?
+			// you attach a child policy to the OD Type...
+			// thus, I think you need to typecast and and convert
+
+			// make this on receiver type if need to persist config parser
+			var err error
+			if dms[i].OutlierDetection, err = b.outlierDetectionToConfig(cu.OutlierDetection); err != nil {
+				// returning an error from Update CCS is a behavior change. Do I want to add that? Will that break anything?
+			} // have this error if typecast fails or if ParseConfig() fails (shouldn't happen anyway) - add this to PR changes
 		}
 	}
 

@@ -1396,25 +1396,14 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 		wantUpdate ClusterUpdate
 		wantErr    bool
 	}{
+		// Just realized need a test for all 3 buckets I'd say for each failure percentage
+		// and success rate in CDS Balancer (Figure out way to test)
 		{
 			name: "successful-case-all-defaults",
 			// Outlier detection proto is present without any fields specified,
-			// so should trigger all default values in the update.
+			// so should trigger all nil values in the update. (i.e. unspecified)
 			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{}),
-			wantUpdate: odToClusterUpdate(&OutlierDetection{
-				Interval:                       10 * time.Second,
-				BaseEjectionTime:               30 * time.Second,
-				MaxEjectionTime:                300 * time.Second,
-				MaxEjectionPercent:             10,
-				SuccessRateStdevFactor:         1900,
-				EnforcingSuccessRate:           100,
-				SuccessRateMinimumHosts:        5,
-				SuccessRateRequestVolume:       100,
-				FailurePercentageThreshold:     85,
-				EnforcingFailurePercentage:     0,
-				FailurePercentageMinimumHosts:  5,
-				FailurePercentageRequestVolume: 50,
-			}),
+			wantUpdate: odToClusterUpdate(&OutlierDetection{}),
 		},
 		{
 			name: "successful-case-all-fields-configured-and-valid",
@@ -1432,19 +1421,43 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 				FailurePercentageMinimumHosts:  &wrapperspb.UInt32Value{Value: 8},
 				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
 			}),
+			// This won't point to the same heap memory - do I need to write a comparer on the type?
 			wantUpdate: odToClusterUpdate(&OutlierDetection{
-				Interval:                       time.Second,
-				BaseEjectionTime:               time.Second * 2,
-				MaxEjectionTime:                time.Second * 3,
-				MaxEjectionPercent:             1,
-				SuccessRateStdevFactor:         2,
-				EnforcingSuccessRate:           3,
-				SuccessRateMinimumHosts:        4,
-				SuccessRateRequestVolume:       5,
-				FailurePercentageThreshold:     6,
-				EnforcingFailurePercentage:     7,
-				FailurePercentageMinimumHosts:  8,
-				FailurePercentageRequestVolume: 9,
+				Interval:                       durationp(time.Second), // this is a const
+				BaseEjectionTime:               durationp(time.Second * 2),
+				MaxEjectionTime:                durationp(time.Second * 3),
+				MaxEjectionPercent:             uint32p(1),
+				SuccessRateStdevFactor:         uint32p(2),
+				EnforcingSuccessRate:           uint32p(3),
+				SuccessRateMinimumHosts:        uint32p(4),
+				SuccessRateRequestVolume:       uint32p(5),
+				FailurePercentageThreshold:     uint32p(6),
+				EnforcingFailurePercentage:     uint32p(7),
+				FailurePercentageMinimumHosts:  uint32p(8),
+				FailurePercentageRequestVolume: uint32p(9),
+			}),
+		},
+		// Shouldn't set defaults, only those configured, those not configured
+		// should stay not set.
+		{
+			name: "successful-case-some-fields-configured-and-valid",
+			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{
+				Interval:                       &durationpb.Duration{Seconds: 1},
+				MaxEjectionTime:                &durationpb.Duration{Seconds: 3},
+				MaxEjectionPercent:             &wrapperspb.UInt32Value{Value: 1},
+				EnforcingSuccessRate:           &wrapperspb.UInt32Value{Value: 3},
+				SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},
+				EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 7},
+				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
+			}),
+			wantUpdate: odToClusterUpdate(&OutlierDetection{
+				Interval:                       durationp(time.Second), // this is a const
+				MaxEjectionTime:                durationp(time.Second * 3),
+				MaxEjectionPercent:             uint32p(1),
+				EnforcingSuccessRate:           uint32p(3),
+				SuccessRateRequestVolume:       uint32p(5),
+				EnforcingFailurePercentage:     uint32p(7),
+				FailurePercentageRequestVolume: uint32p(9),
 			}),
 		},
 		{
