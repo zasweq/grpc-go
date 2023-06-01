@@ -21,8 +21,6 @@ package tests_test
 
 import (
 	"encoding/json"
-	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"testing"
 	"time"
 
@@ -32,13 +30,15 @@ import (
 	"google.golang.org/grpc/internal/balancer/stub"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/grpctest"
-	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
+	iserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/serviceconfig"
 	_ "google.golang.org/grpc/xds" // Register the xDS LB Registry Converters.
+	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	v3xdsxdstypepb "github.com/cncf/xds/go/xds/type/v3"
@@ -110,7 +110,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 		name             string
 		cluster          *v3clusterpb.Cluster
 		wantUpdate       xdsresource.ClusterUpdate
-		wantLBConfig     *internalserviceconfig.BalancerConfig
+		wantLBConfig     *iserviceconfig.BalancerConfig
 		customLBDisabled bool
 	}{
 		{
@@ -145,10 +145,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				ClusterType: xdsresource.ClusterTypeLogicalDNS,
 				DNSHostName: "dns_host:8080",
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: "round_robin",
 					},
 				},
@@ -172,10 +172,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				ClusterName: clusterName, LRSServerConfig: xdsresource.ClusterLRSOff, ClusterType: xdsresource.ClusterTypeAggregate,
 				PrioritizedClusterNames: []string{"a", "b", "c"},
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: "round_robin",
 					},
 				},
@@ -196,10 +196,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				LbPolicy: v3clusterpb.Cluster_ROUND_ROBIN,
 			},
 			wantUpdate: emptyUpdate,
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: "round_robin",
 					},
 				},
@@ -221,10 +221,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				LbPolicy: v3clusterpb.Cluster_ROUND_ROBIN,
 			},
 			wantUpdate: xdsresource.ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: xdsresource.ClusterLRSOff},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: "round_robin",
 					},
 				},
@@ -251,10 +251,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				},
 			},
 			wantUpdate: xdsresource.ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: xdsresource.ClusterLRSServerSelf},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: "round_robin",
 					},
 				},
@@ -293,10 +293,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 				},
 			},
 			wantUpdate: xdsresource.ClusterUpdate{ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: xdsresource.ClusterLRSServerSelf, MaxRequests: func() *uint32 { i := uint32(512); return &i }()},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: "round_robin",
 					},
 				},
@@ -325,7 +325,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			wantUpdate: xdsresource.ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: xdsresource.ClusterLRSServerSelf,
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: "ring_hash_experimental",
 				Config: &ringhash.LBConfig{
 					MinRingSize: 1024,
@@ -362,7 +362,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			wantUpdate: xdsresource.ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName, LRSServerConfig: xdsresource.ClusterLRSServerSelf,
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: "ring_hash_experimental",
 				Config: &ringhash.LBConfig{
 					MinRingSize: 10,
@@ -400,7 +400,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			wantUpdate: xdsresource.ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName,
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: "ring_hash_experimental",
 				Config: &ringhash.LBConfig{
 					MinRingSize: 10,
@@ -434,10 +434,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			wantUpdate: xdsresource.ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName,
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: "round_robin",
 					},
 				},
@@ -472,10 +472,10 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			wantUpdate: xdsresource.ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName,
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: wrrlocality.Name,
 				Config: &wrrlocality.LBConfig{
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name:   "myorg.MyCustomLeastRequestPolicy",
 						Config: customLBConfig{},
 					},
@@ -519,7 +519,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			wantUpdate: xdsresource.ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName,
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: "ring_hash_experimental",
 				Config: &ringhash.LBConfig{
 					MinRingSize: 20,
@@ -565,7 +565,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			wantUpdate: xdsresource.ClusterUpdate{
 				ClusterName: clusterName, EDSServiceName: serviceName,
 			},
-			wantLBConfig: &internalserviceconfig.BalancerConfig{
+			wantLBConfig: &iserviceconfig.BalancerConfig{
 				Name: "ring_hash_experimental",
 				Config: &ringhash.LBConfig{
 					MinRingSize: 10,
@@ -595,7 +595,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			if diff := cmp.Diff(update, test.wantUpdate, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(xdsresource.ClusterUpdate{}, "LBPolicy")); diff != "" {
 				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) got diff: %v (-got, +want)", test.cluster, diff)
 			}
-			bc := &internalserviceconfig.BalancerConfig{}
+			bc := &iserviceconfig.BalancerConfig{}
 			if err := json.Unmarshal(update.LBPolicy, bc); err != nil {
 				t.Fatalf("failed to unmarshal JSON: %v", err)
 			}
@@ -660,12 +660,13 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 	}{
 
 		// nil emissions get checked in other cds tests right?
-		{ // will trigger a no-op OD config to be produced in the CDS balancer
+		/*{ // will trigger a no-op OD config to be produced in the CDS balancer
 			name: "od-cfg-null",
 			clusterWithOD: odToClusterProto(nil),
 			// will this assertion work as intended? marshalling into odCfgWant?
+			// but can't technically unmarshal this into nil...because this is json.Unarmshal(nil) after the step
 			odCfgWant: nil, // or what does it unmarshal to, not a no-op, can I even test it?
-		},
+		},*/
 		// Now takes the logic from CDS test
 
 		{
@@ -675,10 +676,10 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
 			}),
 			odCfgWant: outlierdetection.LBConfig{
-				Interval:            10 * time.Second,
-				BaseEjectionTime:    30 * time.Second,
-				MaxEjectionTime:     300 * time.Second,
-				MaxEjectionPercent:  10,
+				Interval:           iserviceconfig.Duration(10 * time.Second),
+				BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+				MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
+				MaxEjectionPercent: 10,
 				// ^^^ Should be defaults...
 				SuccessRateEjection: nil, // no I want this to be unset
 				FailurePercentageEjection: nil,
@@ -692,9 +693,9 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{}),
 			// parse into this? ParseConfig on balancer type?
 			odCfgWant: outlierdetection.LBConfig{
-				Interval:            10 * time.Second,
-				BaseEjectionTime:    30 * time.Second,
-				MaxEjectionTime:     300 * time.Second,
+				Interval:            iserviceconfig.Duration(10 * time.Second),
+				BaseEjectionTime:    iserviceconfig.Duration(30 * time.Second),
+				MaxEjectionTime:     iserviceconfig.Duration(300 * time.Second),
 				MaxEjectionPercent:  10,
 				// SuccessRateEjection will be configured if
 				// EnforcingSuccessRate is nil, EnforcementPercentage will thus
@@ -717,9 +718,9 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 			}),
 			// defaults otherwise, could even make those fixed...
 			odCfgWant: outlierdetection.LBConfig{
-				Interval:           10 * time.Second,
-				BaseEjectionTime:   30 * time.Second,
-				MaxEjectionTime:    300 * time.Second,
+				Interval:           iserviceconfig.Duration(10 * time.Second),
+				BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+				MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 				MaxEjectionPercent: 10,
 				FailurePercentageEjection: nil,
 			},
@@ -730,9 +731,9 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 			// if I set success rate percent explicitly to zero should focus on sre
 
 			odCfgWant: outlierdetection.LBConfig{
-				Interval:           10 * time.Second,
-				BaseEjectionTime:   30 * time.Second,
-				MaxEjectionTime:    300 * time.Second,
+				Interval:           iserviceconfig.Duration(10 * time.Second),
+				BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+				MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 				MaxEjectionPercent: 10,
 				FailurePercentageEjection: nil,
 			},
@@ -758,9 +759,9 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
 			}),
 			odCfgWant: outlierdetection.LBConfig{
-				Interval:            time.Second,
-				BaseEjectionTime:    2 * time.Second,
-				MaxEjectionTime:     3 * time.Second,
+				Interval:            iserviceconfig.Duration(time.Second),
+				BaseEjectionTime:    iserviceconfig.Duration(2 * time.Second),
+				MaxEjectionTime:     iserviceconfig.Duration(3 * time.Second),
 				MaxEjectionPercent:  1,
 				// SuccessRateEjection will be configred if EnforcingSuccessRate
 				// is nil, EnforcementPercentage will thus pick up default.
@@ -782,15 +783,18 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			update, err := xdsresource.ValidateClusterAndConstructClusterUpdateForTesting(test.cluster)
+			update, err := xdsresource.ValidateClusterAndConstructClusterUpdateForTesting(test.clusterWithOD)
 			if err != nil {
-				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) failed: %v", test.cluster, err)
+				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) failed: %v", test.clusterWithOD, err)
 			}
 			// In order to Marshal into OD Config then assert the diff ParseConfig() needs to work correctly
-			var odCfgGot *outlierdetection.LBConfig{}
+			var odCfgGot *outlierdetection.LBConfig
 			// This should emit valid JSON, and also with a certain structure. Unmarshal into od
 			// either do map and not also test defaults
 			// or od cfg want with defaults (I think this becuase tests layering flattening and also the ternary ness of each field)
+
+			// Oh wait this does have dependency on Outlier Detection through ParseConfig()...
+			// Could also unmarshal into declared maps
 			if err := json.Unmarshal(update.OutlierDetection, odCfgGot); err != nil {
 				t.Fatalf("failed to unmarshal JSON: %v", err)
 			}

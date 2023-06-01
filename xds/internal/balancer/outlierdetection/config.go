@@ -18,6 +18,7 @@
 package outlierdetection
 
 import (
+	"encoding/json"
 	iserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/serviceconfig"
 )
@@ -53,6 +54,37 @@ type SuccessRateEjection struct {
 	// is not performed for that host. Defaults to 100.
 	RequestVolume uint32 `json:"requestVolume,omitempty"`
 }
+
+// For UnmarshalJSON to work correctly without infinite recursion.
+type successRateEjection SuccessRateEjection
+
+func (sre *SuccessRateEjection) UnmarshalJSON(j []byte) error {
+	// const ( // or set this top level - orrrr set inline
+	// Set defaults
+	// this will shadow
+	/*sreRet := &SuccessRateEjection{
+		// Default values as documented in A50.
+		StdevFactor: 1900,
+		EnforcementPercentage: 100,
+		MinimumHosts: 5,
+		RequestVolume: 50,
+	}*/
+	sre.StdevFactor = 1900
+	sre.EnforcementPercentage = 100
+	sre.MinimumHosts = 5
+	sre.RequestVolume = 100
+
+	print("about to overwrite default fields in success rate ejection...")
+	// Unmarshal JSON on a type with zero values for methods...
+	// overwrites defaults *if set*, leaves alone if not
+	// typecast to avoid infinite recursion
+	return json.Unmarshal(j, (*successRateEjection)(sre))
+}
+
+// Scale up ParseConfig test cases a lot...this needs to come first, xDS Client test
+// depends on this
+
+// will these equal need to change?
 
 // Equal returns whether the SuccessRateEjection is the same with the parameter.
 func (sre *SuccessRateEjection) Equal(sre2 *SuccessRateEjection) bool {
@@ -99,6 +131,26 @@ type FailurePercentageEjection struct {
 	// lower than this setting, failure percentage-based ejection will not be
 	// performed for this host. Defaults to 50.
 	RequestVolume uint32 `json:"requestVolume,omitempty"`
+}
+
+type failurePercentageEjection FailurePercentageEjection
+
+func (fpe *FailurePercentageEjection) UnmarshalJSON(j []byte) error {
+	/*fpeRet := &FailurePercentageEjection{
+		Threshold: 85,
+		EnforcementPercentage: 0,
+		MinimumHosts: 5,
+		RequestVolume: 50,
+	}*/
+	// if it's getting an empty JSON string, why is this working? It should keep
+	// the default values...
+	fpe.Threshold = 85
+	fpe.EnforcementPercentage = 0
+	fpe.MinimumHosts = 5
+	fpe.RequestVolume = 50
+	print("about to overwrite default fields in failure percentage ejection...")
+	// first print to see if it's even getting this, it's just not setting anything it seems...
+	return json.Unmarshal(j, (*failurePercentageEjection)(fpe))
 }
 
 // Equal returns whether the FailurePercentageEjection is the same with the

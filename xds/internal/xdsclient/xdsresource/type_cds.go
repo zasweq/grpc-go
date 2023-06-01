@@ -52,10 +52,10 @@ const (
 	ClusterLRSServerSelf
 )
 
-// this needs to be changed to flattened list? to account for branch for success
-// rate ejection/failure percentage? (the presecne is the xDS Default logic)
+// We don't need this anymore...
+// delete tests or change tests to json formal
+// but the logic completly changes so I think this change is moot at this point.
 
-// Also the fields need to be changed to * or not to account for branch
 
 // OutlierDetection is the outlier detection configuration for a cluster.
 type OutlierDetection struct {
@@ -122,20 +122,6 @@ type OutlierDetection struct {
 	FailurePercentageRequestVolume *uint32
 }
 
-
-// not set communicates to CDS balancer to create a no-op config.
-
-// keep flat structure but forward nil or not nil
-// nested structure in cds balancer
-
-// note that unset will trigger default values
-
-// null or 0 gets communicated here as well
-/*type OutlierDetection2 struct {
-	Interval *time.Duration
-	BaseEjectionTime *time.Duration
-}*/
-
 // ClusterUpdate contains information from a received CDS response, which is of
 // interest to the registered CDS watcher.
 type ClusterUpdate struct {
@@ -166,7 +152,7 @@ type ClusterUpdate struct {
 
 	// OutlierDetection is the outlier detection configuration for this cluster.
 	// If nil, it means this cluster does not use the outlier detection feature.
-	OutlierDetection json.RawMessage
+	OutlierDetection json.RawMessage // nil = noop, others get defaults, thus this keeps that invariant/branch possible
 
 	// Raw is the resource from the xds response.
 	Raw *anypb.Any

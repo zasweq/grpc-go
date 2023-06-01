@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	iserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"math"
 	"strings"
 	"sync"
@@ -82,7 +83,7 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 
 func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	// json nil || not nil has to trigger these defaults somehow
-	const (
+	/*const (
 		defaultInterval                       = 10 * time.Second
 		defaultBaseEjectionTime               = 30 * time.Second
 		defaultMaxEjectionTime                = 300 * time.Second
@@ -95,7 +96,7 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 		defaultEnforcingFailurePercentage     = 0
 		defaultFailurePercentageMinimumHosts  = 5
 		defaultFailurePercentageRequestVolume = 50
-	)
+	)*/
 
 	// this is a layered structure
 	// one with the layers of just the config stuff, one with the layers of
@@ -103,10 +104,14 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 	lbCfg := &LBConfig{
 		// Default values as documented in A50.
 		// these are now iserviceconfig.Duration
-		Interval: defaultInterval, // once rebase switch to iserviceconfig.Duration(defaultInterval), and all below as well
-		BaseEjectionTime: defaultBaseEjectionTime,
-		MaxEjectionTime: defaultMaxEjectionTime,
-		MaxEjectionPercent: defaultMaxEjectionPercent,
+		Interval: iserviceconfig.Duration(10 * time.Second), // once rebase switch to iserviceconfig.Duration(defaultInterval), and all below as well
+		BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+		MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+		MaxEjectionPercent: 10,
+
+		// ^^^ these can be set or not as other places.
+
+
 		// ONLY IF SET PICK UP DEFAULTS
 		// I think now these nil successrateejection fields get their defaults
 		// nil now but if the JSON has them the next layer
@@ -140,9 +145,18 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 	// Do this like Doug did, set the defaults and overwrite from JSON is set (see his codeblock)
 
 	// var lbCfg *LBConfig
-	if err := json.Unmarshal(s, &lbCfg); err != nil { // Validates child config if present as well.
+	print("about to JSON unmarshal into top level config")
+	if err := json.Unmarshal(s, lbCfg); err != nil { // Validates child config if present as well.
 		return nil, fmt.Errorf("xds: unable to unmarshal LBconfig: %s, error: %v", string(s), err)
 	}
+	// this doesn't even get called in xDS Client tests
+	// do nested layer (see Doug's thingy) for JSON defaults in nested layers
+
+	// and then *after* this fill out defaults...based off presence of nested layers
+	// if nested layer present {
+	//      if nested layer.field not present use default else use layer.field
+
+	// }
 
 	// Note: in the xds flow, these validations will never fail. The xdsclient
 	// performs the same validations as here on the xds Outlier Detection

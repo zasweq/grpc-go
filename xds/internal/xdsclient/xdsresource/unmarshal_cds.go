@@ -508,28 +508,29 @@ func uint32p(i uint32) *uint32 {
 // do these need json annotations? I think, keep omit empty?
 // we're deleting exported structs anyway so no need for namespacing/name collisions
 type successRateEjection struct {
-	stdevFactor *uint32
-	enforcementPercentage *uint32
-	minimumHosts *uint32
-	requestVolume *uint32
+	stdevFactor *uint32 `json:"stdevFactor,omitempty"`
+	enforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
+	minimumHosts *uint32 `json:"minimumHosts,omitempty"`
+	requestVolume *uint32 `json:"requestVolume,omitempty"`
 }
 
 type failurePercentageEjection struct {
-	threshold *uint32
-	enforcementPercentage *uint32
-	minimumHosts *uint32
-	requestVolume *uint32
+	threshold *uint32 `json:"threshold,omitempty"`
+	enforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
+	minimumHosts *uint32 `json:"minimumHosts,omitempty"`
+	requestVolume *uint32 `json:"requestVolume,omitempty"`
 }
 
 // intermediate
 type odLBConfig struct {
 	// pointers? Need distinction between the two (set or not set to pick up defaults)
-	interval *iserviceconfig.Duration
-	baseEjectionTime *iserviceconfig.Duration
-	maxEjectionTime *iserviceconfig.Duration
-	maxEjectionPercent *uint32
-	successRateEjection *successRateEjection
-	failurePercentageEjection *failurePercentageEjection
+	// I.e. need to set as json.Marshal(&s{X:&zero}), where it's a pointer to the zero value...
+	interval *iserviceconfig.Duration `json:"interval,omitempty"`
+	baseEjectionTime *iserviceconfig.Duration `json:"baseEjectionTime,omitempty"`
+	maxEjectionTime *iserviceconfig.Duration `json:"maxEjectionTime,omitempty"`
+	maxEjectionPercent *uint32 `json:"maxEjectionPercent,omitempty"`
+	successRateEjection *successRateEjection `json:"successRateEjection,omitempty"`
+	failurePercentageEjection *failurePercentageEjection `json:"failurePercentageEjection,omitempty"`
 }
 
 // outlierConfigFromCluster extracts the relevant outlier detection
@@ -558,22 +559,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	// if nothing is set success rate is turned on by default. Test this scenario?
 	// also triage no-op configs wrt max interval, that is now incorrect
 
-	// move this shit to ParseConfig()
-	/*const (
-		defaultInterval                       = 10 * time.Second
-		defaultBaseEjectionTime               = 30 * time.Second
-		defaultMaxEjectionTime                = 300 * time.Second
-		defaultMaxEjectionPercent             = 10
-		defaultSuccessRateStdevFactor         = 1900
-		defaultEnforcingSuccessRate           = 100
-		defaultSuccessRateMinimumHosts        = 5
-		defaultSuccessRateRequestVolume       = 100
-		defaultFailurePercentageThreshold     = 85
-		defaultEnforcingFailurePercentage     = 0
-		defaultFailurePercentageMinimumHosts  = 5
-		defaultFailurePercentageRequestVolume = 50
-	)*/
-
 	// Holy **** I'll have to change a million tests
 
 
@@ -584,7 +569,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 
 	// same thing here wrt duration pointers?
 
-	// interval := defaultInterval
 	var interval *iserviceconfig.Duration
 	if i := od.GetInterval(); i != nil {
 		// yeah still want this
@@ -596,7 +580,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 		}
 	}
 
-	// baseEjectionTime := defaultBaseEjectionTime
 	var baseEjectionTime *iserviceconfig.Duration
 	if bet := od.GetBaseEjectionTime(); bet != nil {
 		if err := bet.CheckValid(); err != nil {
@@ -607,7 +590,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 		}
 	}
 
-	// maxEjectionTime := defaultMaxEjectionTime
 	var maxEjectionTime *iserviceconfig.Duration
 	if met := od.GetMaxEjectionTime(); met != nil {
 		if err := met.CheckValid(); err != nil {
@@ -667,7 +649,7 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 		if enforcingFailurePercentage = uint32p(efp.GetValue()); *enforcingFailurePercentage > 100 {
 			return nil, fmt.Errorf("outlier_detection.enforcing_failure_percentage = %v; must be <= 100", *enforcingFailurePercentage)
 		}
-	} // are these nack validations correct?
+	}
 
 	var successRateStdevFactor *uint32
 	if srsf := od.GetSuccessRateStdevFactor(); srsf != nil {
@@ -689,9 +671,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	if fprv := od.GetFailurePercentageRequestVolume(); fprv != nil {
 		failurePercentageRequestVolume = uint32p(fprv.GetValue())
 	}
-	// json.RawMessage is a []byte, so can be nil vs. not nil
-	// determined by proto presence/presence of JSON nil or not nil in emission
-	// Also handle the conversion into layered here
 
 	// to prepare JSON and create a distinction between nil (don't set) and 0
 	// (set the JSON field to 0)
@@ -703,41 +682,15 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	// thus even the second layer can be set or not set
 
 	// use successrateenforcement percentage to prepare this layered intermediate config
-
-	// emit json - since there's nothing in spec that defines the data type
-	// passed from client to CDS
-
-
-
-
-	// in cds if json is nil no-op if not nil...take the JSON, marshal in
-	// ParseConfig into balancer (presence or not determines overwriting
-	// defaults), not set enforcing percentage will create first layer than get
-	// overwritten with 100
-
-	//
-
-
-
-	json.RawMessage{}
-	// ParseConfig
-	// defaults override nil only
-	// 0 stays 0 if set (all set values keep their set values)
-
-	// so pass nil || set here vvv
-
-	// these local vars I read have the three possible states
-
 	// "if the enforcing_success_rate field is set to 0, the config
 	// success_rate_ejection field will be null and all success_rate_* fields
 	// will be ignored." - A50
 	// var sre *successRateEjection
 	var sre *successRateEjection
 	if enforcingSuccessRate == nil || *enforcingSuccessRate != 0 {
-		// sre = , // with fields set
 		sre = &successRateEjection{
 			stdevFactor: successRateStdevFactor, // does nil equal empty here? I thinkkk so zero value
-			enforcementPercentage: enforcingSuccessRate,
+			enforcementPercentage: enforcingSuccessRate, // this will still be nil...communicate that throguh the hiearchy, nil causes this to be created, nil gets put on, nil gets marshaled into JSON, OD overwrites that not present field with new stuff
 			minimumHosts: successRateMinimumHosts,
 			requestVolume: successRateRequestVolume,
 		}
@@ -769,8 +722,21 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 		maxEjectionPercent: maxEjectionPercent,
 		successRateEjection: sre,
 		failurePercentageEjection: fpe,
-	} // marshal this stuff into json
+	}
+	// in cds if json is nil no-op if not nil...take the JSON, marshal in
+	// ParseConfig into balancer (presence or not determines overwriting
+	// defaults), not set enforcing percentage will create first layer than get
+	// overwritten with 100
 
+
+
+	// ParseConfig (called in cds from this emitted JSON)
+	// defaults override nil only
+	// 0 stays 0 if set (all set values keep their set values)
+
+	// so pass nil || set here vvv (no this gets communicated from the first
+	// check in this function - pass it nil, returns nil, communicates that to
+	// CDS Balancer)
 
 	// json marshal error to trigger nack? is that the correct behavior? I think json preperation in registry
 	// also causes NACK.

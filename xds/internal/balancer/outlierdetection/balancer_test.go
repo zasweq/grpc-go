@@ -59,6 +59,24 @@ func Test(t *testing.T) {
 
 // TestParseConfig verifies the ParseConfig() method in the Outlier Detection
 // Balancer.
+
+// Nothing is set - all defaults top layer, no new layer...
+// Partly set top layer
+// Something is set top layer, picks those up
+
+
+
+// nothing set top layer (to focus on new layer)
+// sre set but nothing full defaults
+// sre set partially should get partial + defaults
+
+// nothing set top layer (to focus on new layer)
+// fpe set but nothing full defaults
+// fpe set partially should get partial + defaults
+
+// every field is set -> layered structure refers that
+
+// Man I feel like this will have to change dramatically wrt default logic:
 func (s) TestParseConfig(t *testing.T) {
 	const errParseConfigName = "errParseConfigBalancer"
 	stub.Register(errParseConfigName, stub.BalancerFuncs{
@@ -68,15 +86,32 @@ func (s) TestParseConfig(t *testing.T) {
 	})
 
 	parser := bb{}
-
+	const (
+		defaultInterval                       = iserviceconfig.Duration(10 * time.Second)
+		defaultBaseEjectionTime               = iserviceconfig.Duration(30 * time.Second)
+		defaultMaxEjectionTime                = iserviceconfig.Duration(300 * time.Second)
+		defaultMaxEjectionPercent             = 10
+		defaultSuccessRateStdevFactor         = 1900
+		defaultEnforcingSuccessRate           = 100
+		defaultSuccessRateMinimumHosts        = 5
+		defaultSuccessRateRequestVolume       = 100
+		defaultFailurePercentageThreshold     = 85
+		defaultEnforcingFailurePercentage     = 0
+		defaultFailurePercentageMinimumHosts  = 5
+		defaultFailurePercentageRequestVolume = 50
+	)
 	tests := []struct {
 		name    string
 		input   string
 		wantCfg serviceconfig.LoadBalancingConfig
 		wantErr string
 	}{
+		// I think this won't be a problem with ParseConfig,
+		// In CDS:
+		// if this isn't set prepare struct directly
+		// if set call ParseConfig to get struct
 		{
-			name: "noop-lb-config",
+			name: "no-fields-set-should-get-default",
 			input: `{
 				"childPolicy": [
 				{
@@ -87,6 +122,73 @@ func (s) TestParseConfig(t *testing.T) {
 				]
 			}`,
 			wantCfg: &LBConfig{
+				// Default values here...only the top level ones not the nested ones...
+				Interval: defaultInterval,
+				BaseEjectionTime: defaultBaseEjectionTime,
+				MaxEjectionTime: defaultMaxEjectionTime,
+				MaxEjectionPercent: defaultMaxEjectionPercent,
+				ChildPolicy: &iserviceconfig.BalancerConfig{
+					Name: "xds_cluster_impl_experimental",
+					Config: &clusterimpl.LBConfig{
+						Cluster: "test_cluster",
+					},
+				},
+			},
+		},
+
+		{
+			name: "some-top-level-fields-set",
+			input: `{
+				"interval": "15s",
+				"maxEjectionTime": "350s",
+				"childPolicy": [
+				{
+					"xds_cluster_impl_experimental": {
+						"cluster": "test_cluster"
+					}
+				}
+				]
+			}`,
+			// Should get set fields + defaults for unset fields.
+			wantCfg: &LBConfig{
+				Interval: iserviceconfig.Duration(15 * time.Second),
+				BaseEjectionTime: defaultBaseEjectionTime,
+				MaxEjectionTime: iserviceconfig.Duration(350 * time.Second),
+				MaxEjectionPercent: defaultMaxEjectionPercent,
+				ChildPolicy: &iserviceconfig.BalancerConfig{
+					Name: "xds_cluster_impl_experimental",
+					Config: &clusterimpl.LBConfig{
+						Cluster: "test_cluster",
+					},
+				},
+			},
+		},
+		{ // ugh but it also validates child policy is present...do we really need to keep that assertion?
+			name: "success-rate-ejection-present-but-no-fields",
+			input: `{
+				"successRateEjection": {},
+                "childPolicy": [
+				{
+					"xds_cluster_impl_experimental": {
+						"cluster": "test_cluster"
+					}
+				}
+				]
+			}`,
+			// Should get defaults of success-rate-ejection struct.
+			wantCfg: &LBConfig{
+				// This doesn't get successfully populated with defaults...
+				// constructs a &outlierdetection.SuccessRateEjection{},
+				Interval: defaultInterval,
+				BaseEjectionTime: defaultBaseEjectionTime,
+				MaxEjectionTime: defaultMaxEjectionTime,
+				MaxEjectionPercent: defaultMaxEjectionPercent,
+				SuccessRateEjection: &SuccessRateEjection{
+					StdevFactor: defaultSuccessRateStdevFactor,
+					EnforcementPercentage: defaultEnforcingSuccessRate,
+					MinimumHosts: defaultSuccessRateMinimumHosts,
+					RequestVolume: defaultSuccessRateRequestVolume,
+				},
 				ChildPolicy: &iserviceconfig.BalancerConfig{
 					Name: "xds_cluster_impl_experimental",
 					Config: &clusterimpl.LBConfig{
@@ -96,7 +198,227 @@ func (s) TestParseConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "good-lb-config",
+			name: "success-rate-ejection-present-partially-set",
+			input: `{
+				"successRateEjection": {
+					"stdevFactor": 1000,
+					"minimumHosts": 5
+				},
+                "childPolicy": [
+				{
+					"xds_cluster_impl_experimental": {
+						"cluster": "test_cluster"
+					}
+				}
+				]
+			}`,
+			// Should get set fields + defaults for others in success rate ejection layer
+			wantCfg: &LBConfig{
+				Interval: defaultInterval,
+				BaseEjectionTime: defaultBaseEjectionTime,
+				MaxEjectionTime: defaultMaxEjectionTime,
+				MaxEjectionPercent: defaultMaxEjectionPercent,
+				SuccessRateEjection: &SuccessRateEjection{
+					StdevFactor: 1000,
+					EnforcementPercentage: defaultEnforcingSuccessRate,
+					MinimumHosts: 5,
+					RequestVolume: defaultSuccessRateRequestVolume,
+				},
+				ChildPolicy: &iserviceconfig.BalancerConfig{
+					Name: "xds_cluster_impl_experimental",
+					Config: &clusterimpl.LBConfig{
+						Cluster: "test_cluster",
+					},
+				},
+			},
+		},
+		{
+			name: "success-rate-ejection-present-fully-set",
+			input: `{
+				"successRateEjection": {
+					"stdevFactor": 1000,
+					"enforcementPercentage": 50,
+					"minimumHosts": 5,
+					"requestVolume": 50
+				},
+                "childPolicy": [
+				{
+					"xds_cluster_impl_experimental": {
+						"cluster": "test_cluster"
+					}
+				}
+				]
+			}`,
+			// Should only get fields that are set, no defaults, so set fields have to be different than defaults for assertion.
+			wantCfg: &LBConfig{
+				Interval: defaultInterval,
+				BaseEjectionTime: defaultBaseEjectionTime,
+				MaxEjectionTime: defaultMaxEjectionTime,
+				MaxEjectionPercent: defaultMaxEjectionPercent,
+				SuccessRateEjection: &SuccessRateEjection{
+					StdevFactor: 1000,
+					EnforcementPercentage: 50,
+					MinimumHosts: 5,
+					RequestVolume: 50,
+				},
+				ChildPolicy: &iserviceconfig.BalancerConfig{
+					Name: "xds_cluster_impl_experimental",
+					Config: &clusterimpl.LBConfig{
+						Cluster: "test_cluster",
+					},
+				},
+			},
+		},
+		{
+			name: "failure-percentage-ejection-present-but-no-fields",
+			// Can always come back later if json strings don't work...
+			input: `{
+				"failurePercentageEjection": {},
+                "childPolicy": [
+				{
+					"xds_cluster_impl_experimental": {
+						"cluster": "test_cluster"
+					}
+				}
+				]
+			}`,
+			// Should get defaults of failure-percentage-ejection struct.
+			wantCfg: &LBConfig{
+				Interval: defaultInterval,
+				BaseEjectionTime: defaultBaseEjectionTime,
+				MaxEjectionTime: defaultMaxEjectionTime,
+				MaxEjectionPercent: defaultMaxEjectionPercent,
+				FailurePercentageEjection: &FailurePercentageEjection{
+					Threshold: defaultFailurePercentageThreshold,
+					EnforcementPercentage: defaultEnforcingFailurePercentage,
+					MinimumHosts: defaultFailurePercentageMinimumHosts,
+					RequestVolume: defaultFailurePercentageRequestVolume,
+				},
+				// is child policy reallllyyyyy required? why is it required?
+				ChildPolicy: &iserviceconfig.BalancerConfig{
+					Name: "xds_cluster_impl_experimental",
+					Config: &clusterimpl.LBConfig{
+						Cluster: "test_cluster",
+					},
+				},
+			},
+		},
+		{
+			name: "failure-percentage-ejection-present-partially-set",
+			input: `{
+				"failurePercentageEjection": {
+					"threshold": 80,
+					"minimumHosts": 10
+				},
+                "childPolicy": [
+				{
+					"xds_cluster_impl_experimental": {
+						"cluster": "test_cluster"
+					}
+				}
+				]
+			}`,
+			// Should get set fields + defaults for others in success rate ejection layer
+			wantCfg: &LBConfig{
+				Interval: defaultInterval,
+				BaseEjectionTime: defaultBaseEjectionTime,
+				MaxEjectionTime: defaultMaxEjectionTime,
+				MaxEjectionPercent: defaultMaxEjectionPercent,
+				FailurePercentageEjection: &FailurePercentageEjection{
+					Threshold: 80,
+					EnforcementPercentage: defaultEnforcingFailurePercentage,
+					MinimumHosts: 10,
+					RequestVolume: defaultFailurePercentageRequestVolume,
+				},
+				// is child policy reallllyyyyy required? why is it required?
+				ChildPolicy: &iserviceconfig.BalancerConfig{
+					Name: "xds_cluster_impl_experimental",
+					Config: &clusterimpl.LBConfig{
+						Cluster: "test_cluster",
+					},
+				},
+			},
+		},
+		{
+			name: "failure-percentage-ejection-present-fully-set",
+			input: `{
+				"failurePercentageEjection": {
+					"threshold": 80,
+					"enforcementPercentage": 100,
+					"minimumHosts": 10,
+					"requestVolume": 40					
+				},
+                "childPolicy": [
+				{
+					"xds_cluster_impl_experimental": {
+						"cluster": "test_cluster"
+					}
+				}
+				]
+			}`,
+			// Should only get fields that are set, no defaults, so set fields have to be different than defaults for assertion.
+			wantCfg: &LBConfig{
+				Interval: defaultInterval,
+				BaseEjectionTime: defaultBaseEjectionTime,
+				MaxEjectionTime: defaultMaxEjectionTime,
+				MaxEjectionPercent: defaultMaxEjectionPercent,
+				FailurePercentageEjection: &FailurePercentageEjection{
+					Threshold: 80,
+					EnforcementPercentage: 100,
+					MinimumHosts: 10,
+					RequestVolume: 40,
+				},
+				// is child policy reallllyyyyy required? why is it required?
+				ChildPolicy: &iserviceconfig.BalancerConfig{
+					Name: "xds_cluster_impl_experimental",
+					Config: &clusterimpl.LBConfig{
+						Cluster: "test_cluster",
+					},
+				},
+			},
+		},
+		{ // to make sure zero values aren't overwritten by defaults
+			name: "lb-config-every-field-set-zero-value",
+			// proto zeros to JSON zeros
+			input: `{
+				"interval": "0s",
+				"baseEjectionTime": "0s",
+				"maxEjectionTime": "0s",
+				"maxEjectionPercent": 0,
+				"successRateEjection": {
+					"stdevFactor": 0,
+					"enforcementPercentage": 0,
+					"minimumHosts": 0,
+					"requestVolume": 0
+				},
+				"failurePercentageEjection": {
+					"threshold": 0,
+					"enforcementPercentage": 0,
+					"minimumHosts": 0,
+					"requestVolume": 0
+				},
+                "childPolicy": [
+				{
+					"xds_cluster_impl_experimental": {
+						"cluster": "test_cluster"
+					}
+				}
+				]
+			}`/*json as below expect with 0 values*/, // I think JSON zero values are pretty self explanatory...
+			wantCfg: /*config with zero values set - which is same as not declaring*/&LBConfig{
+				// pointers are nil though and their there with zero values
+				SuccessRateEjection: &SuccessRateEjection{}, // or does this conflate with the issue
+				FailurePercentageEjection: &FailurePercentageEjection{},
+				ChildPolicy: &iserviceconfig.BalancerConfig{
+					Name: "xds_cluster_impl_experimental",
+					Config: &clusterimpl.LBConfig{
+						Cluster: "test_cluster",
+					},
+				},
+			},
+		},
+		{
+			name: "lb-config-every-field-set",
 			input: `{
 				"interval": "10s",
 				"baseEjectionTime": "30s",
@@ -242,27 +564,8 @@ func (s) TestParseConfig(t *testing.T) {
 			}`,
 			wantErr: "invalid loadBalancingConfig: no supported policies found",
 		},
-		{
-			name: "child-policy",
-			input: `{
-				"childPolicy": [
-				{
-					"xds_cluster_impl_experimental": {
-						"cluster": "test_cluster"
-					}
-				}
-			]
-			}`,
-			wantCfg: &LBConfig{
-				ChildPolicy: &iserviceconfig.BalancerConfig{
-					Name: "xds_cluster_impl_experimental",
-					Config: &clusterimpl.LBConfig{
-						Cluster: "test_cluster",
-					},
-				},
-			},
-		},
 	}
+	// It's just setting fields without defaults...so Unmarshal JSON isn't being called on the types...
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			gotCfg, gotErr := parser.ParseConfig(json.RawMessage(test.input))

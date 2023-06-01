@@ -306,13 +306,13 @@ func buildProviderFunc(configs map[string]*certprovider.BuildableConfig, instanc
 // which still has the nil vs. not nil branch
 
 // cause an error from UpdateCCS - also now a pointer gets sent downward.
-func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (*outlierdetection.LBConfig, error) { // Already validated - no need to return error
+func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (outlierdetection.LBConfig, error) { // Already validated - no need to return error
 	if od == nil {
 		// "In the cds LB policy, if the outlier_detection field is not set in
 		// the Cluster resource, a "no-op" outlier_detection config will be
 		// generated in the corresponding DiscoveryMechanism config, with all
 		// fields unset." - A50
-		return &outlierdetection.LBConfig{}, nil // Change this throughout codebase, search for it (Interval: 1<<63 - 1) and change it
+		return outlierdetection.LBConfig{}, nil // Change this throughout codebase, search for it (Interval: 1<<63 - 1) and change it
 	}
 
 	// "if the enforcing_success_rate field is set to 0, the config
@@ -336,13 +336,13 @@ func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (*outlierdete
 	// This shouldn't happen, validated in client?
 	// this call overwrites unset in the layered structure with defaults...the layered structure emitted from client
 	if err != nil {
-		return nil, err
+		return outlierdetection.LBConfig{}, err
 	}
 	odCfg, ok := cfg.(*outlierdetection.LBConfig) // we want a pointer since the interface zero value is a pointer...this is a struct so needs a pointer
 	if !ok {
 		// Shouldn't happen, Parser built at build time with Outlier Detection
 		// builder pulled from gRPC LB Registry.
-		return nil, fmt.Errorf("odParser returned config with unexpected type %T: %v", s.BalancerConfig, s.BalancerConfig)
+		return outlierdetection.LBConfig{}, fmt.Errorf("odParser returned config with unexpected type %T: %v", cfg, cfg)
 	}
 
 	// this branching logic all now gets handled in the client...
@@ -393,8 +393,11 @@ func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (*outlierdete
 		FailurePercentageEjection: fpe,
 	}*/
 
-	return odCfg, nil // still this in UpdateCCS? Now child type has to be this. Or the type hierarchy of how this gets passed down needs to be this.
+	// deref here, could be nil though...
+	return *odCfg, nil // still this in UpdateCCS? Now child type has to be this. Or the type hierarchy of how this gets passed down needs to be this.
 }
+
+// will I need UnmarshalJSON on the whole thing? no that's handled in ParseConfig
 
 // emit the proto inline
 
@@ -500,6 +503,8 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 
 			// make this on receiver type if need to persist config parser
 			var err error
+			// ParseConfig returns a pointer, either a.
+			// pass down pointer type or b. derference
 			if dms[i].OutlierDetection, err = b.outlierDetectionToConfig(cu.OutlierDetection); err != nil {
 				// returning an error from Update CCS is a behavior change. Do I want to add that? Will that break anything?
 			} // have this error if typecast fails or if ParseConfig() fails (shouldn't happen anyway) - add this to PR changes
