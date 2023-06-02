@@ -100,6 +100,9 @@ func (s) TestParseConfig(t *testing.T) {
 		defaultFailurePercentageMinimumHosts  = 5
 		defaultFailurePercentageRequestVolume = 50
 	)
+	// Have to change exclude child policy somehow
+	// from check, if not present it's fine return something without it
+	// if present, actually validate it, if it is present, validate by calling ParseConfig and pass that down...
 	tests := []struct {
 		name    string
 		input   string
@@ -515,28 +518,6 @@ func (s) TestParseConfig(t *testing.T) {
 				}
 			}`,
 			wantErr: "OutlierDetectionLoadBalancingConfig.FailurePercentageEjection.enforcement_percentage = 150; must be <= 100",
-		},
-		{
-			name: "child-policy-not-present",
-			input: `{
-				"interval": "10s",
-				"baseEjectionTime": "30s",
-				"maxEjectionTime": "300s",
-				"maxEjectionPercent": 10,
-				"successRateEjection": {
-					"stdevFactor": 1900,
-					"enforcementPercentage": 100,
-					"minimumHosts": 5,
-					"requestVolume": 100
-				},
-				"failurePercentageEjection": {
-					"threshold": 85,
-					"enforcementPercentage": 5,
-					"minimumHosts": 5,
-					"requestVolume": 50
-				}
-			}`,
-			wantErr: "OutlierDetectionLoadBalancingConfig.child_policy must be present",
 		},
 		{
 			name: "child-policy-present-but-parse-error",

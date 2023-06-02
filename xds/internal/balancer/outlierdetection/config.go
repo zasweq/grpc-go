@@ -59,16 +59,6 @@ type SuccessRateEjection struct {
 type successRateEjection SuccessRateEjection
 
 func (sre *SuccessRateEjection) UnmarshalJSON(j []byte) error {
-	// const ( // or set this top level - orrrr set inline
-	// Set defaults
-	// this will shadow
-	/*sreRet := &SuccessRateEjection{
-		// Default values as documented in A50.
-		StdevFactor: 1900,
-		EnforcementPercentage: 100,
-		MinimumHosts: 5,
-		RequestVolume: 50,
-	}*/
 	sre.StdevFactor = 1900
 	sre.EnforcementPercentage = 100
 	sre.MinimumHosts = 5
@@ -136,14 +126,6 @@ type FailurePercentageEjection struct {
 type failurePercentageEjection FailurePercentageEjection
 
 func (fpe *FailurePercentageEjection) UnmarshalJSON(j []byte) error {
-	/*fpeRet := &FailurePercentageEjection{
-		Threshold: 85,
-		EnforcementPercentage: 0,
-		MinimumHosts: 5,
-		RequestVolume: 50,
-	}*/
-	// if it's getting an empty JSON string, why is this working? It should keep
-	// the default values...
 	fpe.Threshold = 85
 	fpe.EnforcementPercentage = 0
 	fpe.MinimumHosts = 5

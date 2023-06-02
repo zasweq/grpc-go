@@ -611,6 +611,8 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 
 	// stick this thingy in it (the Knob)
 
+	// DECLARE DEFAULTS UP HERE
+
 	// For certain test cases:
 	/*od := &v3clusterpb.OutlierDetection{
 		// Don't even set top level fields, should still pickup defaults
@@ -788,23 +790,222 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) failed: %v", test.clusterWithOD, err)
 			}
 			// In order to Marshal into OD Config then assert the diff ParseConfig() needs to work correctly
-			var odCfgGot *outlierdetection.LBConfig
+			// var odCfgGot *outlierdetection.LBConfig
+			odCfgGot := outlierdetection.LBConfig{}
 			// This should emit valid JSON, and also with a certain structure. Unmarshal into od
 			// either do map and not also test defaults
 			// or od cfg want with defaults (I think this becuase tests layering flattening and also the ternary ness of each field)
 
 			// Oh wait this does have dependency on Outlier Detection through ParseConfig()...
 			// Could also unmarshal into declared maps
-			if err := json.Unmarshal(update.OutlierDetection, odCfgGot); err != nil {
-				t.Fatalf("failed to unmarshal JSON: %v", err)
+			if err := json.Unmarshal(update.OutlierDetection, &odCfgGot); err != nil {
+				t.Fatalf("Error unmarshalling update.OutlierDetection (%q): %v", update.OutlierDetection, err)
 			}
 			if diff := cmp.Diff(odCfgGot, test.odCfgWant); diff != "" {
 				t.Fatalf("update.OutlierDetection got unexpected output, diff (-got +want): %v", diff)
 			}
+
+			// Test above actually calls ParseConfig()...or unmarshal into map
+
+			// the want for this is all dependent on what steps you jump through
+			// to get eventual output.
+
+			// json utility in CDS test to produce input
 		})
 	}
 }
 // this layer already checks emissions/conversions
+
+// ^^^ Switch unit tests above to declare inline JSON and then unmarshal both into map to take away non determinism
+// arbitrary layers..how JSON is represented anyway...
+
+func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
+	odToClusterProto := func(od *v3clusterpb.OutlierDetection) *v3clusterpb.Cluster {
+		return &v3clusterpb.Cluster{
+			Name:                 clusterName,
+			ClusterDiscoveryType: &v3clusterpb.Cluster_Type{Type: v3clusterpb.Cluster_EDS},
+			EdsClusterConfig: &v3clusterpb.Cluster_EdsClusterConfig{
+				EdsConfig: &v3corepb.ConfigSource{
+					ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{
+						Ads: &v3corepb.AggregatedConfigSource{},
+					},
+				},
+			},
+			LbPolicy:         v3clusterpb.Cluster_ROUND_ROBIN,
+			OutlierDetection: od,
+		}
+	}
+	// Declare defaults here to use throughout tests too?
+
+	// declare inline JSON wants here or figure out a way to plumb JSON wants into test case
+
+	tests := []struct{
+		name string
+		// either a. od resource declared plumbed into a larger cluster resource
+		// or b. the full cluster resource, or could do something like defaultODHelper(od)
+		// odProto *v3clusterpb.OutlierDetection
+		clusterWithOD *v3clusterpb.Cluster
+		// can see ParseConfig tests to see what these JSON string should be
+		wantODCfg     string // then typecast to json.RawMessage later
+	}{
+		// Conver as written, including unset
+		// unset is good to test, will get defaults from ParseConfig() in cds balancer
+		{
+			name: "enforcing-success-rate-zero",
+			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
+				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0},
+				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
+			}),
+			// Nothing set
+			wantODCfg: `{}`,
+		},
+		{
+			name: "enforcing-success-rate-null",
+			// Nothing is set, should create sre and get defaults for everything
+			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{}),
+			// sre set to {} that's it
+			wantODCfg: `{"successRateEjection": {}}`,
+		}, // present but empty, there is a distinction that comes from pointers
+		{
+			name: "enforcing-failure-percentage-zero",
+			// if I set success rate percent explicitly to zero should focus on fpe
+			// Say both are set to 0 in title
+			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
+				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0}, // Thus doesn't create sre - to focus on fpe
+				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
+			}),
+			wantODCfg: `{}`,
+		},
+		{
+			name: "enforcing-failure-percentage-null",
+
+			// JSON not set as well
+		},
+		// All of these checks ^^^ are encapsulated vvv
+
+
+		{
+			name: "success-and-failure-null",
+			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{}),
+			wantODCfg: `{"successRateEjection": {}}`,
+		},
+		{
+			name: "success-and-failure-zero",
+			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
+				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0}, // Thus doesn't create sre - to focus on fpe
+				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
+			}),
+			wantODCfg: `{}`,
+		},
+		// no defaults as well tested here ^^^ vvv
+		{ // Should only set in JSON what is explicitly set here...
+			name: "some-fields-set",
+			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
+				Interval:                       &durationpb.Duration{Seconds: 1},
+				MaxEjectionTime:                &durationpb.Duration{Seconds: 3},
+				EnforcingSuccessRate:           &wrapperspb.UInt32Value{Value: 3},
+				SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},
+				EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 7},
+				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
+			}),
+			wantODCfg: `{
+				"interval": "1s",
+				"maxEjectionTime": "3s",
+				"successRateEjection": {
+					"enforcementPercentage": 3,
+					"requestVolume": 5
+				},
+				"failurePercentageEjection": {
+					"enforcementPercentage": 7,
+					"requestVolume": 9
+				}
+			}`,
+		},
+		{
+			name: "every-field-set-non-zero",
+			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
+				// all fields set (including ones that will be layered)
+				// should pick up that/those too and explicitly set it in the JSON generated.
+				Interval:                       &durationpb.Duration{Seconds: 1},
+				BaseEjectionTime:               &durationpb.Duration{Seconds: 2},
+				MaxEjectionTime:                &durationpb.Duration{Seconds: 3},
+				MaxEjectionPercent:             &wrapperspb.UInt32Value{Value: 1},
+				SuccessRateStdevFactor:         &wrapperspb.UInt32Value{Value: 2},
+				EnforcingSuccessRate:           &wrapperspb.UInt32Value{Value: 3},
+				SuccessRateMinimumHosts:        &wrapperspb.UInt32Value{Value: 4},
+				SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},
+				FailurePercentageThreshold:     &wrapperspb.UInt32Value{Value: 6},
+				EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 7},
+				FailurePercentageMinimumHosts:  &wrapperspb.UInt32Value{Value: 8},
+				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
+			}),
+			wantODCfg: `{
+				"interval": "1s",
+				"baseEjectionTime": "2s",
+				"maxEjectionTime": "3s",
+				"maxEjectionPercent": 1,
+				"successRateEjection": {
+					"stdevFactor": 2,
+					"enforcementPercentage": 3,
+					"minimumHosts": 4,
+					"requestVolume": 5
+				},
+				"failurePercentageEjection": {
+					"threshold": 6,
+					"enforcementPercentage": 7,
+					"minimumHosts": 8,
+					"requestVolume": 9
+				}
+			}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			update, err := xdsresource.ValidateClusterAndConstructClusterUpdateForTesting(test.clusterWithOD)
+			if err != nil {
+				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) failed: %v", test.clusterWithOD, err)
+			}
+			// got and want must be unmarshalled since JSON strings shouldn't
+			// generally be directly compared.
+			var got map[string]interface{}
+			if err := json.Unmarshal(update.OutlierDetection, &got); err != nil {
+
+			}
+			// why is this a slice rather than a map[string]interface{}
+			// I don't need slice here, just map[string]interface{}
+			var want map[string]interface{}
+			if err := json.Unmarshal(json.RawMessage(test.wantODCfg), &want); err != nil {
+				t.Fatalf("Error unmarshalling wantODCfg (%q): %v", test.wantODCfg, err)
+			}
+			if diff := cmp.Diff(got, want); diff != "" {
+				t.Fatalf("cluster.OutlierDetection got unexpected output, diff (-got, +want): %v", diff)
+			}
+		})
+	}
+
+}
+
+
+// So honestly just emit json with no child policy - nil or empty list are
+// equivalent and both logically allowed. I think empty list will trigger the
+// not omit empty and trigger parsing, so I think nothing is what we want to
+// emit here.
+
+// ParseConfig in CDS Balancer (no child policy - ParseConfig on OD needs to treat this as a valid config)
+
+// Send this OD config down inline as is now in discovery mechanism
+
+// OD Config + child policy in Cluster resolver
+// Marshal Into JSON
+// Parse again...
+
+// So in this layer, just emit nothing for the child, which Michael says falls within the scope of correctness anyway
+
+
+
+
+
 
 // Next layer is CDS layer...layer
 // test nil == no-op (noop should not have anything set not even max int that got changed)
@@ -815,3 +1016,17 @@ func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you nee
 // e2e test of it off, I think default behavior of it turned on when OD
 // is set but unspecified is a valid test case, that is the big correctness issue
 // that I'm fixing with this change that wasn't there previous.
+
+
+
+// WAIT BIG QUESTION WHAT TO DO WITH CHILD POLICY, if cds balancer calls with emission won't be there...
+// Where was thsi called before, I think child policy was present
+// do we really want to require child policy (if so add to emission from client)
+
+// BEFORE CONFIG ADDING CHILD, JUST IGNORE THE CHILD SO ACCEPT EMPTY CHILD IN PARSE CONFIG OR EVEN NIL
+// AND ADD IT LATER ONCE CONVERTED TO STRUCT AND ADD CHILD POLICY
+
+// at the very least we just need to know when to add it, technically anything is valid here...
+//
+
+// I have an EqualIgnoringChildPolicy helper
