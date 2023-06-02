@@ -508,29 +508,29 @@ func uint32p(i uint32) *uint32 {
 // do these need json annotations? I think, keep omit empty?
 // we're deleting exported structs anyway so no need for namespacing/name collisions
 type successRateEjection struct {
-	stdevFactor *uint32 `json:"stdevFactor,omitempty"`
-	enforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
-	minimumHosts *uint32 `json:"minimumHosts,omitempty"`
-	requestVolume *uint32 `json:"requestVolume,omitempty"`
+	StdevFactor *uint32 `json:"stdevFactor,omitempty"`
+	EnforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
+	MinimumHosts *uint32 `json:"minimumHosts,omitempty"`
+	RequestVolume *uint32 `json:"requestVolume,omitempty"`
 }
 
 type failurePercentageEjection struct {
-	threshold *uint32 `json:"threshold,omitempty"`
-	enforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
-	minimumHosts *uint32 `json:"minimumHosts,omitempty"`
-	requestVolume *uint32 `json:"requestVolume,omitempty"`
+	Threshold *uint32 `json:"threshold,omitempty"`
+	EnforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
+	MinimumHosts *uint32 `json:"minimumHosts,omitempty"`
+	RequestVolume *uint32 `json:"requestVolume,omitempty"`
 }
 
 // intermediate
 type odLBConfig struct {
 	// pointers? Need distinction between the two (set or not set to pick up defaults)
 	// I.e. need to set as json.Marshal(&s{X:&zero}), where it's a pointer to the zero value...
-	interval *iserviceconfig.Duration `json:"interval,omitempty"`
-	baseEjectionTime *iserviceconfig.Duration `json:"baseEjectionTime,omitempty"`
-	maxEjectionTime *iserviceconfig.Duration `json:"maxEjectionTime,omitempty"`
-	maxEjectionPercent *uint32 `json:"maxEjectionPercent,omitempty"`
-	successRateEjection *successRateEjection `json:"successRateEjection,omitempty"`
-	failurePercentageEjection *failurePercentageEjection `json:"failurePercentageEjection,omitempty"`
+	Interval *iserviceconfig.Duration `json:"interval,omitempty"`
+	BaseEjectionTime *iserviceconfig.Duration `json:"baseEjectionTime,omitempty"`
+	MaxEjectionTime *iserviceconfig.Duration `json:"maxEjectionTime,omitempty"`
+	MaxEjectionPercent *uint32 `json:"maxEjectionPercent,omitempty"`
+	SuccessRateEjection *successRateEjection `json:"successRateEjection,omitempty"`
+	FailurePercentageEjection *failurePercentageEjection `json:"failurePercentageEjection,omitempty"`
 }
 
 // outlierConfigFromCluster extracts the relevant outlier detection
@@ -572,9 +572,11 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	var interval *iserviceconfig.Duration
 	if i := od.GetInterval(); i != nil {
 		// yeah still want this
+		print("Checking interval validity")
 		if err := i.CheckValid(); err != nil { // what to do with this check? Move to ParseConfig or check here? Maybe here?
 			return nil, fmt.Errorf("outlier_detection.interval is invalid with error: %v", err)
 		}
+		print("Setting interval")
 		if interval = idurationp(i.AsDuration()); *interval < 0 {
 			return nil, fmt.Errorf("outlier_detection.interval = %v; must be a valid duration and >= 0", *interval) // or does this log pointer automatically?
 		}
@@ -689,10 +691,10 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	var sre *successRateEjection
 	if enforcingSuccessRate == nil || *enforcingSuccessRate != 0 {
 		sre = &successRateEjection{
-			stdevFactor: successRateStdevFactor, // does nil equal empty here? I thinkkk so zero value
-			enforcementPercentage: enforcingSuccessRate, // this will still be nil...communicate that throguh the hiearchy, nil causes this to be created, nil gets put on, nil gets marshaled into JSON, OD overwrites that not present field with new stuff
-			minimumHosts: successRateMinimumHosts,
-			requestVolume: successRateRequestVolume,
+			StdevFactor: successRateStdevFactor, // does nil equal empty here? I thinkkk so zero value
+			EnforcementPercentage: enforcingSuccessRate, // this will still be nil...communicate that throguh the hiearchy, nil causes this to be created, nil gets put on, nil gets marshaled into JSON, OD overwrites that not present field with new stuff
+			MinimumHosts: successRateMinimumHosts,
+			RequestVolume: successRateRequestVolume,
 		}
 	}
 
@@ -708,20 +710,20 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	var fpe *failurePercentageEjection
 	if enforcingFailurePercentage != nil && *enforcingFailurePercentage != 0 {
 		fpe = &failurePercentageEjection{
-			threshold: failurePercentageThreshold,
-			enforcementPercentage: enforcingFailurePercentage,
-			minimumHosts: failurePercentageMinimumHosts,
-			requestVolume: failurePercentageRequestVolume,
+			Threshold: failurePercentageThreshold,
+			EnforcementPercentage: enforcingFailurePercentage,
+			MinimumHosts: failurePercentageMinimumHosts,
+			RequestVolume: failurePercentageRequestVolume,
 		}
 	}
 
 	odLBCfg := &odLBConfig{
-		interval: interval,
-		baseEjectionTime: baseEjectionTime,
-		maxEjectionTime: maxEjectionTime,
-		maxEjectionPercent: maxEjectionPercent,
-		successRateEjection: sre,
-		failurePercentageEjection: fpe,
+		Interval: interval,
+		BaseEjectionTime: baseEjectionTime,
+		MaxEjectionTime: maxEjectionTime,
+		MaxEjectionPercent: maxEjectionPercent,
+		SuccessRateEjection: sre,
+		FailurePercentageEjection: fpe,
 	}
 	// in cds if json is nil no-op if not nil...take the JSON, marshal in
 	// ParseConfig into balancer (presence or not determines overwriting

@@ -21,9 +21,6 @@ package tests_test
 
 import (
 	"encoding/json"
-	"testing"
-	"time"
-
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	_ "google.golang.org/grpc/balancer/roundrobin" // To register round_robin load balancer.
@@ -34,12 +31,12 @@ import (
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/serviceconfig"
 	_ "google.golang.org/grpc/xds" // Register the xDS LB Registry Converters.
-	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+	"testing"
 
 	v3xdsxdstypepb "github.com/cncf/xds/go/xds/type/v3"
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -606,214 +603,6 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 	}
 }
 
-func (s) TestOutlierDetectionUnmarshaling(t *testing.T) { // this is all you need right, cds balancer just ParseConfig with emitted JSON, this gets all the logic
-	// default CDS proto (the minimum you need to have it pass unmarshaling)
-
-	// stick this thingy in it (the Knob)
-
-	// DECLARE DEFAULTS UP HERE
-
-	// For certain test cases:
-	/*od := &v3clusterpb.OutlierDetection{
-		// Don't even set top level fields, should still pickup defaults
-	}
-
-	// For last test case:
-	// Set every single field, and make sure it 1:1 maps with new field
-	od2 := &v3clusterpb.OutlierDetection{
-		// interval 10 * time.Second in proto field here
-
-		// BaseEjectionTime 30 * time.Second in proto field here (I'm sure I defined this somewhere in a test)
-	}*/
-
-	odToClusterProto := func(od *v3clusterpb.OutlierDetection) *v3clusterpb.Cluster {
-		return &v3clusterpb.Cluster{
-			Name:                 clusterName,
-			ClusterDiscoveryType: &v3clusterpb.Cluster_Type{Type: v3clusterpb.Cluster_EDS},
-			EdsClusterConfig: &v3clusterpb.Cluster_EdsClusterConfig{
-				EdsConfig: &v3corepb.ConfigSource{
-					ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{
-						Ads: &v3corepb.AggregatedConfigSource{},
-					},
-				},
-			},
-			LbPolicy:         v3clusterpb.Cluster_ROUND_ROBIN,
-			OutlierDetection: od,
-		}
-	}
-
-	// I don't think you need this. The only thing you need is to read the JSON emitted
-	// and unmarshal it into an OD config and see if it matches.
-	/*odToClusterUpdate := func(od json.RawMessage) xdsresource.ClusterUpdate {
-		return xdsresource.ClusterUpdate{
-			ClusterName:      clusterName,
-			LRSServerConfig:  xdsresource.ClusterLRSOff,
-			OutlierDetection: od,
-		}
-	}*/
-
-	tests := []struct{
-		name string
-		// either a. od resource declared plumbed into a larger cluster resource
-		// or b. the full cluster resource, or could do something like defaultODHelper(od)
-		// odProto *v3clusterpb.OutlierDetection
-		clusterWithOD *v3clusterpb.Cluster
-		odCfgWant outlierdetection.LBConfig // read the field in the cluster update and unmarshal into this
-	}{
-
-		// nil emissions get checked in other cds tests right?
-		/*{ // will trigger a no-op OD config to be produced in the CDS balancer
-			name: "od-cfg-null",
-			clusterWithOD: odToClusterProto(nil),
-			// will this assertion work as intended? marshalling into odCfgWant?
-			// but can't technically unmarshal this into nil...because this is json.Unarmshal(nil) after the step
-			odCfgWant: nil, // or what does it unmarshal to, not a no-op, can I even test it?
-		},*/
-		// Now takes the logic from CDS test
-
-		{
-			name: "enforcing-success-rate-zero",
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
-				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0},
-				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
-			}),
-			odCfgWant: outlierdetection.LBConfig{
-				Interval:           iserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent: 10,
-				// ^^^ Should be defaults...
-				SuccessRateEjection: nil, // no I want this to be unset
-				FailurePercentageEjection: nil,
-			},
-		},
-		// Default behavior of xDS - Outlier Detection Success Rate Ejection
-		// turned on by default.
-		{
-			name: "enforcing-success-rate-null",
-			// Nothing is set, should create sre and get defaults for everything
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{}),
-			// parse into this? ParseConfig on balancer type?
-			odCfgWant: outlierdetection.LBConfig{
-				Interval:            iserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:    iserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:     iserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent:  10,
-				// SuccessRateEjection will be configured if
-				// EnforcingSuccessRate is nil, EnforcementPercentage will thus
-				// pick up default enforcement percentage thus turning Outlier
-				// Detection on by default in the xDS Flow.
-				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
-					StdevFactor: 1900,
-					EnforcementPercentage: 100,
-					MinimumHosts: 5,
-					RequestVolume: 100,
-				}/*Corresponding Success rate ejection - wait if after ParseConfig this will get 100 value yup after*/,
-			},
-		},
-		{
-			name: "enforcing-failure-percentage-zero",
-			// if I set success rate percent explicitly to zero should focus on fpe
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
-				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0}, // Thus doesn't create sre
-				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
-			}),
-			// defaults otherwise, could even make those fixed...
-			odCfgWant: outlierdetection.LBConfig{
-				Interval:           iserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent: 10,
-				FailurePercentageEjection: nil,
-			},
-		},
-		{
-			name: "enforcing-failure-percentage-null", // thus is kinda checked above
-			// od set here (I think xDS protos with all their knobs/options) (need to plumb through helpers to xDS resources
-			// if I set success rate percent explicitly to zero should focus on sre
-
-			odCfgWant: outlierdetection.LBConfig{
-				Interval:           iserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent: 10,
-				FailurePercentageEjection: nil,
-			},
-		},
-		{
-			name: "normal-conversion-both-ejection-set-non-zero",
-			// set all fields to non defaults, shpuld use those.
-			// If I unmarshal JSON using ParseConfig doesn't that test ParseConfig on the OD balancer too?
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
-				// all fields set (including ones that will be layered) to non default
-				// should pick up that/those too.
-				Interval:                       &durationpb.Duration{Seconds: 1},
-				BaseEjectionTime:               &durationpb.Duration{Seconds: 2},
-				MaxEjectionTime:                &durationpb.Duration{Seconds: 3},
-				MaxEjectionPercent:             &wrapperspb.UInt32Value{Value: 1},
-				SuccessRateStdevFactor:         &wrapperspb.UInt32Value{Value: 2},
-				EnforcingSuccessRate:           &wrapperspb.UInt32Value{Value: 3},
-				SuccessRateMinimumHosts:        &wrapperspb.UInt32Value{Value: 4},
-				SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},
-				FailurePercentageThreshold:     &wrapperspb.UInt32Value{Value: 6},
-				EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 7},
-				FailurePercentageMinimumHosts:  &wrapperspb.UInt32Value{Value: 8},
-				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
-			}),
-			odCfgWant: outlierdetection.LBConfig{
-				Interval:            iserviceconfig.Duration(time.Second),
-				BaseEjectionTime:    iserviceconfig.Duration(2 * time.Second),
-				MaxEjectionTime:     iserviceconfig.Duration(3 * time.Second),
-				MaxEjectionPercent:  1,
-				// SuccessRateEjection will be configred if EnforcingSuccessRate
-				// is nil, EnforcementPercentage will thus pick up default.
-				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
-					StdevFactor: 2,
-					EnforcementPercentage: 3,
-					MinimumHosts: 4,
-					RequestVolume: 5,
-				}/*Corresponding Success rate ejection - wait if after ParseConfig this will get 100 value yup after*/,
-				FailurePercentageEjection: &outlierdetection.FailurePercentageEjection{
-					Threshold:             6,
-					EnforcementPercentage: 7,
-					MinimumHosts:          8,
-					RequestVolume:         9,
-				},
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			update, err := xdsresource.ValidateClusterAndConstructClusterUpdateForTesting(test.clusterWithOD)
-			if err != nil {
-				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) failed: %v", test.clusterWithOD, err)
-			}
-			// In order to Marshal into OD Config then assert the diff ParseConfig() needs to work correctly
-			// var odCfgGot *outlierdetection.LBConfig
-			odCfgGot := outlierdetection.LBConfig{}
-			// This should emit valid JSON, and also with a certain structure. Unmarshal into od
-			// either do map and not also test defaults
-			// or od cfg want with defaults (I think this becuase tests layering flattening and also the ternary ness of each field)
-
-			// Oh wait this does have dependency on Outlier Detection through ParseConfig()...
-			// Could also unmarshal into declared maps
-			if err := json.Unmarshal(update.OutlierDetection, &odCfgGot); err != nil {
-				t.Fatalf("Error unmarshalling update.OutlierDetection (%q): %v", update.OutlierDetection, err)
-			}
-			if diff := cmp.Diff(odCfgGot, test.odCfgWant); diff != "" {
-				t.Fatalf("update.OutlierDetection got unexpected output, diff (-got +want): %v", diff)
-			}
-
-			// Test above actually calls ParseConfig()...or unmarshal into map
-
-			// the want for this is all dependent on what steps you jump through
-			// to get eventual output.
-
-			// json utility in CDS test to produce input
-		})
-	}
-}
 // this layer already checks emissions/conversions
 
 // ^^^ Switch unit tests above to declare inline JSON and then unmarshal both into map to take away non determinism
@@ -850,7 +639,7 @@ func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
 	}{
 		// Conver as written, including unset
 		// unset is good to test, will get defaults from ParseConfig() in cds balancer
-		{
+		/*{
 			name: "enforcing-success-rate-zero",
 			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
 				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0},
@@ -880,7 +669,7 @@ func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
 			name: "enforcing-failure-percentage-null",
 
 			// JSON not set as well
-		},
+		},*/
 		// All of these checks ^^^ are encapsulated vvv
 
 
@@ -970,7 +759,7 @@ func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
 			// generally be directly compared.
 			var got map[string]interface{}
 			if err := json.Unmarshal(update.OutlierDetection, &got); err != nil {
-
+				t.Fatalf("Error unmarshalling update.OutlierDetection (%q): %v", update.OutlierDetection, err)
 			}
 			// why is this a slice rather than a map[string]interface{}
 			// I don't need slice here, just map[string]interface{}
