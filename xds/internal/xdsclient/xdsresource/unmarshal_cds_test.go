@@ -1405,6 +1405,9 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{}),
 			wantUpdate: odToClusterUpdate(&OutlierDetection{}),
 		},
+
+		// switch this red stuff to the json - since it doesn't use exported od type can
+		// actually can just put it here instead
 		{
 			name: "successful-case-all-fields-configured-and-valid",
 			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{
@@ -1460,6 +1463,7 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 				FailurePercentageRequestVolume: uint32p(9),
 			}),
 		},
+		// These validations stay the same...
 		{
 			name:    "interval-is-negative",
 			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{Interval: &durationpb.Duration{Seconds: -10}}),
@@ -1510,6 +1514,10 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 150}}),
 			wantErr: true,
 		},
+		// because we want NACKs
+
+
+
 		// A Outlier Detection proto not present should lead to a nil
 		// OutlierDetection field in the ClusterUpdate, which is implicitly
 		// tested in every other test in this file.

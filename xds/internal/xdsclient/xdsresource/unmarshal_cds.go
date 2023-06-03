@@ -505,8 +505,6 @@ func uint32p(i uint32) *uint32 {
 	return &i
 }
 
-// do these need json annotations? I think, keep omit empty?
-// we're deleting exported structs anyway so no need for namespacing/name collisions
 type successRateEjection struct {
 	StdevFactor *uint32 `json:"stdevFactor,omitempty"`
 	EnforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
@@ -521,7 +519,6 @@ type failurePercentageEjection struct {
 	RequestVolume *uint32 `json:"requestVolume,omitempty"`
 }
 
-// intermediate
 type odLBConfig struct {
 	// pointers? Need distinction between the two (set or not set to pick up defaults)
 	// I.e. need to set as json.Marshal(&s{X:&zero}), where it's a pointer to the zero value...
@@ -541,8 +538,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	if od == nil { // causes the zero value to be produced? I think this is the correct behavior - create zero value config, yup, I can see it in cds
 		return nil, nil
 	}
-
-	// this scope needs to change to just account for default:
 
 	// this line:
 	/*
@@ -674,15 +669,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 		failurePercentageRequestVolume = uint32p(fprv.GetValue())
 	}
 
-	// to prepare JSON and create a distinction between nil (don't set) and 0
-	// (set the JSON field to 0)
-	// prepared JSON - presence is what determines default or not so need an intermediate to convey this presence
-	// intermediary struct JSON with presence or not
-	// Thus, to take proto with not set vs. set(zero and non zero)...and also create a layered structure,
-	// and take that layered structure -> JSON, need an intermediary here. How does custom lb do it? Oh registry with no dependencies
-
-	// thus even the second layer can be set or not set
-
 	// use successrateenforcement percentage to prepare this layered intermediate config
 	// "if the enforcing_success_rate field is set to 0, the config
 	// success_rate_ejection field will be null and all success_rate_* fields
@@ -697,11 +683,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 			RequestVolume: successRateRequestVolume,
 		}
 	}
-
-	// json.Marshal(&s{}) -> '{}' if this is == nil, then
-	// we're fine, if not just set the field based off nil
-	// if !nil
-	//     set field
 
 	// "If the enforcing_failure_percent field is set to 0 or null, the config
 	// failure_percent_ejection field will be null and all failure_percent_*
@@ -723,34 +704,22 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 		MaxEjectionTime: maxEjectionTime,
 		MaxEjectionPercent: maxEjectionPercent,
 		SuccessRateEjection: sre,
-		FailurePercentageEjection: fpe,
+		FailurePercentageEjection: fpe, // tests this breaks tests if present?
 	}
 	// in cds if json is nil no-op if not nil...take the JSON, marshal in
 	// ParseConfig into balancer (presence or not determines overwriting
 	// defaults), not set enforcing percentage will create first layer than get
 	// overwritten with 100
-
-
-
-	// ParseConfig (called in cds from this emitted JSON)
-	// defaults override nil only
-	// 0 stays 0 if set (all set values keep their set values)
-
+	
 	// so pass nil || set here vvv (no this gets communicated from the first
 	// check in this function - pass it nil, returns nil, communicates that to
 	// CDS Balancer)
 
 	// json marshal error to trigger nack? is that the correct behavior? I think json preperation in registry
 	// also causes NACK.
-	// I think this is all you need except also struct tags and omit empty of course
 	odLBCfgJSON, err := json.Marshal(odLBCfg)
 	if err != nil { // NACK just like xDS LB policy registry if it errors preparing JSON
 		return nil, err
 	}
-	// switch to JSON - now this also needs an OD config to verify
-	// json.Unmarshal into OD Config...just for this layer
-	// wait this also accounts for the not set vs. set and 0 and changes the
-	// structure so you can check that language logic of the second layer messages
-
 	return odLBCfgJSON, nil
 }

@@ -423,6 +423,8 @@ func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (outlierdetec
 
 // only update fields that is fine when it's parsing
 
+// Now this gets passed JSON, so need utilities to pass JSON for unit tests, as that is what this is doing...
+
 // handleWatchUpdate handles a watch update from the xDS Client. Good updates
 // lead to clientConn updates being invoked on the underlying cluster_resolver balancer.
 func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
@@ -511,6 +513,15 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		}
 	}
 
+
+
+
+
+	// Switch this codeblock to prepare JSON, and then call Parse Config
+	// discovery mechanism struct and also xds lb policy raw JSON
+	// pass both down
+	// raw JSON here - the OD config Marshaled?
+
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: dms,
 	}
@@ -526,6 +537,39 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		return
 	}
 	lbCfg.XDSLBPolicy = bc
+
+	// json marshal struct to fill out cluster resolver config, then marshal that and parse config
+	// but now can fill it out jere
+
+	// Switch the config above to have exported json type for easy population
+	// clusterresolver.LBConfig{
+	//			ODCfg json.RawMessage    json annotation
+	//          etc.
+	// }
+
+	// technically, this odcfg is part of the discovery mechanisms so will need to change some tests there
+
+	// fill out exported struct (including discovery mechanisms)
+
+	// marshal that exported struct into JSON
+	// if I fill out just the raw JSON in the exported struct will this flow work correctly?
+
+	// wt.ParseConfig on that JSON
+	// so this balancer needs to hold onto a weighted target parser, already looks at exported so already coupled
+	// I think needs to come at build time
+
+
+
+
+
+	// Within child type ParseConfig - parses so looks into registry there just like
+	// UnmarshalJSON on the iserviceconfig.BalancerConfig skips if not found
+
+	// persists internal od object to use later
+
+
+
+
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),
 		BalancerConfig: lbCfg,

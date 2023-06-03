@@ -99,11 +99,52 @@ func (bb) Name() string {
 	return Name
 }
 
+func (bb) ParseConfig2(j json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
+	var cfg *LBConfig // no defaults I think
+	// This might need to be
+	// cfg := &LBConfig to prevent nil
+
+
+	// Keep the valid json requirement, def an important part of validation
+	if err := json.Unmarshal(j, &cfg); err != nil {
+		// invalidate
+		return nil, fmt.Errorf("unable to unmarshal balancer config %s into cluster-resolver config, error: %v", string(j), err)
+	}
+	// scope: take the JSON representation of OD and convert through Od parse config, do return just a struct you remarshal
+
+	// the ODCfg in the JSON passed in maps to Outlier Detection 1:1
+
+	// In regular unmarshal flow, it call UnmarshalJSON on the config type
+	// I think I want to stop it and take the json raw message
+	// and call OD with that
+	// Like iserviceconfig.BalancerConfig have an intermediate representation
+	// Also, need to call into the balancer regitsry here, is there a way to persisst this though
+
+
+
+
+
+	// Calls ParseConfig through iserviceconfig.BalancerConfig unmarshal JSON...
+
+
+	// child policy isn't required, but do validate (do I need to validate the validity of child config as well?
+	// This is what I added to
+
+}
+
+// Same unit test except delete not ring hash assertion
+// and also add tests for Parse Config
+
+// Also need a json util to prepare json strings passed in from client in unit tests, or declare those inline
+
 func (bb) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	var cfg LBConfig
 	if err := json.Unmarshal(c, &cfg); err != nil {
 		return nil, fmt.Errorf("unable to unmarshal balancer config %s into cluster-resolver config, error: %v", string(c), err)
 	}
+	// If you pass this JSON,
+
+	// This assertion is wrong now...
 	if lbp := cfg.XDSLBPolicy; lbp != nil && !strings.EqualFold(lbp.Name, roundrobin.Name) && !strings.EqualFold(lbp.Name, ringhash.Name) {
 		return nil, fmt.Errorf("unsupported child policy with name %q, not one of {%q,%q}", lbp.Name, roundrobin.Name, ringhash.Name)
 	}

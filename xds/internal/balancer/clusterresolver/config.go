@@ -102,8 +102,14 @@ type DiscoveryMechanism struct {
 	DNSHostname string `json:"dnsHostname,omitempty"`
 	// OutlierDetection is the Outlier Detection LB configuration for this
 	// priority.
-	OutlierDetection outlierdetection.LBConfig `json:"outlierDetection,omitempty"`
-}
+	OutlierDetection json.RawMessage `json:"outlierDetection,omitempty"`
+	// after unmarshaling ^^^ from the lb config
+
+
+	// How to ignore this in JSON parsing - leave as written?
+	// convert to vvv in the ParseConfig (also validates)
+	outlierDetection outlierdetection.LBConfig // and now use this thing where previously the exported filled out field was used
+} // holy fuck this will break so many tests
 
 // Equal returns whether the DiscoveryMechanism is the same with the parameter.
 func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
@@ -118,6 +124,8 @@ func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
 		return false
 	case dm.DNSHostname != b.DNSHostname:
 		return false
+	// Only if this is called after ParseConfig() has been called can this be expected...idek what fucking test this is used
+	// all other reads can change
 	case !dm.OutlierDetection.EqualIgnoringChildPolicy(&b.OutlierDetection):
 		return false
 	}
@@ -164,3 +172,7 @@ type LBConfig struct {
 	// is responsible for both locality picking and endpoint picking.
 	XDSLBPolicy *internalserviceconfig.BalancerConfig `json:"xdsLbPolicy,omitempty"`
 }
+
+// conversion from JSON to OD config happens in ParseConfig returns that
+// pass to cluster resolver, persists, once it gets enoguh information
+// marshals into JSON and calls Parse Config again

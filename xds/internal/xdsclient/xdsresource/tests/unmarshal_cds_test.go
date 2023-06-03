@@ -21,6 +21,8 @@ package tests_test
 
 import (
 	"encoding/json"
+	"testing"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	_ "google.golang.org/grpc/balancer/roundrobin" // To register round_robin load balancer.
@@ -36,7 +38,6 @@ import (
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
-	"testing"
 
 	v3xdsxdstypepb "github.com/cncf/xds/go/xds/type/v3"
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -603,11 +604,7 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 	}
 }
 
-// this layer already checks emissions/conversions
-
-// ^^^ Switch unit tests above to declare inline JSON and then unmarshal both into map to take away non determinism
-// arbitrary layers..how JSON is represented anyway...
-
+// Test....tests the Outlier Detection JSON emitted from the xDS Client
 func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
 	odToClusterProto := func(od *v3clusterpb.OutlierDetection) *v3clusterpb.Cluster {
 		return &v3clusterpb.Cluster{
@@ -637,42 +634,6 @@ func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
 		// can see ParseConfig tests to see what these JSON string should be
 		wantODCfg     string // then typecast to json.RawMessage later
 	}{
-		// Conver as written, including unset
-		// unset is good to test, will get defaults from ParseConfig() in cds balancer
-		/*{
-			name: "enforcing-success-rate-zero",
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
-				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0},
-				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
-			}),
-			// Nothing set
-			wantODCfg: `{}`,
-		},
-		{
-			name: "enforcing-success-rate-null",
-			// Nothing is set, should create sre and get defaults for everything
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{}),
-			// sre set to {} that's it
-			wantODCfg: `{"successRateEjection": {}}`,
-		}, // present but empty, there is a distinction that comes from pointers
-		{
-			name: "enforcing-failure-percentage-zero",
-			// if I set success rate percent explicitly to zero should focus on fpe
-			// Say both are set to 0 in title
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
-				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0}, // Thus doesn't create sre - to focus on fpe
-				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
-			}),
-			wantODCfg: `{}`,
-		},
-		{
-			name: "enforcing-failure-percentage-null",
-
-			// JSON not set as well
-		},*/
-		// All of these checks ^^^ are encapsulated vvv
-
-
 		{
 			name: "success-and-failure-null",
 			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{}),
@@ -761,8 +722,6 @@ func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
 			if err := json.Unmarshal(update.OutlierDetection, &got); err != nil {
 				t.Fatalf("Error unmarshalling update.OutlierDetection (%q): %v", update.OutlierDetection, err)
 			}
-			// why is this a slice rather than a map[string]interface{}
-			// I don't need slice here, just map[string]interface{}
 			var want map[string]interface{}
 			if err := json.Unmarshal(json.RawMessage(test.wantODCfg), &want); err != nil {
 				t.Fatalf("Error unmarshalling wantODCfg (%q): %v", test.wantODCfg, err)

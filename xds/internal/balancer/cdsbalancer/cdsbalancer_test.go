@@ -420,9 +420,35 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 				Name:   ringhash.Name,
 				Config: &ringhash.LBConfig{MinRingSize: 10, MaxRingSize: 100},
 			}, noopODLBCfg),
-		}, // nil od emission = no-op lb config sent downward
+		}, // nil od emission = no-op lb config sent downward, so implicitly tested that it converts there
 		{
-			name: "happy-case-outlier-detection",
+			name: "happy-case-outlier-detection-xds-defaults",
+			// i.e . od set but no proto fields
+			cdsUpdate: xdsresource.ClusterUpdate{
+				ClusterName: serviceName,
+				OutlierDetection: json.RawMessage(`{
+				"successRateEjection": {}
+			}`),
+			},
+			// all defaults including sre defaults.
+
+			// vvv these should all be defaults...
+
+			wantCCS: edsCCS(serviceName, nil, false, wrrLocalityLBConfig, outlierdetection.LBConfig{
+				Interval:           internalserviceconfig.Duration(10 * time.Second),
+				BaseEjectionTime:   internalserviceconfig.Duration(30 * time.Second),
+				MaxEjectionTime:    internalserviceconfig.Duration(300 * time.Second),
+				MaxEjectionPercent: 10,
+				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
+					StdevFactor:           1900,
+					EnforcementPercentage: 100,
+					MinimumHosts:          5,
+					RequestVolume:         100,
+				},
+			}),
+		},
+		{
+			name: "happy-case-outlier-detection-all-fields-set",
 			cdsUpdate: xdsresource.ClusterUpdate{
 				ClusterName: serviceName,
 				// JSON marshal up top (either through xDS Client or a just string somewhere)
@@ -434,7 +460,28 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 				// to call json.Marshal on and marshal into
 				// JSON for this utility function
 
-				OutlierDetection: &xdsresource.OutlierDetection{
+				// this gets marshaled into JSON then sent to cluster resolver and back
+				// I think we're fine here then...nondeterminism gets taken away
+				OutlierDetection: json.RawMessage(`{
+				"interval": "10s",
+				"baseEjectionTime": "30s",
+				"maxEjectionTime": "300s",
+				"maxEjectionPercent": 10,
+				"successRateEjection": {
+					"stdevFactor": 1900,
+					"enforcementPercentage": 100,
+					"minimumHosts": 5,
+					"requestVolume": 100
+				},
+				"failurePercentageEjection": {
+					"threshold": 85,
+					"enforcementPercentage": 5,
+					"minimumHosts": 5,
+					"requestVolume": 50
+				}
+			}`),
+
+					/*&xdsresource.OutlierDetection{
 					Interval:                       10 * time.Second,
 					BaseEjectionTime:               30 * time.Second,
 					MaxEjectionTime:                300 * time.Second,
@@ -447,7 +494,7 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 					EnforcingFailurePercentage:     5,
 					FailurePercentageMinimumHosts:  5,
 					FailurePercentageRequestVolume: 50,
-				},
+				},*/
 				LBPolicy: wrrLocalityLBConfigJSON,
 			}, // I still think this is a valid test
 			wantCCS: edsCCS(serviceName, nil, false, wrrLocalityLBConfig, outlierdetection.LBConfig{
@@ -1092,6 +1139,15 @@ func (s) TestOutlierDetectionToConfig(t *testing.T) {
 		})
 	}
 }
+// This functionality gets moved to client I think just delete this test
+
+// json comes in
+// if nil cds makes noop, otherwise pass through
+// ParseConfig
+// Then assert what gets sent down
+
+
+
 
 // Componenets affected: (get these tests working)
 // xDS Client
