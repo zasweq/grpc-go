@@ -33,7 +33,6 @@ import (
 	"google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/pretty"
-	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 	"google.golang.org/grpc/xds/internal/balancer/clusterresolver"
@@ -75,15 +74,17 @@ type bb struct{}
 
 // Build creates a new CDS balancer with the ClientConn.
 func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
-	builder := balancer.Get(outlierdetection.Name)
+	builder := balancer.Get(clusterresolver.Name)
 	if builder == nil {
 		// Shouldn't happen, registered through imported Outlier Detection,
 		// defensive programming.
+		logger.Errorf("%q LB policy is needed but not registered", clusterresolver.Name)
 		return nil
 	}
-	odParser, ok := builder.(balancer.ConfigParser)
+	crParser, ok := builder.(balancer.ConfigParser)
 	if !ok {
 		// Shouldn't happen, imported Outlier Detection builder has this method.
+		logger.Errorf("%q LB policy does not implement a config parser", clusterresolver.Name)
 		return nil
 	}
 	b := &cdsBalancer{
@@ -91,7 +92,7 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 		updateCh: buffer.NewUnbounded(),
 		closed:   grpcsync.NewEvent(),
 		done:     grpcsync.NewEvent(),
-		odParser: odParser,
+		crParser: crParser,
 		xdsHI:    xdsinternal.NewHandshakeInfo(nil, nil),
 	}
 	b.logger = prefixLogger((b))
@@ -172,7 +173,7 @@ type cdsBalancer struct {
 	logger         *grpclog.PrefixLogger
 	closed         *grpcsync.Event
 	done           *grpcsync.Event
-	odParser       balancer.ConfigParser
+	crParser       balancer.ConfigParser
 
 	// The certificate providers are cached here to that they can be closed when
 	// a new provider is to be created.
@@ -306,7 +307,14 @@ func buildProviderFunc(configs map[string]*certprovider.BuildableConfig, instanc
 // which still has the nil vs. not nil branch
 
 // cause an error from UpdateCCS - also now a pointer gets sent downward.
-func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (outlierdetection.LBConfig, error) { // Already validated - no need to return error
+
+// don't need this anymore although might need comments
+func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (json.RawMessage, error) { // Already validated - no need to return error
+	// now just pass json down to clusterresolver
+
+	// so the branch becomes if od == nil
+	//     return `{}` (they were saying something about not building this directly)
+
 	if od == nil {
 		// "In the cds LB policy, if the outlier_detection field is not set in
 		// the Cluster resource, a "no-op" outlier_detection config will be
@@ -314,6 +322,7 @@ func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (outlierdetec
 		// fields unset." - A50
 		return outlierdetection.LBConfig{}, nil // Change this throughout codebase, search for it (Interval: 1<<63 - 1) and change it
 	}
+	return od // does this copy,
 
 	// "if the enforcing_success_rate field is set to 0, the config
 	// success_rate_ejection field will be null and all success_rate_* fields
@@ -332,18 +341,24 @@ func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (outlierdetec
 
 	// this od parser needs to persist over time - I think create this at balancer build time. and call it here.
 	// cause build to fail if not registered?
-	cfg, err := b.odParser.ParseConfig(od)
+	cfg, err := b.crParser.ParseConfig(od)
 	// This shouldn't happen, validated in client?
 	// this call overwrites unset in the layered structure with defaults...the layered structure emitted from client
 	if err != nil {
 		return outlierdetection.LBConfig{}, err
 	}
+
+
+
+	// Move this codeblock below to clusteresolver.go
 	odCfg, ok := cfg.(*outlierdetection.LBConfig) // we want a pointer since the interface zero value is a pointer...this is a struct so needs a pointer
 	if !ok {
 		// Shouldn't happen, Parser built at build time with Outlier Detection
 		// builder pulled from gRPC LB Registry.
 		return outlierdetection.LBConfig{}, fmt.Errorf("odParser returned config with unexpected type %T: %v", cfg, cfg)
 	}
+
+
 
 	// this branching logic all now gets handled in the client...
 	//
@@ -504,12 +519,30 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			// thus, I think you need to typecast and and convert
 
 			// make this on receiver type if need to persist config parser
-			var err error
+
+			// make implementation changes and think deeply about them before unit test changes
+
+			odJSON := cu.OutlierDetection
+			// "In the cds LB policy, if the outlier_detection field is not set in
+			// the Cluster resource, a "no-op" outlier_detection config will be
+			// generated in the corresponding DiscoveryMechanism config, with all
+			// fields unset." - A50
+			if odJSON == nil {
+				// json marshal into it right - I think we can skip though lol
+				odJSON = json.RawMessage(`{}`)
+			}
+			dms[i].OutlierDetection = odJSON
+
+			// I think pointing to same cu memory and writing is not a problem
+			// wrt race conditions because at this point it's done and nothing
+			// else is writing to memory?
+
+			/*var err error
 			// ParseConfig returns a pointer, either a.
 			// pass down pointer type or b. derference
 			if dms[i].OutlierDetection, err = b.outlierDetectionToConfig(cu.OutlierDetection); err != nil {
 				// returning an error from Update CCS is a behavior change. Do I want to add that? Will that break anything?
-			} // have this error if typecast fails or if ParseConfig() fails (shouldn't happen anyway) - add this to PR changes
+			}*/ // have this error if typecast fails or if ParseConfig() fails (shouldn't happen anyway) - add this to PR changes
 		}
 	}
 
@@ -526,7 +559,7 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		DiscoveryMechanisms: dms,
 	}
 
-	bc := &internalserviceconfig.BalancerConfig{}
+	/*bc := &internalserviceconfig.BalancerConfig{}
 	if err := json.Unmarshal(update.lbPolicy, bc); err != nil {
 		// This will never occur, valid configuration is emitted from the xDS
 		// Client. Validity is already checked in the xDS Client, however, this
@@ -535,8 +568,18 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		// the future to two separate operations.
 		b.logger.Errorf("Emitted lbPolicy %s from xDS Client is invalid: %v", update.lbPolicy, err)
 		return
-	}
-	lbCfg.XDSLBPolicy = bc
+	}*/
+	lbCfg.XDSLBPolicy = update.lbPolicy // this is a pointer is this dangerous?
+	// cds doesn't care it's valid
+
+	// if I don't change unmarshal this just to get it as is, then in ParseConfig will need to marshal and do the same validation
+
+	// I think switch this to just send down rawJSON as well, same deal
+
+
+	// json from client for OD and endpoint picking
+
+	// send both down as JSON,
 
 	// json marshal struct to fill out cluster resolver config, then marshal that and parse config
 	// but now can fill it out jere
@@ -557,10 +600,19 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 	// wt.ParseConfig on that JSON
 	// so this balancer needs to hold onto a weighted target parser, already looks at exported so already coupled
 	// I think needs to come at build time
+	crLBCfgJSON, err := json.Marshal(lbCfg)
+	if err != nil {
+		// Shouldn't happen.
+		b.logger.Errorf("cds_balancer: error marshalling prepared config: %v", lbCfg)
+		return
+	}
 
-
-
-
+	var sc serviceconfig.LoadBalancingConfig
+	// b.odParser.ParseConfig(crLBCfgJSON)
+	if sc, err = b.crParser.ParseConfig(crLBCfgJSON); err != nil {
+		b.logger.Errorf("cds_balancer: config generated %v is invalid: %v", crLBCfgJSON, err)
+		// Should this do something else like explicitly return but that's not plumbed yet
+	}
 
 	// Within child type ParseConfig - parses so looks into registry there just like
 	// UnmarshalJSON on the iserviceconfig.BalancerConfig skips if not found
@@ -572,12 +624,20 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),
-		BalancerConfig: lbCfg,
+		BalancerConfig: sc,
 	}
 	if err := b.childLB.UpdateClientConnState(ccState); err != nil {
 		b.logger.Errorf("Encountered error when sending config {%+v} to child policy: %v", ccState, err)
 	}
-}
+} // watch update triggers this
+
+// for testing what way to verify/what will break (a lot)/fail to compile (a lot):
+
+// In CDS Update from xDS client receive two JSONs OD and endpoint picking and locality picking
+
+// The cluster resolver sends down a priority config
+// ^^^ all my changes affect this layer
+
 
 // run is a long-running goroutine which handles all updates from gRPC. All
 // methods which are invoked directly by gRPC or xdsClient simply push an

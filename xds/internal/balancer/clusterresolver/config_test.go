@@ -229,7 +229,7 @@ func TestParseConfig(t *testing.T) {
 						EDSServiceName:        testEDSService,
 					},
 				},
-				XDSLBPolicy: &internalserviceconfig.BalancerConfig{
+				xdsLBPolicy: &internalserviceconfig.BalancerConfig{
 					Name:   "ROUND_ROBIN",
 					Config: nil,
 				},
@@ -239,6 +239,8 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "OK with picking policy ring_hash",
 			js:   testJSONConfig4,
+			// json.RawMessage essentially just prevents the same JSON
+			// from fully unmarshaling, and you can do your own thing with the json.RawMessage
 			want: &LBConfig{
 				DiscoveryMechanisms: []DiscoveryMechanism{
 					{
@@ -249,7 +251,8 @@ func TestParseConfig(t *testing.T) {
 						EDSServiceName:        testEDSService,
 					},
 				},
-				XDSLBPolicy: &internalserviceconfig.BalancerConfig{
+				// but it now persists the JSON so account for it?
+				xdsLBPolicy: internalserviceconfig.BalancerConfig{
 					Name:   ringhash.Name,
 					Config: &ringhash.LBConfig{MinRingSize: 1024, MaxRingSize: 4096}, // Ringhash LB config with default min and max.
 				},

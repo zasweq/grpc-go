@@ -194,6 +194,7 @@ func TestBuildPriorityConfig(t *testing.T) {
 				Cluster:          testClusterName,
 				Type:             DiscoveryMechanismTypeEDS,
 				EDSServiceName:   testEDSServiceName,
+				// if this is assumed to come after ParseConfig change this to the unexported type
 				OutlierDetection: noopODCfg,
 			},
 			edsResp: xdsresource.EndpointsUpdate{

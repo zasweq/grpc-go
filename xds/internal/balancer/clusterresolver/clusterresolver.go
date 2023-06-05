@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"strings"
 
 	"google.golang.org/grpc/attributes"
@@ -72,6 +73,15 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 		logger.Errorf("%q LB policy does not implement a config parser", priority.Name)
 		return nil
 	}
+	// same stuff here for odParser
+	/*odBuilder := balancer.Get(outlierdetection.Name) // same crap
+	if odBuilder == nil {
+		logger.Errorf("%q LB policy is needed but not registered", outlierdetection.Name)
+	}
+	odParser, ok := odBuilder.(balancer.ConfigParser)
+	if !ok {
+		logger.Errorf("%q LB policy does not implement a config parser", outlierdetection.Name)
+	}*/
 
 	b := &clusterResolverBalancer{
 		bOpts:    opts,
@@ -81,6 +91,9 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 
 		priorityBuilder:      priorityBuilder,
 		priorityConfigParser: priorityConfigParser,
+
+		// Doesn't need builder...where does it get built, just needs parser?
+		// odParser: odParser, // oh happens in ParseConfig so don't need this...
 	}
 	b.logger = prefixLogger(b)
 	b.logger.Infof("Created")
@@ -101,9 +114,24 @@ func (bb) Name() string {
 
 func (bb) ParseConfig2(j json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	var cfg *LBConfig // no defaults I think
+
+	//
+	odBuilder := balancer.Get(outlierdetection.Name)
+	if odBuilder == nil {
+		// Shouldn't happen, registered through imported Outlier Detection,
+		// defensive programming.
+		return nil, errors.New("outlier-detection balancer is not present in the registry"/*explain what is happening here*/)
+	}
+	odParser, ok := odBuilder.(balancer.ConfigParser)
+	if !ok {
+		// Shouldn't happen, imported Outlier Detection builder has this method.
+		return nil, errors.New("outlier-detection builder is not a config parser")
+	}
+
 	// This might need to be
 	// cfg := &LBConfig to prevent nil
 
+	// parser for OD lter
 
 	// Keep the valid json requirement, def an important part of validation
 	if err := json.Unmarshal(j, &cfg); err != nil {
@@ -120,23 +148,65 @@ func (bb) ParseConfig2(j json.RawMessage) (serviceconfig.LoadBalancingConfig, er
 	// Like iserviceconfig.BalancerConfig have an intermediate representation
 	// Also, need to call into the balancer regitsry here, is there a way to persisst this though
 
+	// Now has this intermediate JSON thing
+	// cfg.DiscoveryMechanisms[0].OutlierDetection // wait each discovery mechanism of a priority needs conversion
 
+	// So each cluster (each aggregate cluster EDS DNS e.g.) but for EDS
+	// has it's own (Even for dns with pick first root?) OD config
 
+	// so need to parse every OD config in the whole tree...
+	for _, dm := range cfg.DiscoveryMechanisms {
+		// dm.outlierDetection // unmarshal into this?
+		// dm.OutlierDetection // json.RawMessage
+		// odparser.ParseConfig(json.RawMessage) you get a serviceconfig.BalancerConfig out  typecast to OD type?
+		lbCfg, err := odParser.ParseConfig(dm.OutlierDetection)
+		if err != nil {
+
+		}
+		// these cause errors from this
+		odCfg, ok := lbCfg.(*outlierdetection.LBConfig) // we want a pointer since the interface zero value is a pointer...this is a struct so needs a pointer
+		if !ok {
+			// Shouldn't happen, Parser built at build time with Outlier Detection
+			// builder pulled from gRPC LB Registry.
+			return outlierdetection.LBConfig{}, fmt.Errorf("odParser returned config with unexpected type %T: %v", lbCfg, lbCfg)
+		}
+		// this doesss copy though so could help there
+		dm.outlierDetection = *odCfg // Switch to persist the pointer I think
+	}
+
+	// convert xds lb policy
+	// cfg.XDSLBPolicy // json.RawMessage
+	// cfg.xdsLBPolicy // iserviceconfig.BalancerConfig (switch to *?
+
+	// pointer type? will be nil so I thinkkk it's fine...
+	if err := json.Unmarshal(cfg.XDSLBPolicy, &cfg.xdsLBPolicy); err != nil {
+		// This will never occur, valid configuration is emitted from the xDS
+		// Client. Validity is already checked in the xDS Client, however, this
+		// double validation is present because Unmarshalling and Validating are
+		// coupled into one json.Unmarshal operation). We will switch this in
+		// the future to two separate operations.
+		return nil, fmt.Errorf("error unmarshaling xDS LB Policy: %v", err)
+	}
 
 
 	// Calls ParseConfig through iserviceconfig.BalancerConfig unmarshal JSON...
-
 
 	// child policy isn't required, but do validate (do I need to validate the validity of child config as well?
 	// This is what I added to
 
 }
-
 // Same unit test except delete not ring hash assertion
 // and also add tests for Parse Config
 
-// Also need a json util to prepare json strings passed in from client in unit tests, or declare those inline
 
+
+// Look at all implementation changes for layer
+// Start unit tests for this ParseConfig()
+// RawJSON passed in and it emits actual configs
+
+
+
+// Also need a json util to prepare json strings passed in from client in unit tests, or declare those inline
 func (bb) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	var cfg LBConfig
 	if err := json.Unmarshal(c, &cfg); err != nil {
@@ -249,7 +319,7 @@ func (b *clusterResolverBalancer) updateChildConfig() {
 		b.child = newChildBalancer(b.priorityBuilder, b.cc, b.bOpts)
 	}
 
-	childCfgBytes, addrs, err := buildPriorityConfigJSON(b.priorities, b.config.XDSLBPolicy)
+	childCfgBytes, addrs, err := buildPriorityConfigJSON(b.priorities, &b.config.xdsLBPolicy)
 	if err != nil {
 		b.logger.Warningf("Failed to build child policy config: %v", err)
 		return

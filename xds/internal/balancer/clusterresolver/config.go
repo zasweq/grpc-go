@@ -106,6 +106,9 @@ type DiscoveryMechanism struct {
 	// after unmarshaling ^^^ from the lb config
 
 
+	// Does this correctly get filled out after ParseConfig(), use same DiscoveryMechanism
+	// heap memory?
+
 	// How to ignore this in JSON parsing - leave as written?
 	// convert to vvv in the ParseConfig (also validates)
 	outlierDetection outlierdetection.LBConfig // and now use this thing where previously the exported filled out field was used
@@ -159,18 +162,9 @@ type LBConfig struct {
 	DiscoveryMechanisms []DiscoveryMechanism `json:"discoveryMechanisms,omitempty"`
 
 	// XDSLBPolicy specifies the policy for locality picking and endpoint picking.
-	//
-	// Note that it's not normal balancing policy, and it can only be either
-	// ROUND_ROBIN or RING_HASH.
-	//
-	// For ROUND_ROBIN, the policy name will be "ROUND_ROBIN", and the config
-	// will be empty. This sets the locality-picking policy to weighted_target
-	// and the endpoint-picking policy to round_robin.
-	//
-	// For RING_HASH, the policy name will be "RING_HASH", and the config will
-	// be lb config for the ring_hash_experimental LB Policy. ring_hash policy
-	// is responsible for both locality picking and endpoint picking.
-	XDSLBPolicy *internalserviceconfig.BalancerConfig `json:"xdsLbPolicy,omitempty"`
+	XDSLBPolicy json.RawMessage `json:"xdsLbPolicy,omitempty"` // switch all usages of this as well to json message now
+
+	xdsLBPolicy internalserviceconfig.BalancerConfig
 }
 
 // conversion from JSON to OD config happens in ParseConfig returns that
