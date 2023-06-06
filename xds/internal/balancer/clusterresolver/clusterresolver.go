@@ -25,13 +25,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
-	"strings"
 
 	"google.golang.org/grpc/attributes"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
-	"google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal/buffer"
 	"google.golang.org/grpc/internal/grpclog"
@@ -39,8 +36,8 @@ import (
 	"google.golang.org/grpc/internal/pretty"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
+	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"google.golang.org/grpc/xds/internal/balancer/priority"
-	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/xdsclient"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 )
@@ -112,10 +109,7 @@ func (bb) Name() string {
 	return Name
 }
 
-func (bb) ParseConfig2(j json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	var cfg *LBConfig // no defaults I think
-
-	//
+func (bb) ParseConfig(j json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	odBuilder := balancer.Get(outlierdetection.Name)
 	if odBuilder == nil {
 		// Shouldn't happen, registered through imported Outlier Detection,
@@ -131,53 +125,49 @@ func (bb) ParseConfig2(j json.RawMessage) (serviceconfig.LoadBalancingConfig, er
 	// This might need to be
 	// cfg := &LBConfig to prevent nil
 
-	// parser for OD lter
+	// parser for OD lter 0 can you persist?
 
 	// Keep the valid json requirement, def an important part of validation
+	var cfg *LBConfig // no defaults I think, pointer?
 	if err := json.Unmarshal(j, &cfg); err != nil {
 		// invalidate
 		return nil, fmt.Errorf("unable to unmarshal balancer config %s into cluster-resolver config, error: %v", string(j), err)
 	}
-	// scope: take the JSON representation of OD and convert through Od parse config, do return just a struct you remarshal
 
-	// the ODCfg in the JSON passed in maps to Outlier Detection 1:1
-
-	// In regular unmarshal flow, it call UnmarshalJSON on the config type
-	// I think I want to stop it and take the json raw message
-	// and call OD with that
-	// Like iserviceconfig.BalancerConfig have an intermediate representation
 	// Also, need to call into the balancer regitsry here, is there a way to persisst this though
 
 	// Now has this intermediate JSON thing
-	// cfg.DiscoveryMechanisms[0].OutlierDetection // wait each discovery mechanism of a priority needs conversion
 
 	// So each cluster (each aggregate cluster EDS DNS e.g.) but for EDS
-	// has it's own (Even for dns with pick first root?) OD config
-
-	// so need to parse every OD config in the whole tree...
-	for _, dm := range cfg.DiscoveryMechanisms {
-		// dm.outlierDetection // unmarshal into this?
-		// dm.OutlierDetection // json.RawMessage
-		// odparser.ParseConfig(json.RawMessage) you get a serviceconfig.BalancerConfig out  typecast to OD type?
+	// has it's own (Even for dns with pick first root?) OD config...
+	odCfgs := make([]outlierdetection.LBConfig, len(cfg.DiscoveryMechanisms))
+	for i, dm := range cfg.DiscoveryMechanisms {
 		lbCfg, err := odParser.ParseConfig(dm.OutlierDetection)
 		if err != nil {
-
+			return nil, fmt.Errorf("error parsing Outlier Detection config: %v", dm.OutlierDetection)
 		}
-		// these cause errors from this
 		odCfg, ok := lbCfg.(*outlierdetection.LBConfig) // we want a pointer since the interface zero value is a pointer...this is a struct so needs a pointer
 		if !ok {
 			// Shouldn't happen, Parser built at build time with Outlier Detection
 			// builder pulled from gRPC LB Registry.
-			return outlierdetection.LBConfig{}, fmt.Errorf("odParser returned config with unexpected type %T: %v", lbCfg, lbCfg)
+			return nil, fmt.Errorf("odParser returned config with unexpected type %T: %v", lbCfg, lbCfg)
 		}
-		// this doesss copy though so could help there
-		dm.outlierDetection = *odCfg // Switch to persist the pointer I think
+		// this doesss copy though so could help there to not overwrite memory or something like that?
+		print("setting outlier detection")
+		print("odCfg.maxEjectionPercent: ", odCfg.MaxEjectionPercent)
+		print("odCfg.maxEjectionTime: ", odCfg.MaxEjectionTime)
+		odCfgs[i] = *odCfg // Switch to persist the pointer I think
+		print("dm.outlierDetection.MaxEjectionPercent: ", dm.outlierDetection.MaxEjectionPercent)
+		print("dm.outlierDetection.maxEjectionTime: ", dm.outlierDetection.MaxEjectionTime)
+	}
+	for i, odCfg := range odCfgs {
+		cfg.DiscoveryMechanisms[i].outlierDetection = odCfg
 	}
 
-	// convert xds lb policy
-	// cfg.XDSLBPolicy // json.RawMessage
-	// cfg.xdsLBPolicy // iserviceconfig.BalancerConfig (switch to *?
+	// big question: Should outlier detection be **required** for dns clusters
 
+	// this is the same as master, I thik this correctly unmarshals
+	// if nothing??>
 	// pointer type? will be nil so I thinkkk it's fine...
 	if err := json.Unmarshal(cfg.XDSLBPolicy, &cfg.xdsLBPolicy); err != nil {
 		// This will never occur, valid configuration is emitted from the xDS
@@ -187,15 +177,9 @@ func (bb) ParseConfig2(j json.RawMessage) (serviceconfig.LoadBalancingConfig, er
 		// the future to two separate operations.
 		return nil, fmt.Errorf("error unmarshaling xDS LB Policy: %v", err)
 	}
-
-
-	// Calls ParseConfig through iserviceconfig.BalancerConfig unmarshal JSON...
-
-	// child policy isn't required, but do validate (do I need to validate the validity of child config as well?
-	// This is what I added to
-
+	return cfg, nil
 }
-// Same unit test except delete not ring hash assertion
+// Same unit test except delete not ring hash assertion *** Yup
 // and also add tests for Parse Config
 
 
@@ -205,21 +189,7 @@ func (bb) ParseConfig2(j json.RawMessage) (serviceconfig.LoadBalancingConfig, er
 // RawJSON passed in and it emits actual configs
 
 
-
 // Also need a json util to prepare json strings passed in from client in unit tests, or declare those inline
-func (bb) ParseConfig(c json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	var cfg LBConfig
-	if err := json.Unmarshal(c, &cfg); err != nil {
-		return nil, fmt.Errorf("unable to unmarshal balancer config %s into cluster-resolver config, error: %v", string(c), err)
-	}
-	// If you pass this JSON,
-
-	// This assertion is wrong now...
-	if lbp := cfg.XDSLBPolicy; lbp != nil && !strings.EqualFold(lbp.Name, roundrobin.Name) && !strings.EqualFold(lbp.Name, ringhash.Name) {
-		return nil, fmt.Errorf("unsupported child policy with name %q, not one of {%q,%q}", lbp.Name, roundrobin.Name, ringhash.Name)
-	}
-	return &cfg, nil
-}
 
 // ccUpdate wraps a clientConn update received from gRPC.
 type ccUpdate struct {
@@ -319,7 +289,7 @@ func (b *clusterResolverBalancer) updateChildConfig() {
 		b.child = newChildBalancer(b.priorityBuilder, b.cc, b.bOpts)
 	}
 
-	childCfgBytes, addrs, err := buildPriorityConfigJSON(b.priorities, &b.config.xdsLBPolicy)
+	childCfgBytes, addrs, err := buildPriorityConfigJSON(b.priorities, &b.config.xdsLBPolicy) // by the time it gets here know this is valid etc.
 	if err != nil {
 		b.logger.Warningf("Failed to build child policy config: %v", err)
 		return

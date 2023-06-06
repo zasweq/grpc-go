@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/grpc/attributes"
@@ -31,7 +32,7 @@ import (
 	"google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/balancer/weightedroundrobin"
 	"google.golang.org/grpc/internal/hierarchy"
-	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
+	iserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/xds/internal"
 	"google.golang.org/grpc/xds/internal/balancer/clusterimpl"
@@ -72,7 +73,11 @@ var (
 	}
 
 	noopODCfg = outlierdetection.LBConfig{
-		Interval: 1<<63 - 1,
+		Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+		BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+		MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
+		MaxEjectionPercent: 10,
+		// Could populate with default values top level
 	}
 )
 
@@ -195,7 +200,7 @@ func TestBuildPriorityConfig(t *testing.T) {
 				Type:             DiscoveryMechanismTypeEDS,
 				EDSServiceName:   testEDSServiceName,
 				// if this is assumed to come after ParseConfig change this to the unexported type
-				OutlierDetection: noopODCfg,
+				outlierDetection: noopODCfg,
 			},
 			edsResp: xdsresource.EndpointsUpdate{
 				Localities: []xdsresource.Locality{
@@ -212,7 +217,7 @@ func TestBuildPriorityConfig(t *testing.T) {
 			mechanism: DiscoveryMechanism{
 				Cluster:          testClusterName2,
 				Type:             DiscoveryMechanismTypeLogicalDNS,
-				OutlierDetection: noopODCfg,
+				outlierDetection: noopODCfg,
 			},
 			addresses:    testAddressStrs[4],
 			childNameGen: newNameGenerator(1),
@@ -222,11 +227,14 @@ func TestBuildPriorityConfig(t *testing.T) {
 	wantConfig := &priority.LBConfig{
 		Children: map[string]*priority.Child{
 			"priority-0-0": {
-				Config: &internalserviceconfig.BalancerConfig{
+				Config: &iserviceconfig.BalancerConfig{
 					Name: outlierdetection.Name,
 					Config: &outlierdetection.LBConfig{
-						Interval: 1<<63 - 1,
-						ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+						BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+						MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+						MaxEjectionPercent: 10,
+						ChildPolicy: &iserviceconfig.BalancerConfig{
 							Name: clusterimpl.Name,
 							Config: &clusterimpl.LBConfig{
 								Cluster:        testClusterName,
@@ -239,11 +247,14 @@ func TestBuildPriorityConfig(t *testing.T) {
 				IgnoreReresolutionRequests: true,
 			},
 			"priority-0-1": {
-				Config: &internalserviceconfig.BalancerConfig{
+				Config: &iserviceconfig.BalancerConfig{
 					Name: outlierdetection.Name,
 					Config: &outlierdetection.LBConfig{
-						Interval: 1<<63 - 1,
-						ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+						BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+						MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+						MaxEjectionPercent: 10,
+						ChildPolicy: &iserviceconfig.BalancerConfig{
 							Name: clusterimpl.Name,
 							Config: &clusterimpl.LBConfig{
 								Cluster:        testClusterName,
@@ -256,15 +267,18 @@ func TestBuildPriorityConfig(t *testing.T) {
 				IgnoreReresolutionRequests: true,
 			},
 			"priority-1": {
-				Config: &internalserviceconfig.BalancerConfig{
+				Config: &iserviceconfig.BalancerConfig{
 					Name: outlierdetection.Name,
 					Config: &outlierdetection.LBConfig{
-						Interval: 1<<63 - 1,
-						ChildPolicy: &internalserviceconfig.BalancerConfig{
+						Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+						BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+						MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+						MaxEjectionPercent: 10,
+						ChildPolicy: &iserviceconfig.BalancerConfig{
 							Name: clusterimpl.Name,
 							Config: &clusterimpl.LBConfig{
 								Cluster:     testClusterName2,
-								ChildPolicy: &internalserviceconfig.BalancerConfig{Name: "pick_first"},
+								ChildPolicy: &iserviceconfig.BalancerConfig{Name: "pick_first"},
 							},
 						},
 					},
@@ -284,7 +298,7 @@ func TestBuildClusterImplConfigForDNS(t *testing.T) {
 	wantName := "priority-3"
 	wantConfig := &clusterimpl.LBConfig{
 		Cluster: testClusterName2,
-		ChildPolicy: &internalserviceconfig.BalancerConfig{
+		ChildPolicy: &iserviceconfig.BalancerConfig{
 			Name: "pick_first",
 		},
 	}
@@ -501,7 +515,7 @@ func TestPriorityLocalitiesToClusterImpl(t *testing.T) {
 		localities   []xdsresource.Locality
 		priorityName string
 		mechanism    DiscoveryMechanism
-		childPolicy  *internalserviceconfig.BalancerConfig
+		childPolicy  *iserviceconfig.BalancerConfig
 		wantConfig   *clusterimpl.LBConfig
 		wantAddrs    []resolver.Address
 		wantErr      bool
@@ -526,7 +540,7 @@ func TestPriorityLocalitiesToClusterImpl(t *testing.T) {
 			},
 		},
 		priorityName: "test-priority",
-		childPolicy:  &internalserviceconfig.BalancerConfig{Name: roundrobin.Name},
+		childPolicy:  &iserviceconfig.BalancerConfig{Name: roundrobin.Name},
 		mechanism: DiscoveryMechanism{
 			Cluster:        testClusterName,
 			Type:           DiscoveryMechanismTypeEDS,
@@ -536,7 +550,7 @@ func TestPriorityLocalitiesToClusterImpl(t *testing.T) {
 		wantConfig: &clusterimpl.LBConfig{
 			Cluster:        testClusterName,
 			EDSServiceName: testEDSService,
-			ChildPolicy:    &internalserviceconfig.BalancerConfig{Name: roundrobin.Name},
+			ChildPolicy:    &iserviceconfig.BalancerConfig{Name: roundrobin.Name},
 		},
 		wantAddrs: []resolver.Address{
 			testAddrWithAttrs("addr-1-1", 20, 90, "test-priority", &internal.LocalityID{Zone: "test-zone-1"}),
@@ -566,10 +580,10 @@ func TestPriorityLocalitiesToClusterImpl(t *testing.T) {
 				},
 			},
 			priorityName: "test-priority",
-			childPolicy:  &internalserviceconfig.BalancerConfig{Name: ringhash.Name, Config: &ringhash.LBConfig{MinRingSize: 1, MaxRingSize: 2}},
+			childPolicy:  &iserviceconfig.BalancerConfig{Name: ringhash.Name, Config: &ringhash.LBConfig{MinRingSize: 1, MaxRingSize: 2}},
 			// lrsServer is nil, so LRS policy will not be used.
 			wantConfig: &clusterimpl.LBConfig{
-				ChildPolicy: &internalserviceconfig.BalancerConfig{
+				ChildPolicy: &iserviceconfig.BalancerConfig{
 					Name:   ringhash.Name,
 					Config: &ringhash.LBConfig{MinRingSize: 1, MaxRingSize: 2},
 				},
@@ -639,7 +653,7 @@ func TestConvertClusterImplMapToOutlierDetection(t *testing.T) {
 			wantODCfgs: map[string]*outlierdetection.LBConfig{
 				"child1": {
 					Interval: 1<<63 - 1,
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: clusterimpl.Name,
 						Config: &clusterimpl.LBConfig{
 							Cluster: "cluster1",
@@ -664,7 +678,7 @@ func TestConvertClusterImplMapToOutlierDetection(t *testing.T) {
 			wantODCfgs: map[string]*outlierdetection.LBConfig{
 				"child1": {
 					Interval: 1<<63 - 1,
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: clusterimpl.Name,
 						Config: &clusterimpl.LBConfig{
 							Cluster: "cluster1",
@@ -673,7 +687,7 @@ func TestConvertClusterImplMapToOutlierDetection(t *testing.T) {
 				},
 				"child2": {
 					Interval: 1<<63 - 1,
-					ChildPolicy: &internalserviceconfig.BalancerConfig{
+					ChildPolicy: &iserviceconfig.BalancerConfig{
 						Name: clusterimpl.Name,
 						Config: &clusterimpl.LBConfig{
 							Cluster: "cluster2",

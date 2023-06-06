@@ -20,11 +20,14 @@ package clusterresolver
 
 import (
 	"encoding/json"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/grpc/balancer"
-	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
+	iserviceconfig "google.golang.org/grpc/internal/serviceconfig"
+	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/xdsclient/bootstrap"
 )
@@ -101,8 +104,10 @@ const (
     },
     "maxConcurrentRequests": 314,
     "type": "EDS",
-    "edsServiceName": "test-eds-service-name"
-  }]
+    "edsServiceName": "test-eds-service-name",
+    "outlierDetection": {}
+  }],
+  "xdsLbPolicy":[{"ROUND_ROBIN":{}}]
 }`
 	testJSONConfig2 = `{
   "discoveryMechanisms": [{
@@ -113,11 +118,14 @@ const (
     },
     "maxConcurrentRequests": 314,
     "type": "EDS",
-    "edsServiceName": "test-eds-service-name"
+    "edsServiceName": "test-eds-service-name",
+    "outlierDetection": {}
   },{
-    "type": "LOGICAL_DNS"
-  }]
-}`
+    "type": "LOGICAL_DNS",
+    "outlierDetection": {}
+  }],
+  "xdsLbPolicy":[{"ROUND_ROBIN":{}}]
+}` // does it need to declare an outlier detection config for logical dns?
 	testJSONConfig3 = `{
   "discoveryMechanisms": [{
     "cluster": "test-cluster-name",
@@ -127,7 +135,8 @@ const (
     },
     "maxConcurrentRequests": 314,
     "type": "EDS",
-    "edsServiceName": "test-eds-service-name"
+    "edsServiceName": "test-eds-service-name",
+    "outlierDetection": {}
   }],
   "xdsLbPolicy":[{"ROUND_ROBIN":{}}]
 }`
@@ -140,7 +149,8 @@ const (
     },
     "maxConcurrentRequests": 314,
     "type": "EDS",
-    "edsServiceName": "test-eds-service-name"
+    "edsServiceName": "test-eds-service-name",
+    "outlierDetection": {}
   }],
   "xdsLbPolicy":[{"ring_hash_experimental":{}}]
 }`
@@ -153,10 +163,27 @@ const (
     },
     "maxConcurrentRequests": 314,
     "type": "EDS",
-    "edsServiceName": "test-eds-service-name"
+    "edsServiceName": "test-eds-service-name",
+    "outlierDetection": {}
+  }],
+  "xdsLbPolicy":[{"ROUND_ROBIN":{}}]
+}`
+	// is it outlierDetection: {}
+	// or outlierDetection: "{}"?
+	testJSONConfig6 = `{
+  "discoveryMechanisms": [{
+    "cluster": "test-cluster-name",
+    "lrsLoadReportingServer": {
+      "server_uri": "trafficdirector.googleapis.com:443",
+      "channel_creds": [ { "type": "google_default" } ]
+    },
+    "maxConcurrentRequests": 314,
+    "type": "EDS",
+    "edsServiceName": "test-eds-service-name",
+    "outlierDetection": {}
   }],
   "xdsLbPolicy":[{"pick_first":{}}]
-}`
+}` // this works now because doesn't have to be ring hash, we had parse config but never called it lol...also defaults?
 )
 
 var testLRSServerConfig = &bootstrap.ServerConfig{
@@ -165,6 +192,10 @@ var testLRSServerConfig = &bootstrap.ServerConfig{
 		Type: "google_default",
 	},
 }
+
+// ^^^ where is marshal/unmarshal JSON being called on the discovery mechanism in the normal system flow?
+
+
 
 func TestParseConfig(t *testing.T) {
 	tests := []struct {
@@ -177,7 +208,7 @@ func TestParseConfig(t *testing.T) {
 			name:    "empty json",
 			js:      "",
 			want:    nil,
-			wantErr: true,
+			wantErr: true, // why does this return error?
 		},
 		{
 			name: "OK with one discovery mechanism",
@@ -190,9 +221,19 @@ func TestParseConfig(t *testing.T) {
 						MaxConcurrentRequests: newUint32(testMaxRequests),
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
+						outlierDetection: outlierdetection.LBConfig{
+							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							MaxEjectionPercent: 10,
+							// sre and fpe are both nil
+						}/*outlier detection with defaults...*/,
 					},
 				},
-				XDSLBPolicy: nil,
+				xdsLBPolicy: iserviceconfig.BalancerConfig{ // do we want to make this not pointer
+					Name:   "ROUND_ROBIN",
+					Config: nil,
+				},
 			},
 			wantErr: false,
 		},
@@ -207,18 +248,38 @@ func TestParseConfig(t *testing.T) {
 						MaxConcurrentRequests: newUint32(testMaxRequests),
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
+						outlierDetection: outlierdetection.LBConfig{
+							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							MaxEjectionPercent: 10,
+							// sre and fpe are both nil
+						}/*outlier detection with defaults...*/,
 					},
 					{
 						Type: DiscoveryMechanismTypeLogicalDNS,
+						// requires it for type dns, is this correct...will just be ignored but it's fine to leave.
+						// od struct emits nil and will convert the cluster od to empty for dns
+						// then be ignored in config builder I think since root is rr above Outlier Detection?
+						outlierDetection: outlierdetection.LBConfig{
+							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							MaxEjectionPercent: 10,
+							// sre and fpe are both nil
+						}/*outlier detection with defaults...*/,
 					},
 				},
-				XDSLBPolicy: nil,
+				xdsLBPolicy: iserviceconfig.BalancerConfig{ // do we want to make this not pointer
+					Name:   "ROUND_ROBIN",
+					Config: nil,
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "OK with picking policy round_robin",
-			js:   testJSONConfig3,
+			js:   testJSONConfig3, // I honestly think
 			want: &LBConfig{
 				DiscoveryMechanisms: []DiscoveryMechanism{
 					{
@@ -227,9 +288,17 @@ func TestParseConfig(t *testing.T) {
 						MaxConcurrentRequests: newUint32(testMaxRequests),
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
+						outlierDetection: outlierdetection.LBConfig{
+							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							MaxEjectionPercent: 10,
+							// sre and fpe are both nil
+						}/*outlier detection with defaults...*/,
 					},
 				},
-				xdsLBPolicy: &internalserviceconfig.BalancerConfig{
+				// ignore XDSLBPolicy and Outlier Detection JSON...
+				xdsLBPolicy: iserviceconfig.BalancerConfig{ // do we want to make this not pointer
 					Name:   "ROUND_ROBIN",
 					Config: nil,
 				},
@@ -238,9 +307,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "OK with picking policy ring_hash",
-			js:   testJSONConfig4,
-			// json.RawMessage essentially just prevents the same JSON
-			// from fully unmarshaling, and you can do your own thing with the json.RawMessage
+			js:   testJSONConfig4, // I honestly think you want this, it's already json
 			want: &LBConfig{
 				DiscoveryMechanisms: []DiscoveryMechanism{
 					{
@@ -249,10 +316,17 @@ func TestParseConfig(t *testing.T) {
 						MaxConcurrentRequests: newUint32(testMaxRequests),
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
+						outlierDetection: outlierdetection.LBConfig{
+							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							MaxEjectionPercent: 10,
+							// sre and fpe are both nil
+						}/*outlier detection with defaults...*/,
 					},
 				},
 				// but it now persists the JSON so account for it?
-				xdsLBPolicy: internalserviceconfig.BalancerConfig{
+				xdsLBPolicy: iserviceconfig.BalancerConfig{ // this tests what cds used to do because never sent JSON to cluster resolver
 					Name:   ringhash.Name,
 					Config: &ringhash.LBConfig{MinRingSize: 1024, MaxRingSize: 4096}, // Ringhash LB config with default min and max.
 				},
@@ -260,10 +334,39 @@ func TestParseConfig(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "unsupported picking policy",
-			js:      testJSONConfig5,
-			wantErr: true,
+			name: "noop-outlier-detection",
+			js: testJSONConfig5/*json with od = {} scale up above*/,
+			want: &LBConfig{
+				DiscoveryMechanisms: []DiscoveryMechanism{
+					{
+						Cluster:               testClusterName,
+						LoadReportingServer:   testLRSServerConfig,
+						MaxConcurrentRequests: newUint32(testMaxRequests),
+						Type:                  DiscoveryMechanismTypeEDS,
+						EDSServiceName:        testEDSService,
+						// ignore XDSLBPolicy and Outlier Detection JSON for all...
+						// comparisons...
+						outlierDetection: outlierdetection.LBConfig{
+							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							MaxEjectionPercent: 10,
+							// sre and fpe are both nil
+						}/*outlier detection with defaults...*/,
+					},
+				},
+				xdsLBPolicy: iserviceconfig.BalancerConfig{ // do we want to make this not pointer
+					Name:   "ROUND_ROBIN",
+					Config: nil,
+				},
+			},
+			wantErr: false,
 		},
+		/*{
+			name:    "unsupported picking policy",
+			js:      testJSONConfig6,
+			wantErr: true,
+		},*/ // no longer applies
 	}
 	for _, tt := range tests {
 		b := balancer.Get(Name)
@@ -282,7 +385,9 @@ func TestParseConfig(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
-			if diff := cmp.Diff(got, tt.want); diff != "" {
+			// ignore both od field and xds lb policy field
+			// cmpopts.IgnoreFields(grpcLogEntry{}, "CallID", "Peer"),
+			if diff := cmp.Diff(got, tt.want, cmp.AllowUnexported(LBConfig{}), cmpopts.IgnoreFields(LBConfig{}, "XDSLBPolicy")); diff != "" {
 				t.Errorf("parseConfig() got unexpected output, diff (-got +want): %v", diff)
 			}
 		})

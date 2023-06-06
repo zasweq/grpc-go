@@ -36,7 +36,6 @@ import (
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 	"google.golang.org/grpc/xds/internal/balancer/clusterresolver"
-	"google.golang.org/grpc/xds/internal/balancer/outlierdetection"
 	"google.golang.org/grpc/xds/internal/xdsclient"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 )
@@ -76,14 +75,14 @@ type bb struct{}
 func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
 	builder := balancer.Get(clusterresolver.Name)
 	if builder == nil {
-		// Shouldn't happen, registered through imported Outlier Detection,
+		// Shouldn't happen, registered through imported Cluster Resolver,
 		// defensive programming.
 		logger.Errorf("%q LB policy is needed but not registered", clusterresolver.Name)
 		return nil
 	}
 	crParser, ok := builder.(balancer.ConfigParser)
 	if !ok {
-		// Shouldn't happen, imported Outlier Detection builder has this method.
+		// Shouldn't happen, imported Cluster Resolver builder has this method.
 		logger.Errorf("%q LB policy does not implement a config parser", clusterresolver.Name)
 		return nil
 	}
@@ -285,158 +284,14 @@ func buildProviderFunc(configs map[string]*certprovider.BuildableConfig, instanc
 	return provider, nil
 }
 
-// I think an error needs to be emitted from this helper
-// fill out nested od config based off rules
-
-// marshal to JSON (making sure ternary stuff keeps getting taken into account)
-
 // ParseConfig() on that JSON, pass the opaque struct returned from that downward
 
 // so gets xDS Defaults (through rules + defaults), such as 100 because goes
 // through rule and then ParseConfig
 
+// ^^^ We decided to add this to ParseConfig() of cluster resolver
 
 
-// need to test the user flow of JSON picking up nil and setting defaults
-// vs. a set 0 and keeping
-// ^^^ Do this in ParseConfig() of Outlier Detection
-
-// make sure Outlier Detection config has correct omit empty annotations etc.
-
-// instead of xdsresource.OutlierDetection this gets called with raw JSON
-// which still has the nil vs. not nil branch
-
-// cause an error from UpdateCCS - also now a pointer gets sent downward.
-
-// don't need this anymore although might need comments
-func (b *cdsBalancer) outlierDetectionToConfig(od json.RawMessage) (json.RawMessage, error) { // Already validated - no need to return error
-	// now just pass json down to clusterresolver
-
-	// so the branch becomes if od == nil
-	//     return `{}` (they were saying something about not building this directly)
-
-	if od == nil {
-		// "In the cds LB policy, if the outlier_detection field is not set in
-		// the Cluster resource, a "no-op" outlier_detection config will be
-		// generated in the corresponding DiscoveryMechanism config, with all
-		// fields unset." - A50
-		return outlierdetection.LBConfig{}, nil // Change this throughout codebase, search for it (Interval: 1<<63 - 1) and change it
-	}
-	return od // does this copy,
-
-	// "if the enforcing_success_rate field is set to 0, the config
-	// success_rate_ejection field will be null and all success_rate_* fields
-	// will be ignored." - A50
-
-	// continue to prepare config here...other possibility is what triggers config preparation or just put other possiblity in conditional
-	// but first if:
-	// if !set and zero (other possiblity: null || set and unzero)
-	//        sre = ....
-
-	// intermediate nested
-	// convert nested to JSON
-	// JSON -> ParseConfig()
-
-	// Pass downward
-
-	// this od parser needs to persist over time - I think create this at balancer build time. and call it here.
-	// cause build to fail if not registered?
-	cfg, err := b.crParser.ParseConfig(od)
-	// This shouldn't happen, validated in client?
-	// this call overwrites unset in the layered structure with defaults...the layered structure emitted from client
-	if err != nil {
-		return outlierdetection.LBConfig{}, err
-	}
-
-
-
-	// Move this codeblock below to clusteresolver.go
-	odCfg, ok := cfg.(*outlierdetection.LBConfig) // we want a pointer since the interface zero value is a pointer...this is a struct so needs a pointer
-	if !ok {
-		// Shouldn't happen, Parser built at build time with Outlier Detection
-		// builder pulled from gRPC LB Registry.
-		return outlierdetection.LBConfig{}, fmt.Errorf("odParser returned config with unexpected type %T: %v", cfg, cfg)
-	}
-
-
-
-	// this branching logic all now gets handled in the client...
-	//
-	/*
-	var sre *outlierdetection.SuccessRateEjection
-	if od.EnforcingSuccessRate == nil || *od.EnforcingSuccessRate != 0 { // exits early out of the or right?
-		sre = &outlierdetection.SuccessRateEjection{
-			StdevFactor:           od.SuccessRateStdevFactor,
-			EnforcementPercentage: od.EnforcingSuccessRate, // this can now be nil, do pointers have to be JSON?
-			MinimumHosts:          od.SuccessRateMinimumHosts,
-			RequestVolume:         od.SuccessRateRequestVolume,
-		}
-	}
-
-	// if !((set and zero) || null) other possiblity: set and non zero (need the nil check regardless
-
-	// "If the enforcing_failure_percent field is set to 0 or null, the config
-	// failure_percent_ejection field will be null and all failure_percent_*
-	// fields will be ignored." - A50
-	var fpe *outlierdetection.FailurePercentageEjection
-	if od.EnforcingFailurePercentage == nil || *od.EnforcingFailurePercentage == 0 {
-		fpe = &outlierdetection.FailurePercentageEjection{
-			Threshold:             od.FailurePercentageThreshold,
-			EnforcementPercentage: od.EnforcingFailurePercentage,
-			MinimumHosts:          od.FailurePercentageMinimumHosts,
-			RequestVolume:         od.FailurePercentageRequestVolume,
-		}
-	}
-
-	// this needs to change to get JSON and call the od parser?
-
-	// balancer.Get on the first one...?
-
-
-	// but the marshaling into JSON keeps the layered structure here - so need an intermediary?
-
-	// marshal into JSON while keeping the ternary operator, Doug said this flow/way needs pointer declarations
-
-	// flat structure than convert - wait where does ParseConfig ever get called in the system?
-
-	return outlierdetection.LBConfig{
-		Interval:                  internalserviceconfig.Duration(od.Interval),
-		BaseEjectionTime:          internalserviceconfig.Duration(od.BaseEjectionTime),
-		MaxEjectionTime:           internalserviceconfig.Duration(od.MaxEjectionTime),
-		MaxEjectionPercent:        od.MaxEjectionPercent,
-		SuccessRateEjection:       sre,
-		FailurePercentageEjection: fpe,
-	}*/
-
-	// deref here, could be nil though...
-	return *odCfg, nil // still this in UpdateCCS? Now child type has to be this. Or the type hierarchy of how this gets passed down needs to be this.
-}
-
-// will I need UnmarshalJSON on the whole thing? no that's handled in ParseConfig
-
-// emit the proto inline
-
-// Is the marshaling step correct
-// string is JSON, map of string key, arbitrary, string we impose structure to
-// empty vs. not empty is the condition we want to have a distinction in JSON
-
-// marshaling requires ocnditionally marshal, field is misisng or zero
-// spit out 0
-// don't emit field at all
-// proto -> JSON
-
-// the reason i was saying you need pointer types is because you need to be able
-// to serialize with an explicit zero OR serialize with a field missing
-// fill out config -> JSON
-
-// JSON -> back is Unmarshaling, if field isn't present use defaults
-
-// Unmarshal deserialize
-
-// weighted round robin 0 set overwrites
-// not set doesn't overwrite
-
-// only update fields that is fine when it's parsing
 
 // Now this gets passed JSON, so need utilities to pass JSON for unit tests, as that is what this is doing...
 
@@ -513,15 +368,9 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			b.logger.Infof("Unexpected cluster type %v when handling update from cluster handler", cu.ClusterType)
 		}
 		if envconfig.XDSOutlierDetection {
-			// Either a: perist this as serviceconfig.LoadBalancingConfig
-			// or keep as is and typecase and error?
-			// you attach a child policy to the OD Type...
-			// thus, I think you need to typecast and and convert
-
-			// make this on receiver type if need to persist config parser
-
-			// make implementation changes and think deeply about them before unit test changes
-
+			// I think pointing to same cu memory and writing is not a problem
+			// wrt race conditions because at this point it's done and nothing
+			// else is writing to memory?
 			odJSON := cu.OutlierDetection
 			// "In the cds LB policy, if the outlier_detection field is not set in
 			// the Cluster resource, a "no-op" outlier_detection config will be
@@ -529,20 +378,10 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			// fields unset." - A50
 			if odJSON == nil {
 				// json marshal into it right - I think we can skip though lol
-				odJSON = json.RawMessage(`{}`)
+				odJSON = json.RawMessage(`{}`) // this will cause top three to get defaults but it is a no-op, is this fine...?
+				// if parseconfig overwrites not set with defaults is this wai/even possible?
 			}
 			dms[i].OutlierDetection = odJSON
-
-			// I think pointing to same cu memory and writing is not a problem
-			// wrt race conditions because at this point it's done and nothing
-			// else is writing to memory?
-
-			/*var err error
-			// ParseConfig returns a pointer, either a.
-			// pass down pointer type or b. derference
-			if dms[i].OutlierDetection, err = b.outlierDetectionToConfig(cu.OutlierDetection); err != nil {
-				// returning an error from Update CCS is a behavior change. Do I want to add that? Will that break anything?
-			}*/ // have this error if typecast fails or if ParseConfig() fails (shouldn't happen anyway) - add this to PR changes
 		}
 	}
 
@@ -557,19 +396,9 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: dms,
+		XDSLBPolicy: update.lbPolicy, // this is a pointer is this dangerous?
 	}
-
-	/*bc := &internalserviceconfig.BalancerConfig{}
-	if err := json.Unmarshal(update.lbPolicy, bc); err != nil {
-		// This will never occur, valid configuration is emitted from the xDS
-		// Client. Validity is already checked in the xDS Client, however, this
-		// double validation is present because Unmarshalling and Validating are
-		// coupled into one json.Unmarshal operation). We will switch this in
-		// the future to two separate operations.
-		b.logger.Errorf("Emitted lbPolicy %s from xDS Client is invalid: %v", update.lbPolicy, err)
-		return
-	}*/
-	lbCfg.XDSLBPolicy = update.lbPolicy // this is a pointer is this dangerous?
+	// I don't think this ^^^ read is dangerous, already been emitted
 	// cds doesn't care it's valid
 
 	// if I don't change unmarshal this just to get it as is, then in ParseConfig will need to marshal and do the same validation
@@ -608,20 +437,14 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 	}
 
 	var sc serviceconfig.LoadBalancingConfig
-	// b.odParser.ParseConfig(crLBCfgJSON)
 	if sc, err = b.crParser.ParseConfig(crLBCfgJSON); err != nil {
 		b.logger.Errorf("cds_balancer: config generated %v is invalid: %v", crLBCfgJSON, err)
-		// Should this do something else like explicitly return but that's not plumbed yet
+		// Should this do something else like explicitly return an error but that's not plumbed yet is this simple log fine?
+		return
 	}
 
 	// Within child type ParseConfig - parses so looks into registry there just like
 	// UnmarshalJSON on the iserviceconfig.BalancerConfig skips if not found
-
-	// persists internal od object to use later
-
-
-
-
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),
 		BalancerConfig: sc,
@@ -630,6 +453,11 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 		b.logger.Errorf("Encountered error when sending config {%+v} to child policy: %v", ccState, err)
 	}
 } // watch update triggers this
+// other than od behavior wrt xDS Defaults this black box of what happens
+// when a watch update comes should stay the same
+
+
+
 
 // for testing what way to verify/what will break (a lot)/fail to compile (a lot):
 
@@ -637,6 +465,10 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 
 // The cluster resolver sends down a priority config
 // ^^^ all my changes affect this layer
+
+
+
+
 
 
 // run is a long-running goroutine which handles all updates from gRPC. All

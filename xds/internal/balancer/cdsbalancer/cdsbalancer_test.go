@@ -234,20 +234,20 @@ func edsCCS(service string, countMax *uint32, enableLRS bool, xdslbpolicy *inter
 		Type:                  clusterresolver.DiscoveryMechanismTypeEDS,
 		Cluster:               service,
 		MaxConcurrentRequests: countMax,
-		OutlierDetection:      odConfig,
+		outlierDetection:      odConfig, // how to fix this
 	}
 	if enableLRS {
 		discoveryMechanism.LoadReportingServer = defaultTestAuthorityServerConfig
 	}
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: []clusterresolver.DiscoveryMechanism{discoveryMechanism},
-		XDSLBPolicy:         xdslbpolicy,
+		xdsLBPolicy:         *xdslbpolicy,
 	}
 
 	return balancer.ClientConnState{
 		BalancerConfig: lbCfg,
 	}
-}
+} // ugh now needs to go through ParseConfig?
 
 // setup creates a cdsBalancer and an edsBalancer (and overrides the
 // newChildBalancer function to return it), and also returns a cleanup function.
@@ -936,210 +936,6 @@ func (s) TestParseConfig(t *testing.T) {
 		})
 	}
 }
-
-func durationp(d time.Duration) *time.Duration {
-	return &d
-}
-
-func uint32p(i uint32) *uint32 {
-	return &i
-}
-
-func (s) TestOutlierDetectionToConfig(t *testing.T) {
-	tests := []struct {
-		name        string
-		od          *xdsresource.OutlierDetection
-		odLBCfgWant outlierdetection.LBConfig
-	}{
-		// "if the outlier_detection field is not set in the Cluster resource,
-		// a "no-op" outlier_detection config will be generated in the
-		// corresponding DiscoveryMechanism config, with interval set to the
-		// maximum possible value and all other fields unset." - A50
-		{
-			name:        "no-op-outlier-detection-config",
-			od:          nil,
-			odLBCfgWant: noopODLBCfg,
-		},
-		// "if the enforcing_success_rate field is set to 0, the config
-		// success_rate_ejection field will be null and all success_rate_*
-		// fields will be ignored." - A50
-		{
-			name: "enforcing-success-rate-zero",
-			od: &xdsresource.OutlierDetection{ // same question here wrt pointers to consts - but if you declare a comparer on OD to deref pointers, can be resued here as well
-				Interval:                       durationp(10 * time.Second),
-				BaseEjectionTime:               durationp(30 * time.Second),
-				MaxEjectionTime:                durationp(300 * time.Second),
-				MaxEjectionPercent:             uint32p(10),
-				SuccessRateStdevFactor:         uint32p(1900),
-				EnforcingSuccessRate:           uint32p(0),
-				SuccessRateMinimumHosts:        uint32p(5),
-				SuccessRateRequestVolume:       uint32p(100),
-				FailurePercentageThreshold:     uint32p(85),
-				EnforcingFailurePercentage:     uint32p(5),
-				FailurePercentageMinimumHosts:  uint32p(5),
-				FailurePercentageRequestVolume: uint32p(50),
-			},
-			odLBCfgWant: outlierdetection.LBConfig{
-				Interval:            internalserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:    internalserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:     internalserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent:  10,
-				SuccessRateEjection: nil,
-				FailurePercentageEjection: &outlierdetection.FailurePercentageEjection{
-					Threshold:             85,
-					EnforcementPercentage: 5,
-					MinimumHosts:          5,
-					RequestVolume:         50,
-				},
-			},
-		},
-		{
-			name: "enforcing-success-rate-null",
-			od: &xdsresource.OutlierDetection{
-				Interval:                       durationp(10 * time.Second),
-				BaseEjectionTime:               durationp(30 * time.Second),
-				MaxEjectionTime:                durationp(300 * time.Second),
-				MaxEjectionPercent:             uint32p(10),
-				SuccessRateStdevFactor:         uint32p(1900),
-				EnforcingSuccessRate:           nil, // should trigger this nested structure with defaults, and then eventually ParseConfig called and switched to 100
-				SuccessRateMinimumHosts:        uint32p(5),
-				SuccessRateRequestVolume:       uint32p(100),
-				FailurePercentageThreshold:     uint32p(85),
-				EnforcingFailurePercentage:     uint32p(5),
-				FailurePercentageMinimumHosts:  uint32p(5),
-				FailurePercentageRequestVolume: uint32p(50),
-			},
-			// Does this occur after ParseConfig()? If so will pick up defaults
-			odLBCfgWant: outlierdetection.LBConfig{
-				Interval:            10 * time.Second,
-				BaseEjectionTime:    30 * time.Second,
-				MaxEjectionTime:     300 * time.Second,
-				MaxEjectionPercent:  10,
-				// SuccessRateEjection will be configred if EnforcingSuccessRate
-				// is nil, EnforcementPercentage will thus pick up default.
-				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
-					StdevFactor: 1900,
-					EnforcementPercentage: 100,
-					MinimumHosts: 5,
-					RequestVolume: 100,
-				}/*Corresponding Success rate ejection - wait if after ParseConfig this will get 100 value yup after*/,
-				FailurePercentageEjection: &outlierdetection.FailurePercentageEjection{
-					Threshold:             85,
-					EnforcementPercentage: 5,
-					MinimumHosts:          5,
-					RequestVolume:         50,
-				},
-			},
-		},
-		// "If the enforcing_failure_percent field is set to 0 or null, the
-		// config failure_percent_ejection field will be null and all
-		// failure_percent_* fields will be ignored." - A50
-		{
-			name: "enforcing-failure-percentage-zero",
-			od: &xdsresource.OutlierDetection{
-				Interval:                       durationp(10 * time.Second),
-				BaseEjectionTime:               durationp(30 * time.Second),
-				MaxEjectionTime:                durationp(300 * time.Second),
-				MaxEjectionPercent:             uint32p(10),
-				SuccessRateStdevFactor:         uint32p(1900),
-				EnforcingSuccessRate:           uint32p(100),
-				SuccessRateMinimumHosts:        uint32p(5),
-				SuccessRateRequestVolume:       uint32p(100),
-				FailurePercentageThreshold:     uint32p(85),
-				EnforcingFailurePercentage:     uint32p(0),
-				FailurePercentageMinimumHosts:  uint32p(5),
-				FailurePercentageRequestVolume: uint32p(50),
-			},
-			odLBCfgWant: outlierdetection.LBConfig{
-				Interval:           internalserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:   internalserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:    internalserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent: 10,
-				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
-					StdevFactor:           1900,
-					EnforcementPercentage: 100,
-					MinimumHosts:          5,
-					RequestVolume:         100,
-				},
-				FailurePercentageEjection: nil,
-			},
-		},
-		{
-			name: "enforcing-failure-percentage-null",
-			od: &xdsresource.OutlierDetection{
-				Interval:                       durationp(10 * time.Second),
-				BaseEjectionTime:               durationp(30 * time.Second),
-				MaxEjectionTime:                durationp(300 * time.Second),
-				MaxEjectionPercent:             uint32p(10),
-				SuccessRateStdevFactor:         uint32p(1900),
-				EnforcingSuccessRate:           uint32p(100),
-				SuccessRateMinimumHosts:        uint32p(5),
-				SuccessRateRequestVolume:       uint32p(100),
-				FailurePercentageThreshold:     uint32p(85),
-				EnforcingFailurePercentage:     uint32p(0),
-				FailurePercentageMinimumHosts:  uint32p(5),
-				FailurePercentageRequestVolume: uint32p(50),
-			},
-			odLBCfgWant: outlierdetection.LBConfig{
-				Interval:           10 * time.Second,
-				BaseEjectionTime:   30 * time.Second,
-				MaxEjectionTime:    300 * time.Second,
-				MaxEjectionPercent: 10,
-				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
-					StdevFactor:           1900,
-					EnforcementPercentage: 100,
-					MinimumHosts:          5,
-					RequestVolume:         100,
-				},
-				FailurePercentageEjection: nil,
-			},
-		},
-		{ // coverts both failure percentage and enforcement percentage set and non zero
-			name: "normal-conversion",
-			od: &xdsresource.OutlierDetection{
-				Interval:                       durationp(10 * time.Second),
-				BaseEjectionTime:               durationp(30 * time.Second),
-				MaxEjectionTime:                durationp(300 * time.Second),
-				MaxEjectionPercent:             uint32p(10),
-				SuccessRateStdevFactor:         uint32p(1900),
-				EnforcingSuccessRate:           uint32p(100),
-				SuccessRateMinimumHosts:        uint32p(5),
-				SuccessRateRequestVolume:       uint32p(100),
-				FailurePercentageThreshold:     uint32p(85),
-				EnforcingFailurePercentage:     uint32p(5),
-				FailurePercentageMinimumHosts:  uint32p(5),
-				FailurePercentageRequestVolume: uint32p(50),
-			},
-			odLBCfgWant: outlierdetection.LBConfig{
-				Interval:           internalserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:   internalserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:    internalserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent: 10,
-				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
-					StdevFactor:           1900,
-					EnforcementPercentage: 100,
-					MinimumHosts:          5,
-					RequestVolume:         100,
-				},
-				FailurePercentageEjection: &outlierdetection.FailurePercentageEjection{
-					Threshold:             85,
-					EnforcementPercentage: 5,
-					MinimumHosts:          5,
-					RequestVolume:         50,
-				},
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			odLBCfgGot := outlierDetectionToConfig(test.od)
-			if diff := cmp.Diff(odLBCfgGot, test.odLBCfgWant); diff != "" {
-				t.Fatalf("outlierDetectionToConfig(%v) (-want, +got):\n%s", test.od, diff)
-			}
-		})
-	}
-}
-// This functionality gets moved to client I think just delete this test
 
 // json comes in
 // if nil cds makes noop, otherwise pass through

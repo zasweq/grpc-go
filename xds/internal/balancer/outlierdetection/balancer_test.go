@@ -567,6 +567,7 @@ func (s) TestParseConfig(t *testing.T) {
 }
 
 func (lbc *LBConfig) Equal(lbc2 *LBConfig) bool {
+	print("In od config equal")
 	if !lbc.EqualIgnoringChildPolicy(lbc2) {
 		return false
 	}

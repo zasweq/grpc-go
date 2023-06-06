@@ -189,22 +189,30 @@ type LBConfig struct {
 // parameter outside of the child policy, only comparing the Outlier Detection
 // specific configuration.
 func (lbc *LBConfig) EqualIgnoringChildPolicy(lbc2 *LBConfig) bool {
+	print("in equal ignoring child policy")
 	if lbc == nil && lbc2 == nil {
 		return true
 	}
 	if (lbc != nil) != (lbc2 != nil) {
+		print("Returning false")
 		return false
 	}
 	if lbc.Interval != lbc2.Interval {
+		print("lbc.Interval = ", lbc.Interval)
+		print("lbc2.Interval = ", lbc2.Interval)
+		print("returning false interval")
 		return false
 	}
 	if lbc.BaseEjectionTime != lbc2.BaseEjectionTime {
+		print("returning false bet")
 		return false
 	}
 	if lbc.MaxEjectionTime != lbc2.MaxEjectionTime {
+		print("returning false met")
 		return false
 	}
 	if lbc.MaxEjectionPercent != lbc2.MaxEjectionPercent {
+		print("returning false mep")
 		return false
 	}
 	if !lbc.SuccessRateEjection.Equal(lbc2.SuccessRateEjection) {

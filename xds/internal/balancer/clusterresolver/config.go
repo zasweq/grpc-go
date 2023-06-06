@@ -116,6 +116,8 @@ type DiscoveryMechanism struct {
 
 // Equal returns whether the DiscoveryMechanism is the same with the parameter.
 func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
+	print("In DM Equal")
+	od := &dm.outlierDetection
 	switch {
 	case dm.Cluster != b.Cluster:
 		return false
@@ -129,7 +131,10 @@ func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
 		return false
 	// Only if this is called after ParseConfig() has been called can this be expected...idek what fucking test this is used
 	// all other reads can change
-	case !dm.OutlierDetection.EqualIgnoringChildPolicy(&b.OutlierDetection):
+	// nil checks still correct?
+	// this ignores json luckily
+	case !od.EqualIgnoringChildPolicy(&b.outlierDetection):
+		print("od isn't equal")
 		return false
 	}
 
@@ -162,6 +167,7 @@ type LBConfig struct {
 	DiscoveryMechanisms []DiscoveryMechanism `json:"discoveryMechanisms,omitempty"`
 
 	// XDSLBPolicy specifies the policy for locality picking and endpoint picking.
+	// ignore this for cmp.Diff
 	XDSLBPolicy json.RawMessage `json:"xdsLbPolicy,omitempty"` // switch all usages of this as well to json message now
 
 	xdsLBPolicy internalserviceconfig.BalancerConfig
