@@ -230,6 +230,12 @@ func cdsCCS(cluster string, xdsC xdsclient.XDSClient) balancer.ClientConnState {
 // edsCCS is a helper function to construct a good update passed from the
 // cdsBalancer to the edsBalancer.
 func edsCCS(service string, countMax *uint32, enableLRS bool, xdslbpolicy *internalserviceconfig.BalancerConfig, odConfig outlierdetection.LBConfig) balancer.ClientConnState {
+	// either a: prepare JSON and send through ParseConfig to populate internal
+	// types for everything
+
+	// or b: like Doug did with internal config or w/e way to prepare clean JSON
+	// ^^^ I don't even know if this will work...
+
 	discoveryMechanism := clusterresolver.DiscoveryMechanism{
 		Type:                  clusterresolver.DiscoveryMechanismTypeEDS,
 		Cluster:               service,
@@ -248,6 +254,103 @@ func edsCCS(service string, countMax *uint32, enableLRS bool, xdslbpolicy *inter
 		BalancerConfig: lbCfg,
 	}
 } // ugh now needs to go through ParseConfig?
+
+// ^^^ This is the emission sent downward, essentially used to construct the
+// want to compare logically...
+
+// Those fields are still important to compare
+// We're moving the behavior of JSON -> internal config struct
+// to cluster resolver
+// so emissions should stay same, it's just populating
+
+// cmp.Diff calls the LBConfig which ignores I think and also DM
+// which all ignores JSON exported I think...
+
+// Do same thing except go through ParseConfig
+
+// send this the raw JSON, it will get marshaled and shouldn't be too bad.
+// yes it will go through parse config but parse config is already tested...
+// see what gets emitted from cluster resolver anyhow
+
+// noop lb config is {}
+// other stuff is simple - wrr locality in json?
+// other iserviceconfig.BalancerConfig I just need to figure out what they are in JSON
+
+// populated od config you can see from emissions from client
+func edsCCS2(service string, countMax *uint32, enableLRS bool, xdslbpolicy json.RawMessage, odConfig json.RawMessage) balancer.ClientConnState {
+	// *** or just pass this parser in...
+	builder := balancer.Get(clusterresolver.Name)
+	if builder == nil {
+		// Shouldn't happen, registered through imported Cluster Resolver,
+		// defensive programming.
+		logger.Errorf("%q LB policy is needed but not registered", clusterresolver.Name)
+		return balancer.ClientConnState{} // will fail the test eventually through erroring out of diff
+	}
+	crParser, ok := builder.(balancer.ConfigParser)
+	if !ok {
+		// Shouldn't happen, imported Cluster Resolver builder has this method.
+		logger.Errorf("%q LB policy does not implement a config parser", clusterresolver.Name)
+		return balancer.ClientConnState{}
+	}
+	// ***
+
+	// Either marshal both xDS LB policy and
+	// Outlier Detection to JSON
+	// or pass in two JSON
+
+	// odConfig // outlierdetection.LBConfig, need to convert to JSON
+	// xdslbpolicy // *internalserviceconfig.BalancerConfig, also need to convert this to JSON...
+
+	discoveryMechanism := clusterresolver.DiscoveryMechanism{
+		Type:                  clusterresolver.DiscoveryMechanismTypeEDS,
+		Cluster:               service,
+		MaxConcurrentRequests: countMax,
+		OutlierDetection:      odConfig, // how to fix this
+	}
+	if enableLRS {
+		discoveryMechanism.LoadReportingServer = defaultTestAuthorityServerConfig
+	}
+	lbCfg := &clusterresolver.LBConfig{
+		DiscoveryMechanisms: []clusterresolver.DiscoveryMechanism{discoveryMechanism},
+		XDSLBPolicy:         xdslbpolicy,
+	}
+
+	// Discuss this flow in top level comment
+	// prepare config to marshal as handleWatchUpdate
+
+	// lbCfg, err := crParse.ParseConfig(preparedJSON)...
+
+	// this comes from ParseConfig vvv
+
+	// crParser.ParseConfig(/*prepared JSON here*/)
+	crLBCfgJSON, err := json.Marshal(lbCfg)
+	if err != nil {
+		// Shouldn't happen, since we just prepared struct.
+		t.Errorf("cds_balancer: error marshalling prepared config: %v", lbCfg)
+		return balancer.ClientConnState{}
+	}
+
+	var sc serviceconfig.LoadBalancingConfig
+	if sc, err = crParser.ParseConfig(crLBCfgJSON); err != nil {
+		t.Errorf("cds_balancer: cluster_resolver config generated %v is invalid: %v", crLBCfgJSON, err)
+		// Should this do something else like explicitly return an error but that's not plumbed yet is this simple log fine?
+		return balancer.ClientConnState{}
+	}
+
+	return balancer.ClientConnState{
+		// Only ignore resolver state attributes?
+		BalancerConfig: sc,
+	}
+} // before fixing everything though, I doooo think this is
+// what I wanted/desired for implementation, but perhaps really triage...
+
+// I think all I need to do for these unit tests is get this callsite working ^^^,
+// delete od xDS Default tests (done)
+// and then maybe add an OD one where it gets full JSON (can't I just see
+// expected JSON emission with everything)
+// if I pass OD JSON to this helper can also correctly mimic client conn state sent downward
+
+
 
 // setup creates a cdsBalancer and an edsBalancer (and overrides the
 // newChildBalancer function to return it), and also returns a cleanup function.

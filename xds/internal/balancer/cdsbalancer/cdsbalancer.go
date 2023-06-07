@@ -284,16 +284,11 @@ func buildProviderFunc(configs map[string]*certprovider.BuildableConfig, instanc
 	return provider, nil
 }
 
-// ParseConfig() on that JSON, pass the opaque struct returned from that downward
+// Now this gets passed JSON, so need utilities to pass JSON for unit tests, as that is what this is doing...mainly the od
+// custom lb JSON was already passed and still accounted for just in cluster resolver
+// just no OD defaults but already deleted
+// just od with fields is all you really need
 
-// so gets xDS Defaults (through rules + defaults), such as 100 because goes
-// through rule and then ParseConfig
-
-// ^^^ We decided to add this to ParseConfig() of cluster resolver
-
-
-
-// Now this gets passed JSON, so need utilities to pass JSON for unit tests, as that is what this is doing...
 
 // handleWatchUpdate handles a watch update from the xDS Client. Good updates
 // lead to clientConn updates being invoked on the underlying cluster_resolver balancer.
@@ -368,9 +363,6 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			b.logger.Infof("Unexpected cluster type %v when handling update from cluster handler", cu.ClusterType)
 		}
 		if envconfig.XDSOutlierDetection {
-			// I think pointing to same cu memory and writing is not a problem
-			// wrt race conditions because at this point it's done and nothing
-			// else is writing to memory?
 			odJSON := cu.OutlierDetection
 			// "In the cds LB policy, if the outlier_detection field is not set in
 			// the Cluster resource, a "no-op" outlier_detection config will be
@@ -378,87 +370,48 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			// fields unset." - A50
 			if odJSON == nil {
 				// json marshal into it right - I think we can skip though lol
-				odJSON = json.RawMessage(`{}`) // this will cause top three to get defaults but it is a no-op, is this fine...?
-				// if parseconfig overwrites not set with defaults is this wai/even possible?
+				odJSON = json.RawMessage(`{}`) // This will pick up top level defaults in Cluster Resolver ParseConfig, but sre and fpe will be nil still so still a "no-op" config.
 			}
 			dms[i].OutlierDetection = odJSON
 		}
 	}
 
-
-
-
-
-	// Switch this codeblock to prepare JSON, and then call Parse Config
-	// discovery mechanism struct and also xds lb policy raw JSON
-	// pass both down
-	// raw JSON here - the OD config Marshaled?
-
+	// Prepare Cluster Resolver config JSON and Parse it to get configuration to
+	// send downward.
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: dms,
-		XDSLBPolicy: update.lbPolicy, // this is a pointer is this dangerous?
+		XDSLBPolicy: update.lbPolicy,
 	}
-	// I don't think this ^^^ read is dangerous, already been emitted
-	// cds doesn't care it's valid
-
-	// if I don't change unmarshal this just to get it as is, then in ParseConfig will need to marshal and do the same validation
-
-	// I think switch this to just send down rawJSON as well, same deal
-
-
-	// json from client for OD and endpoint picking
-
-	// send both down as JSON,
-
-	// json marshal struct to fill out cluster resolver config, then marshal that and parse config
-	// but now can fill it out jere
-
-	// Switch the config above to have exported json type for easy population
-	// clusterresolver.LBConfig{
-	//			ODCfg json.RawMessage    json annotation
-	//          etc.
-	// }
-
 	// technically, this odcfg is part of the discovery mechanisms so will need to change some tests there
 
-	// fill out exported struct (including discovery mechanisms)
-
-	// marshal that exported struct into JSON
-	// if I fill out just the raw JSON in the exported struct will this flow work correctly?
-
-	// wt.ParseConfig on that JSON
-	// so this balancer needs to hold onto a weighted target parser, already looks at exported so already coupled
-	// I think needs to come at build time
 	crLBCfgJSON, err := json.Marshal(lbCfg)
 	if err != nil {
-		// Shouldn't happen.
+		// Shouldn't happen, since we just prepared struct.
 		b.logger.Errorf("cds_balancer: error marshalling prepared config: %v", lbCfg)
 		return
 	}
 
 	var sc serviceconfig.LoadBalancingConfig
 	if sc, err = b.crParser.ParseConfig(crLBCfgJSON); err != nil {
-		b.logger.Errorf("cds_balancer: config generated %v is invalid: %v", crLBCfgJSON, err)
+		b.logger.Errorf("cds_balancer: cluster_resolver config generated %v is invalid: %v", crLBCfgJSON, err) // could error from od failing or xds lb policy failing? Exit out with a return? What does master do?
 		// Should this do something else like explicitly return an error but that's not plumbed yet is this simple log fine?
 		return
 	}
 
-	// Within child type ParseConfig - parses so looks into registry there just like
-	// UnmarshalJSON on the iserviceconfig.BalancerConfig skips if not found
 	ccState := balancer.ClientConnState{
 		ResolverState:  xdsclient.SetClient(resolver.State{}, b.xdsClient),
 		BalancerConfig: sc,
 	}
 	if err := b.childLB.UpdateClientConnState(ccState); err != nil {
 		b.logger.Errorf("Encountered error when sending config {%+v} to child policy: %v", ccState, err)
-	}
+	} // just eats errors so don't need to plumb back
 } // watch update triggers this
 // other than od behavior wrt xDS Defaults this black box of what happens
 // when a watch update comes should stay the same
 
 
 
-
+// layers of stuff we're changing
 // for testing what way to verify/what will break (a lot)/fail to compile (a lot):
 
 // In CDS Update from xDS client receive two JSONs OD and endpoint picking and locality picking
