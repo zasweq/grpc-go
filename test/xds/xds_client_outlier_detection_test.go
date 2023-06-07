@@ -95,7 +95,7 @@ func (s) TestOutlierDetection_NoopConfig(t *testing.T) {
 
 // change this docstring to parameterized od
 
-func clientResourcesMultipleBackendsAndOD(params e2e.ResourceParams, ports []uint32, , od *v3clusterpb.OutlierDetection) e2e.UpdateOptions {
+func clientResourcesMultipleBackendsAndOD(params e2e.ResourceParams, ports []uint32, od *v3clusterpb.OutlierDetection) e2e.UpdateOptions {
 	routeConfigName := "route-" + params.DialTarget
 	clusterName := "cluster-" + params.DialTarget
 	endpointsName := "endpoints-" + params.DialTarget
@@ -103,7 +103,7 @@ func clientResourcesMultipleBackendsAndOD(params e2e.ResourceParams, ports []uin
 		NodeID:    params.NodeID,
 		Listeners: []*v3listenerpb.Listener{e2e.DefaultClientListener(params.DialTarget, routeConfigName)},
 		Routes:    []*v3routepb.RouteConfiguration{e2e.DefaultRouteConfig(routeConfigName, params.DialTarget, clusterName)},
-		Clusters:  []*v3clusterpb.Cluster{clusterWithOutlierDetection(clusterName, endpointsName, params.SecLevel)},
+		Clusters:  []*v3clusterpb.Cluster{clusterWithOutlierDetection(clusterName, endpointsName, params.SecLevel, od)},
 		Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.DefaultEndpoint(endpointsName, params.Host, ports)},
 	}
 }
@@ -285,14 +285,21 @@ func (s) TestOutlierDetectionXDSDefaultOn(t *testing.T) {
 	defer backend3.Stop()
 
 
-	// The only difference is this section. This needs to set CDS resources with no OD configured.
+	// The only difference is this section. This needs to set CDS resources with no OD configured. T-test?
 	const serviceName = "my-service-client-side-xds"
 	resources := clientResourcesMultipleBackendsAndOD(e2e.ResourceParams{
 		DialTarget: serviceName,
 		NodeID:     nodeID,
 		Host:       "localhost",
 		SecLevel:   e2e.SecurityLevelNone,
-	}, []uint32{port1, port2, port3}, &v3clusterpb.OutlierDetection{}) // also test nil is a no-op? I think this is implicitly tested already, this will pick up success rate ejection defaults though, which might not fit in with the scheme with default parameters.
+	}, []uint32{port1, port2, port3}, &v3clusterpb.OutlierDetection{
+		// Need to add this to trigger ejection within test time frame. Need to set knobs.
+		Interval: &durationpb.Duration{Nanos: 50000000},
+		// EnforcingSuccessRateSet to nil, causes algorithm to be turned on.
+		SuccessRateMinimumHosts: &wrapperspb.UInt32Value{Value: 1},
+		SuccessRateRequestVolume: &wrapperspb.UInt32Value{Value: 8},
+		SuccessRateStdevFactor: &wrapperspb.UInt32Value{Value: 1},
+	}) // also test nil is a no-op? I think this is implicitly tested already, this will pick up success rate ejection defaults though, which might not fit in with the scheme with default parameters.
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	if err := managementServer.Update(ctx, resources); err != nil {
