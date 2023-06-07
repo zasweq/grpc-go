@@ -59,6 +59,7 @@ var (
 		},
 	}
 	noopODLBCfg = outlierdetection.LBConfig{} // mention in PR description change this
+	noopODLBCfgJSON, _ = json.Marshal(noopODLBCfg) // should be {}
 	wrrLocalityLBConfig = &internalserviceconfig.BalancerConfig{
 		Name: wrrlocality.Name,
 		Config: &wrrlocality.LBConfig{
@@ -164,7 +165,8 @@ func (tb *testEDSBalancer) waitForClientConnUpdate(ctx context.Context, wantCCS 
 	if xdsclient.FromResolverState(gotCCS.ResolverState) == nil {
 		return fmt.Errorf("want resolver state with XDSClient attached, got one without")
 	}
-	if diff := cmp.Diff(gotCCS, wantCCS, cmpopts.IgnoreFields(resolver.State{}, "Attributes")); diff != "" {
+	// calls into lower level,
+	if diff := cmp.Diff(gotCCS, wantCCS, cmpopts.IgnoreFields(resolver.State{}, "Attributes"), cmp.AllowUnexported(clusterresolver.LBConfig{})); diff != "" {
 		return fmt.Errorf("received unexpected ClientConnState, diff (-got +want): %v", diff)
 	}
 	return nil
@@ -229,7 +231,7 @@ func cdsCCS(cluster string, xdsC xdsclient.XDSClient) balancer.ClientConnState {
 
 // edsCCS is a helper function to construct a good update passed from the
 // cdsBalancer to the edsBalancer.
-func edsCCS(service string, countMax *uint32, enableLRS bool, xdslbpolicy *internalserviceconfig.BalancerConfig, odConfig outlierdetection.LBConfig) balancer.ClientConnState {
+/*func edsCCS(service string, countMax *uint32, enableLRS bool, xdslbpolicy *internalserviceconfig.BalancerConfig, odConfig outlierdetection.LBConfig) balancer.ClientConnState {
 	// either a: prepare JSON and send through ParseConfig to populate internal
 	// types for everything
 
@@ -253,7 +255,7 @@ func edsCCS(service string, countMax *uint32, enableLRS bool, xdslbpolicy *inter
 	return balancer.ClientConnState{
 		BalancerConfig: lbCfg,
 	}
-} // ugh now needs to go through ParseConfig?
+}*/ // ugh now needs to go through ParseConfig?
 
 // ^^^ This is the emission sent downward, essentially used to construct the
 // want to compare logically...
@@ -277,6 +279,9 @@ func edsCCS(service string, countMax *uint32, enableLRS bool, xdslbpolicy *inter
 // other iserviceconfig.BalancerConfig I just need to figure out what they are in JSON
 
 // populated od config you can see from emissions from client
+
+// somewhere in top level comment talk about how this actually calls ParseConfig on the cluster resolver parser
+// just like cds and also returns errors in certain cases
 func edsCCS2(service string, countMax *uint32, enableLRS bool, xdslbpolicy json.RawMessage, odConfig json.RawMessage) balancer.ClientConnState {
 	// *** or just pass this parser in...
 	builder := balancer.Get(clusterresolver.Name)
@@ -326,13 +331,13 @@ func edsCCS2(service string, countMax *uint32, enableLRS bool, xdslbpolicy json.
 	crLBCfgJSON, err := json.Marshal(lbCfg)
 	if err != nil {
 		// Shouldn't happen, since we just prepared struct.
-		t.Errorf("cds_balancer: error marshalling prepared config: %v", lbCfg)
+		logger.Errorf("cds_balancer: error marshalling prepared config: %v", lbCfg)
 		return balancer.ClientConnState{}
 	}
 
 	var sc serviceconfig.LoadBalancingConfig
 	if sc, err = crParser.ParseConfig(crLBCfgJSON); err != nil {
-		t.Errorf("cds_balancer: cluster_resolver config generated %v is invalid: %v", crLBCfgJSON, err)
+		logger.Errorf("cds_balancer: cluster_resolver config generated %v is invalid: %v", crLBCfgJSON, err)
 		// Should this do something else like explicitly return an error but that's not plumbed yet is this simple log fine?
 		return balancer.ClientConnState{}
 	}
@@ -503,7 +508,7 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 				LRSServerConfig: xdsresource.ClusterLRSServerSelf,
 				LBPolicy:        wrrLocalityLBConfigJSON,
 			},
-			wantCCS: edsCCS(serviceName, nil, true, wrrLocalityLBConfig, noopODLBCfg),
+			wantCCS: edsCCS2(serviceName, nil, true, wrrLocalityLBConfigJSON, noopODLBCfgJSON),
 		},
 		{
 			name: "happy-case-without-lrs",
@@ -511,7 +516,7 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 				ClusterName: serviceName,
 				LBPolicy:    wrrLocalityLBConfigJSON,
 			},
-			wantCCS: edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg),
+			wantCCS: edsCCS2(serviceName, nil, false, wrrLocalityLBConfigJSON, noopODLBCfgJSON),
 		},
 		{
 			name: "happy-case-with-ring-hash-lb-policy",
@@ -519,10 +524,7 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 				ClusterName: serviceName,
 				LBPolicy:    ringHashLBConfigJSON,
 			},
-			wantCCS: edsCCS(serviceName, nil, false, &internalserviceconfig.BalancerConfig{
-				Name:   ringhash.Name,
-				Config: &ringhash.LBConfig{MinRingSize: 10, MaxRingSize: 100},
-			}, noopODLBCfg),
+			wantCCS: edsCCS2(serviceName, nil, false, ringHashLBConfigJSON, noopODLBCfgJSON), // declare noopODLBCfgJSON = {}
 		}, // nil od emission = no-op lb config sent downward, so implicitly tested that it converts there
 		{
 			name: "happy-case-outlier-detection-xds-defaults",
@@ -532,23 +534,15 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 				OutlierDetection: json.RawMessage(`{
 				"successRateEjection": {}
 			}`),
+				LBPolicy:    wrrLocalityLBConfigJSON,
 			},
 			// all defaults including sre defaults.
 
-			// vvv these should all be defaults...
+			// vvv these should all be defaults...wait this goes through same ParseConfig(), which is tested in cluster resolver
 
-			wantCCS: edsCCS(serviceName, nil, false, wrrLocalityLBConfig, outlierdetection.LBConfig{
-				Interval:           internalserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:   internalserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:    internalserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent: 10,
-				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
-					StdevFactor:           1900,
-					EnforcementPercentage: 100,
-					MinimumHosts:          5,
-					RequestVolume:         100,
-				},
-			}),
+			wantCCS: edsCCS2(serviceName, nil, false, wrrLocalityLBConfigJSON, json.RawMessage(`{
+				"successRateEjection": {}
+			}`)),
 		},
 		{
 			name: "happy-case-outlier-detection-all-fields-set",
@@ -582,7 +576,7 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 					"minimumHosts": 5,
 					"requestVolume": 50
 				}
-			}`),
+			}`), // variable - sent through parse config anyway
 
 					/*&xdsresource.OutlierDetection{
 					Interval:                       10 * time.Second,
@@ -600,24 +594,24 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 				},*/
 				LBPolicy: wrrLocalityLBConfigJSON,
 			}, // I still think this is a valid test
-			wantCCS: edsCCS(serviceName, nil, false, wrrLocalityLBConfig, outlierdetection.LBConfig{
-				Interval:           internalserviceconfig.Duration(10 * time.Second),
-				BaseEjectionTime:   internalserviceconfig.Duration(30 * time.Second),
-				MaxEjectionTime:    internalserviceconfig.Duration(300 * time.Second),
-				MaxEjectionPercent: 10,
-				SuccessRateEjection: &outlierdetection.SuccessRateEjection{
-					StdevFactor:           1900,
-					EnforcementPercentage: 100,
-					MinimumHosts:          5,
-					RequestVolume:         100,
+			wantCCS: edsCCS2(serviceName, nil, false, wrrLocalityLBConfigJSON, json.RawMessage(`{
+				"interval": "10s",
+				"baseEjectionTime": "30s",
+				"maxEjectionTime": "300s",
+				"maxEjectionPercent": 10,
+				"successRateEjection": {
+					"stdevFactor": 1900,
+					"enforcementPercentage": 100,
+					"minimumHosts": 5,
+					"requestVolume": 100
 				},
-				FailurePercentageEjection: &outlierdetection.FailurePercentageEjection{
-					Threshold:             85,
-					EnforcementPercentage: 5,
-					MinimumHosts:          5,
-					RequestVolume:         50,
-				},
-			}),
+				"failurePercentageEjection": {
+					"threshold": 85,
+					"enforcementPercentage": 5,
+					"minimumHosts": 5,
+					"requestVolume": 50
+				}
+			}`)),
 		},
 	}
 
@@ -625,6 +619,8 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 			defer ctxCancel()
+			// comment about how it ignores top level JSON exported fields but does compare
+			// parsed structs
 			if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{test.cdsUpdate, test.updateErr}, test.wantCCS, edsB); err != nil {
 				t.Fatal(err)
 			}
@@ -688,7 +684,7 @@ func (s) TestHandleClusterUpdateError(t *testing.T) {
 		ClusterName: serviceName,
 		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
-	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
+	wantCCS := edsCCS2(serviceName, nil, false, wrrLocalityLBConfigJSON, noopODLBCfgJSON)
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
 		t.Fatal(err)
 	}
@@ -776,7 +772,7 @@ func (s) TestResolverError(t *testing.T) {
 		ClusterName: serviceName,
 		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
-	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
+	wantCCS := edsCCS2(serviceName, nil, false, wrrLocalityLBConfigJSON, noopODLBCfgJSON)
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
 		t.Fatal(err)
 	}
@@ -828,7 +824,7 @@ func (s) TestUpdateSubConnState(t *testing.T) {
 		ClusterName: serviceName,
 		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
-	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
+	wantCCS := edsCCS2(serviceName, nil, false, wrrLocalityLBConfigJSON, noopODLBCfgJSON)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer ctxCancel()
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
@@ -866,7 +862,7 @@ func (s) TestCircuitBreaking(t *testing.T) {
 		MaxRequests: &maxRequests,
 		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
-	wantCCS := edsCCS(clusterName, &maxRequests, false, wrrLocalityLBConfig, noopODLBCfg)
+	wantCCS := edsCCS2(clusterName, &maxRequests, false, wrrLocalityLBConfigJSON, noopODLBCfgJSON)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer ctxCancel()
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
@@ -903,7 +899,7 @@ func (s) TestClose(t *testing.T) {
 		ClusterName: serviceName,
 		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
-	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
+	wantCCS := edsCCS2(serviceName, nil, false, wrrLocalityLBConfigJSON, noopODLBCfgJSON)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer ctxCancel()
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {
@@ -977,7 +973,7 @@ func (s) TestExitIdle(t *testing.T) {
 		ClusterName: serviceName,
 		LBPolicy:    wrrLocalityLBConfigJSON,
 	}
-	wantCCS := edsCCS(serviceName, nil, false, wrrLocalityLBConfig, noopODLBCfg)
+	wantCCS := edsCCS2(serviceName, nil, false, wrrLocalityLBConfigJSON, noopODLBCfgJSON)
 	ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer ctxCancel()
 	if err := invokeWatchCbAndWait(ctx, xdsC, cdsWatchInfo{cdsUpdate, nil}, wantCCS, edsB); err != nil {

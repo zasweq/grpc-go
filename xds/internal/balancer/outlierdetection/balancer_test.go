@@ -166,6 +166,7 @@ func (s) TestParseConfig(t *testing.T) {
 				},
 			},
 		},
+		// VVV This is xDS Default
 		{ // ugh but it also validates child policy is present...do we really need to keep that assertion?
 			name: "success-rate-ejection-present-but-no-fields",
 			input: `{
