@@ -58,6 +58,8 @@ type SuccessRateEjection struct {
 // recursion.
 type successRateEjection SuccessRateEjection
 
+// UnmarshalJSON unmarshals JSON into SuccessRateEjection. If a
+// SuccessRateEjection field is not set, that field will get it's default value.
 func (sre *SuccessRateEjection) UnmarshalJSON(j []byte) error {
 	sre.StdevFactor = 1900
 	sre.EnforcementPercentage = 100
@@ -121,6 +123,9 @@ type FailurePercentageEjection struct {
 // recursion.
 type failurePercentageEjection FailurePercentageEjection
 
+// UnmarshalJSON unmarshals JSON into FailurePercentageEjection. If a
+// FailurePercentageEjection field is not set, that field will get it's default
+// value.
 func (fpe *FailurePercentageEjection) UnmarshalJSON(j []byte) error {
 	fpe.Threshold = 85
 	fpe.EnforcementPercentage = 0
