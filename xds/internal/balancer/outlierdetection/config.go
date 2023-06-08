@@ -19,11 +19,10 @@ package outlierdetection
 
 import (
 	"encoding/json"
+
 	iserviceconfig "google.golang.org/grpc/internal/serviceconfig"
 	"google.golang.org/grpc/serviceconfig"
 )
-
-// Do I also need to switch these structs to pointers? to encapsulate the ternary operator
 
 // SuccessRateEjection is parameters for the success rate ejection algorithm.
 // This algorithm monitors the request success rate for all endpoints and ejects
@@ -64,17 +63,12 @@ func (sre *SuccessRateEjection) UnmarshalJSON(j []byte) error {
 	sre.MinimumHosts = 5
 	sre.RequestVolume = 100
 
-	print("about to overwrite default fields in success rate ejection...")
+	print("about to overwrite default fields in success rate ejection...") // commit something with all the print, then run tests then if everything passes delete
 	// Unmarshal JSON on a type with zero values for methods...
 	// overwrites defaults *if set*, leaves alone if not
 	// typecast to avoid infinite recursion
 	return json.Unmarshal(j, (*successRateEjection)(sre))
 }
-
-// Scale up ParseConfig test cases a lot...this needs to come first, xDS Client test
-// depends on this
-
-// will these equal need to change?
 
 // Equal returns whether the SuccessRateEjection is the same with the parameter.
 func (sre *SuccessRateEjection) Equal(sre2 *SuccessRateEjection) bool {

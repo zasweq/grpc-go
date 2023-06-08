@@ -334,7 +334,7 @@ func newLBConfigWithOneEDS(edsServiceName string) *LBConfig {
 
 func newLBConfigWithOneEDSAndOutlierDetection(edsServiceName string, odCfg outlierdetection.LBConfig) *LBConfig {
 	lbCfg := newLBConfigWithOneEDS(edsServiceName)
-	lbCfg.DiscoveryMechanisms[0].outlierDetection = odCfg // what to do about what's passed in? just lowercase (if test goes through ParseConfig need the uppercase json version too)
+	lbCfg.DiscoveryMechanisms[0].outlierDetection = odCfg
 	return lbCfg
 }
 
@@ -417,7 +417,3 @@ func (s) TestOutlierDetection(t *testing.T) {
 		t.Fatalf("EDS impl got unexpected update: %v", err)
 	}
 }
-
-
-// also need to change the invariants of no-op config because no it's no fields set
-// so sre and fpe == null?

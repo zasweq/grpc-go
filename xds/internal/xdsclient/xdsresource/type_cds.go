@@ -50,8 +50,6 @@ const (
 	ClusterLRSServerSelf
 )
 
-// Any tests that used to use OD need to be deleted
-
 // ClusterUpdate contains information from a received CDS response, which is of
 // interest to the registered CDS watcher.
 type ClusterUpdate struct {
@@ -82,7 +80,7 @@ type ClusterUpdate struct {
 
 	// OutlierDetection is the outlier detection configuration for this cluster.
 	// If nil, it means this cluster does not use the outlier detection feature.
-	OutlierDetection json.RawMessage // nil = noop, others get defaults, thus this keeps that invariant/branch possible
+	OutlierDetection json.RawMessage
 
 	// Raw is the resource from the xds response.
 	Raw *anypb.Any

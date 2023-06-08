@@ -90,11 +90,8 @@ func (s) TestOutlierDetection_NoopConfig(t *testing.T) {
 // clientResourcesMultipleBackendsAndOD returns xDS resources which correspond
 // to multiple upstreams, corresponding different backends listening on
 // different localhost:port combinations. The resources also configure an
-// Outlier Detection Balancer set up with Failure Percentage Algorithm, which
-// ejects endpoints based on failure rate.
-
-// change this docstring to parameterized od
-
+// Outlier Detection Balancer configured through the passed in Outlier Detection
+// proto.
 func clientResourcesMultipleBackendsAndOD(params e2e.ResourceParams, ports []uint32, od *v3clusterpb.OutlierDetection) e2e.UpdateOptions {
 	routeConfigName := "route-" + params.DialTarget
 	clusterName := "cluster-" + params.DialTarget
@@ -107,23 +104,7 @@ func clientResourcesMultipleBackendsAndOD(params e2e.ResourceParams, ports []uin
 		Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.DefaultEndpoint(endpointsName, params.Host, ports)},
 	}
 }
-// nil should just work normally with no ejection but this is implicitly tested otherwise in other tests
 
-
-/*
-Change callsites to:
-&v3clusterpb.OutlierDetection{
-		Interval:                       &durationpb.Duration{Nanos: 50000000}, // .5 seconds
-		BaseEjectionTime:               &durationpb.Duration{Seconds: 30},
-		MaxEjectionTime:                &durationpb.Duration{Seconds: 300},
-		MaxEjectionPercent:             &wrapperspb.UInt32Value{Value: 1},
-		FailurePercentageThreshold:     &wrapperspb.UInt32Value{Value: 50},
-		EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 100},
-		FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 8},
-		FailurePercentageMinimumHosts:  &wrapperspb.UInt32Value{Value: 3},
-	}
-
-*/
 func clusterWithOutlierDetection(clusterName, edsServiceName string, secLevel e2e.SecurityLevel, od *v3clusterpb.OutlierDetection) *v3clusterpb.Cluster {
 	cluster := e2e.DefaultCluster(clusterName, edsServiceName, secLevel)
 	cluster.OutlierDetection = od
@@ -256,14 +237,13 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 	}
 }
 
-// Test... tests that Outlier Detection is by default configured on in the xDS Flow, if the Outlier Detection message is present with nothing set.
-// The test setups and xDS system with xDS resources with Outlier Detection present in the CDS update, but with nothing set,
-// and asserts that Outlier Detection is correctly turned on.
+// TestOutlierDetectionXDSDefaultOn tests that Outlier Detection is by default
+// configured on in the xDS Flow. If the Outlier Detection proto message is
+// present with SuccessRateEjection unset, then Outlier Detection should be
+// turned on. The test setups and xDS system with xDS resources with Outlier
+// Detection present in the CDS update, but with SuccessRateEjection unset, and
+// asserts that Outlier Detection is correctly turned on and works.
 func (s) TestOutlierDetectionXDSDefaultOn(t *testing.T) {
-
-	// Configure CDS resources with Outlier Detection set but no fields set.
-	// This should cause Outlier Detection to be configured with SuccessRateEjection with it's default values,
-	// and thus Outlier Detection should correctly work and eject upstreams.
 	managementServer, nodeID, _, r, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
 	defer cleanup()
 
@@ -285,7 +265,11 @@ func (s) TestOutlierDetectionXDSDefaultOn(t *testing.T) {
 	defer backend3.Stop()
 
 
-	// The only difference is this section. This needs to set CDS resources with no OD configured. T-test?
+	// Configure CDS resources with Outlier Detection set but
+	// EnforcingSuccessRate unset. This should cause Outlier Detection to be
+	// configured with SuccessRateEjection present in configuration, which will
+	// eventually be populated with it's default values, and thus Outlier
+	// Detection should correctly work and eject upstreams.
 	const serviceName = "my-service-client-side-xds"
 	resources := clientResourcesMultipleBackendsAndOD(e2e.ResourceParams{
 		DialTarget: serviceName,
@@ -293,13 +277,13 @@ func (s) TestOutlierDetectionXDSDefaultOn(t *testing.T) {
 		Host:       "localhost",
 		SecLevel:   e2e.SecurityLevelNone,
 	}, []uint32{port1, port2, port3}, &v3clusterpb.OutlierDetection{
-		// Need to add this to trigger ejection within test time frame. Need to set knobs.
+		// Need to set knobs to trigger ejection within the test time frame.
 		Interval: &durationpb.Duration{Nanos: 50000000},
-		// EnforcingSuccessRateSet to nil, causes algorithm to be turned on.
+		// EnforcingSuccessRateSet to nil, causes success rate algorithm to be turned on.
 		SuccessRateMinimumHosts: &wrapperspb.UInt32Value{Value: 1},
 		SuccessRateRequestVolume: &wrapperspb.UInt32Value{Value: 8},
 		SuccessRateStdevFactor: &wrapperspb.UInt32Value{Value: 1},
-	}) // also test nil is a no-op? I think this is implicitly tested already, this will pick up success rate ejection defaults though, which might not fit in with the scheme with default parameters.
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	if err := managementServer.Update(ctx, resources); err != nil {

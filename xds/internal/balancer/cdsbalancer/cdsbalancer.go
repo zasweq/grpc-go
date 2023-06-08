@@ -284,12 +284,6 @@ func buildProviderFunc(configs map[string]*certprovider.BuildableConfig, instanc
 	return provider, nil
 }
 
-// Now this gets passed JSON, so need utilities to pass JSON for unit tests, as that is what this is doing...mainly the od
-// custom lb JSON was already passed and still accounted for just in cluster resolver
-// just no OD defaults but already deleted
-// just od with fields is all you really need
-
-
 // handleWatchUpdate handles a watch update from the xDS Client. Good updates
 // lead to clientConn updates being invoked on the underlying cluster_resolver balancer.
 func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
@@ -369,21 +363,21 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 			// generated in the corresponding DiscoveryMechanism config, with all
 			// fields unset." - A50
 			if odJSON == nil {
-				// json marshal into it right - I think we can skip though lol
-				odJSON = json.RawMessage(`{}`) // This will pick up top level defaults in Cluster Resolver ParseConfig, but sre and fpe will be nil still so still a "no-op" config.
+				// This will pick up top level defaults in Cluster Resolver
+				// ParseConfig, but sre and fpe will be nil still so still a
+				// "no-op" config.
+				odJSON = json.RawMessage(`{}`)
 			}
 			dms[i].OutlierDetection = odJSON
 		}
 	}
 
-	// Prepare Cluster Resolver config JSON and Parse it to get configuration to
-	// send downward.
+	// Prepare Cluster Resolver config, marshal into JSON, and then Parse it to
+	// get configuration to send downward to Cluster Resolver.
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: dms,
 		XDSLBPolicy: update.lbPolicy,
 	}
-	// technically, this odcfg is part of the discovery mechanisms so will need to change some tests there
-
 	crLBCfgJSON, err := json.Marshal(lbCfg)
 	if err != nil {
 		// Shouldn't happen, since we just prepared struct.
@@ -393,8 +387,7 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 
 	var sc serviceconfig.LoadBalancingConfig
 	if sc, err = b.crParser.ParseConfig(crLBCfgJSON); err != nil {
-		b.logger.Errorf("cds_balancer: cluster_resolver config generated %v is invalid: %v", crLBCfgJSON, err) // could error from od failing or xds lb policy failing? Exit out with a return? What does master do?
-		// Should this do something else like explicitly return an error but that's not plumbed yet is this simple log fine?
+		b.logger.Errorf("cds_balancer: cluster_resolver config generated %v is invalid: %v", crLBCfgJSON, err)
 		return
 	}
 
@@ -404,25 +397,8 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 	}
 	if err := b.childLB.UpdateClientConnState(ccState); err != nil {
 		b.logger.Errorf("Encountered error when sending config {%+v} to child policy: %v", ccState, err)
-	} // just eats errors so don't need to plumb back
-} // watch update triggers this
-// other than od behavior wrt xDS Defaults this black box of what happens
-// when a watch update comes should stay the same
-
-
-
-// layers of stuff we're changing
-// for testing what way to verify/what will break (a lot)/fail to compile (a lot):
-
-// In CDS Update from xDS client receive two JSONs OD and endpoint picking and locality picking
-
-// The cluster resolver sends down a priority config
-// ^^^ all my changes affect this layer
-
-
-
-
-
+	}
+}
 
 // run is a long-running goroutine which handles all updates from gRPC. All
 // methods which are invoked directly by gRPC or xdsClient simply push an

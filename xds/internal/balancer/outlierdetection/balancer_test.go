@@ -59,24 +59,6 @@ func Test(t *testing.T) {
 
 // TestParseConfig verifies the ParseConfig() method in the Outlier Detection
 // Balancer.
-
-// Nothing is set - all defaults top layer, no new layer...
-// Partly set top layer
-// Something is set top layer, picks those up
-
-
-
-// nothing set top layer (to focus on new layer)
-// sre set but nothing full defaults
-// sre set partially should get partial + defaults
-
-// nothing set top layer (to focus on new layer)
-// fpe set but nothing full defaults
-// fpe set partially should get partial + defaults
-
-// every field is set -> layered structure refers that
-
-// Man I feel like this will have to change dramatically wrt default logic:
 func (s) TestParseConfig(t *testing.T) {
 	const errParseConfigName = "errParseConfigBalancer"
 	stub.Register(errParseConfigName, stub.BalancerFuncs{
@@ -100,19 +82,12 @@ func (s) TestParseConfig(t *testing.T) {
 		defaultFailurePercentageMinimumHosts  = 5
 		defaultFailurePercentageRequestVolume = 50
 	)
-	// Have to change exclude child policy somehow
-	// from check, if not present it's fine return something without it
-	// if present, actually validate it, if it is present, validate by calling ParseConfig and pass that down...
 	tests := []struct {
 		name    string
 		input   string
 		wantCfg serviceconfig.LoadBalancingConfig
 		wantErr string
 	}{
-		// I think this won't be a problem with ParseConfig,
-		// In CDS:
-		// if this isn't set prepare struct directly
-		// if set call ParseConfig to get struct
 		{
 			name: "no-fields-set-should-get-default",
 			input: `{
@@ -125,7 +100,6 @@ func (s) TestParseConfig(t *testing.T) {
 				]
 			}`,
 			wantCfg: &LBConfig{
-				// Default values here...only the top level ones not the nested ones...
 				Interval: defaultInterval,
 				BaseEjectionTime: defaultBaseEjectionTime,
 				MaxEjectionTime: defaultMaxEjectionTime,
@@ -166,8 +140,7 @@ func (s) TestParseConfig(t *testing.T) {
 				},
 			},
 		},
-		// VVV This is xDS Default
-		{ // ugh but it also validates child policy is present...do we really need to keep that assertion?
+		{
 			name: "success-rate-ejection-present-but-no-fields",
 			input: `{
 				"successRateEjection": {},
@@ -181,8 +154,6 @@ func (s) TestParseConfig(t *testing.T) {
 			}`,
 			// Should get defaults of success-rate-ejection struct.
 			wantCfg: &LBConfig{
-				// This doesn't get successfully populated with defaults...
-				// constructs a &outlierdetection.SuccessRateEjection{},
 				Interval: defaultInterval,
 				BaseEjectionTime: defaultBaseEjectionTime,
 				MaxEjectionTime: defaultMaxEjectionTime,
@@ -253,7 +224,6 @@ func (s) TestParseConfig(t *testing.T) {
 				}
 				]
 			}`,
-			// Should only get fields that are set, no defaults, so set fields have to be different than defaults for assertion.
 			wantCfg: &LBConfig{
 				Interval: defaultInterval,
 				BaseEjectionTime: defaultBaseEjectionTime,
@@ -275,7 +245,6 @@ func (s) TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "failure-percentage-ejection-present-but-no-fields",
-			// Can always come back later if json strings don't work...
 			input: `{
 				"failurePercentageEjection": {},
                 "childPolicy": [
@@ -298,7 +267,6 @@ func (s) TestParseConfig(t *testing.T) {
 					MinimumHosts: defaultFailurePercentageMinimumHosts,
 					RequestVolume: defaultFailurePercentageRequestVolume,
 				},
-				// is child policy reallllyyyyy required? why is it required?
 				ChildPolicy: &iserviceconfig.BalancerConfig{
 					Name: "xds_cluster_impl_experimental",
 					Config: &clusterimpl.LBConfig{
@@ -334,7 +302,6 @@ func (s) TestParseConfig(t *testing.T) {
 					MinimumHosts: 10,
 					RequestVolume: defaultFailurePercentageRequestVolume,
 				},
-				// is child policy reallllyyyyy required? why is it required?
 				ChildPolicy: &iserviceconfig.BalancerConfig{
 					Name: "xds_cluster_impl_experimental",
 					Config: &clusterimpl.LBConfig{
@@ -350,8 +317,8 @@ func (s) TestParseConfig(t *testing.T) {
 					"threshold": 80,
 					"enforcementPercentage": 100,
 					"minimumHosts": 10,
-					"requestVolume": 40					
-				},
+					"requestVolume": 40
+                },
                 "childPolicy": [
 				{
 					"xds_cluster_impl_experimental": {
@@ -360,7 +327,6 @@ func (s) TestParseConfig(t *testing.T) {
 				}
 				]
 			}`,
-			// Should only get fields that are set, no defaults, so set fields have to be different than defaults for assertion.
 			wantCfg: &LBConfig{
 				Interval: defaultInterval,
 				BaseEjectionTime: defaultBaseEjectionTime,
@@ -372,7 +338,6 @@ func (s) TestParseConfig(t *testing.T) {
 					MinimumHosts: 10,
 					RequestVolume: 40,
 				},
-				// is child policy reallllyyyyy required? why is it required?
 				ChildPolicy: &iserviceconfig.BalancerConfig{
 					Name: "xds_cluster_impl_experimental",
 					Config: &clusterimpl.LBConfig{
@@ -383,7 +348,6 @@ func (s) TestParseConfig(t *testing.T) {
 		},
 		{ // to make sure zero values aren't overwritten by defaults
 			name: "lb-config-every-field-set-zero-value",
-			// proto zeros to JSON zeros
 			input: `{
 				"interval": "0s",
 				"baseEjectionTime": "0s",
@@ -408,10 +372,9 @@ func (s) TestParseConfig(t *testing.T) {
 					}
 				}
 				]
-			}`/*json as below expect with 0 values*/, // I think JSON zero values are pretty self explanatory...
-			wantCfg: /*config with zero values set - which is same as not declaring*/&LBConfig{
-				// pointers are nil though and their there with zero values
-				SuccessRateEjection: &SuccessRateEjection{}, // or does this conflate with the issue
+			}`,
+			wantCfg: &LBConfig{
+				SuccessRateEjection: &SuccessRateEjection{},
 				FailurePercentageEjection: &FailurePercentageEjection{},
 				ChildPolicy: &iserviceconfig.BalancerConfig{
 					Name: "xds_cluster_impl_experimental",
@@ -547,7 +510,6 @@ func (s) TestParseConfig(t *testing.T) {
 			wantErr: "invalid loadBalancingConfig: no supported policies found",
 		},
 	}
-	// It's just setting fields without defaults...so Unmarshal JSON isn't being called on the types...
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			gotCfg, gotErr := parser.ParseConfig(json.RawMessage(test.input))

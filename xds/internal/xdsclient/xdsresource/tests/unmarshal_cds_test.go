@@ -604,8 +604,9 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 	}
 }
 
-// Test....tests the Outlier Detection JSON emitted from the xDS Client
-func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
+// TestOutlierDetectionJSON tests the Outlier Detection configuration JSON
+// emitted from the xDS Client.
+func (s) TestOutlierDetectionJSON(t *testing.T) {
 	odToClusterProto := func(od *v3clusterpb.OutlierDetection) *v3clusterpb.Cluster {
 		return &v3clusterpb.Cluster{
 			Name:                 clusterName,
@@ -621,18 +622,10 @@ func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
 			OutlierDetection: od,
 		}
 	}
-	// Declare defaults here to use throughout tests too?
-
-	// declare inline JSON wants here or figure out a way to plumb JSON wants into test case
-
 	tests := []struct{
 		name string
-		// either a. od resource declared plumbed into a larger cluster resource
-		// or b. the full cluster resource, or could do something like defaultODHelper(od)
-		// odProto *v3clusterpb.OutlierDetection
 		clusterWithOD *v3clusterpb.Cluster
-		// can see ParseConfig tests to see what these JSON string should be
-		wantODCfg     string // then typecast to json.RawMessage later
+		wantODCfg     string
 	}{
 		{
 			name: "success-and-failure-null",
@@ -731,50 +724,4 @@ func (s) TestOutlierDetectionUnmarshalingJSON(t *testing.T) {
 			}
 		})
 	}
-
 }
-
-
-// So honestly just emit json with no child policy - nil or empty list are
-// equivalent and both logically allowed. I think empty list will trigger the
-// not omit empty and trigger parsing, so I think nothing is what we want to
-// emit here.
-
-// ParseConfig in CDS Balancer (no child policy - ParseConfig on OD needs to treat this as a valid config)
-
-// Send this OD config down inline as is now in discovery mechanism
-
-// OD Config + child policy in Cluster resolver
-// Marshal Into JSON
-// Parse again...
-
-// So in this layer, just emit nothing for the child, which Michael says falls within the scope of correctness anyway
-
-
-
-
-
-
-// Next layer is CDS layer...layer
-// test nil == no-op (noop should not have anything set not even max int that got changed)
-// now pass it JSON, check emitted OD config is expected? this is what this is testing here though (just through ParseConfig)
-// need to have a clean way of
-
-
-// e2e test of it off, I think default behavior of it turned on when OD
-// is set but unspecified is a valid test case, that is the big correctness issue
-// that I'm fixing with this change that wasn't there previous.
-
-
-
-// WAIT BIG QUESTION WHAT TO DO WITH CHILD POLICY, if cds balancer calls with emission won't be there...
-// Where was thsi called before, I think child policy was present
-// do we really want to require child policy (if so add to emission from client)
-
-// BEFORE CONFIG ADDING CHILD, JUST IGNORE THE CHILD SO ACCEPT EMPTY CHILD IN PARSE CONFIG OR EVEN NIL
-// AND ADD IT LATER ONCE CONVERTED TO STRUCT AND ADD CHILD POLICY
-
-// at the very least we just need to know when to add it, technically anything is valid here...
-//
-
-// I have an EqualIgnoringChildPolicy helper

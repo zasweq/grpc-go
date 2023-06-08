@@ -70,15 +70,6 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 		logger.Errorf("%q LB policy does not implement a config parser", priority.Name)
 		return nil
 	}
-	// same stuff here for odParser
-	/*odBuilder := balancer.Get(outlierdetection.Name) // same crap
-	if odBuilder == nil {
-		logger.Errorf("%q LB policy is needed but not registered", outlierdetection.Name)
-	}
-	odParser, ok := odBuilder.(balancer.ConfigParser)
-	if !ok {
-		logger.Errorf("%q LB policy does not implement a config parser", outlierdetection.Name)
-	}*/
 
 	b := &clusterResolverBalancer{
 		bOpts:    opts,
@@ -88,9 +79,6 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 
 		priorityBuilder:      priorityBuilder,
 		priorityConfigParser: priorityConfigParser,
-
-		// Doesn't need builder...where does it get built, just needs parser?
-		// odParser: odParser, // oh happens in ParseConfig so don't need this...
 	}
 	b.logger = prefixLogger(b)
 	b.logger.Infof("Created")
@@ -114,12 +102,12 @@ func (bb) ParseConfig(j json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 	if odBuilder == nil {
 		// Shouldn't happen, registered through imported Outlier Detection,
 		// defensive programming.
-		return nil, errors.New("outlier-detection balancer is not present in the registry"/*explain what is happening here*/)
+		return nil, fmt.Errorf("%q LB policy is needed but not registered", outlierdetection.Name)
 	}
 	odParser, ok := odBuilder.(balancer.ConfigParser)
 	if !ok {
 		// Shouldn't happen, imported Outlier Detection builder has this method.
-		return nil, errors.New("outlier-detection builder is not a config parser")
+		return nil, fmt.Errorf("%q LB policy does not implement a config parser", outlierdetection.Name)
 	}
 
 	// This might need to be
@@ -179,17 +167,6 @@ func (bb) ParseConfig(j json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 	}
 	return cfg, nil
 }
-// Same unit test except delete not ring hash assertion *** Yup
-// and also add tests for Parse Config
-
-
-
-// Look at all implementation changes for layer
-// Start unit tests for this ParseConfig()
-// RawJSON passed in and it emits actual configs
-
-
-// Also need a json util to prepare json strings passed in from client in unit tests, or declare those inline
 
 // ccUpdate wraps a clientConn update received from gRPC.
 type ccUpdate struct {
@@ -289,7 +266,7 @@ func (b *clusterResolverBalancer) updateChildConfig() {
 		b.child = newChildBalancer(b.priorityBuilder, b.cc, b.bOpts)
 	}
 
-	childCfgBytes, addrs, err := buildPriorityConfigJSON(b.priorities, &b.config.xdsLBPolicy) // by the time it gets here know this is valid etc.
+	childCfgBytes, addrs, err := buildPriorityConfigJSON(b.priorities, &b.config.xdsLBPolicy)
 	if err != nil {
 		b.logger.Warningf("Failed to build child policy config: %v", err)
 		return

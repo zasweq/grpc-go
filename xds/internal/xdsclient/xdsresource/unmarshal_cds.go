@@ -505,6 +505,8 @@ func uint32p(i uint32) *uint32 {
 	return &i
 }
 
+// Helper types to prepare Outlier Detection JSON. Pointer types to distinguish
+// between unset and a zero value.
 type successRateEjection struct {
 	StdevFactor *uint32 `json:"stdevFactor,omitempty"`
 	EnforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
@@ -520,8 +522,6 @@ type failurePercentageEjection struct {
 }
 
 type odLBConfig struct {
-	// pointers? Need distinction between the two (set or not set to pick up defaults)
-	// I.e. need to set as json.Marshal(&s{X:&zero}), where it's a pointer to the zero value...
 	Interval *iserviceconfig.Duration `json:"interval,omitempty"`
 	BaseEjectionTime *iserviceconfig.Duration `json:"baseEjectionTime,omitempty"`
 	MaxEjectionTime *iserviceconfig.Duration `json:"maxEjectionTime,omitempty"`
@@ -530,45 +530,28 @@ type odLBConfig struct {
 	FailurePercentageEjection *failurePercentageEjection `json:"failurePercentageEjection,omitempty"`
 }
 
-// outlierConfigFromCluster extracts the relevant outlier detection
-// configuration from the received cluster resource. Returns nil if no
-// OutlierDetection field set in the cluster resource.
-func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, error) { // need to change desired things in unit tests.
+// outlierConfigFromCluster converts the received Outlier Detection
+// configuration into JSON configuration for Outlier Detection, taking into
+// account xDS Defaults. Returns nil if no OutlierDetection field set in the
+// cluster resource.
+func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, error) {
 	od := cluster.GetOutlierDetection()
-	if od == nil { // causes the zero value to be produced? I think this is the correct behavior - create zero value config, yup, I can see it in cds
+	if od == nil {
 		return nil, nil
 	}
 
-	// this line:
-	/*
-	If the outlier_detection field is set in the Cluster resource, if the
-	enforcing_success_rate field is set to 0, the config success_rate_ejection
-	field will be null and all success_rate_* fields will be ignored. If the
-	enforcing_failure_percent field is set to 0 or null, the config
-	failure_percent_ejection field will be null and all failure_percent_* fields
-	will be ignored. Then the message fields will be mapped to config fields as
-	follows:
-	*/
-
-	// thus in xDS flow,
-	// if nothing is set success rate is turned on by default. Test this scenario?
-	// also triage no-op configs wrt max interval, that is now incorrect
-
-	// Holy **** I'll have to change a million tests
-
-
+	// "The outlier_detection field of the Cluster resource should have its fields
+	//	validated according to the rules for the corresponding LB policy config
+	//	fields in the above "Validation" section. If any of these requirements is
+	//	violated, the Cluster resource should be NACKed." - A50
 	// "The google.protobuf.Duration fields interval, base_ejection_time, and
 	// max_ejection_time must obey the restrictions in the
 	// google.protobuf.Duration documentation and they must have non-negative
-	// values." - A50 is this the correct rules corresponding then?
-
-	// same thing here wrt duration pointers?
-
+	// values." - A50
 	var interval *iserviceconfig.Duration
 	if i := od.GetInterval(); i != nil {
-		// yeah still want this
 		print("Checking interval validity")
-		if err := i.CheckValid(); err != nil { // what to do with this check? Move to ParseConfig or check here? Maybe here?
+		if err := i.CheckValid(); err != nil {
 			return nil, fmt.Errorf("outlier_detection.interval is invalid with error: %v", err)
 		}
 		print("Setting interval")
@@ -601,22 +584,8 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	// failure_percentage_threshold, and enforcing_failure_percentage must have
 	// values less than or equal to 100. If any of these requirements is
 	// violated, the Cluster resource should be NACKed." - A50
-
-	/*
-
-	The outlier_detection field of the Cluster resource should have its fields
-	validated according to the rules for the corresponding LB policy config
-	fields in the above "Validation" section. If any of these requirements is
-	violated, the Cluster resource should be NACKed.
-
-	Looks like we keep NACK?
-
-	*/
-
-	// need this var to have ternary
 	var maxEjectionPercent *uint32
 	if mep := od.GetMaxEjectionPercent(); mep != nil {
-		// if it hits here not nil - even if it's zero set
 		if maxEjectionPercent = uint32p(mep.GetValue()); *maxEjectionPercent > 100 {
 			return nil, fmt.Errorf("outlier_detection.max_ejection_percent = %v; must be <= 100", *maxEjectionPercent)
 		}
@@ -626,14 +595,12 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	// will be ignored." - A50
 	var enforcingSuccessRate *uint32
 	if esr := od.GetEnforcingSuccessRate(); esr != nil {
-		// if it hits here not nil - even if it's zero set
 		if enforcingSuccessRate = uint32p(esr.GetValue()); *enforcingSuccessRate > 100 {
 			return nil, fmt.Errorf("outlier_detection.enforcing_success_rate = %v; must be <= 100", *enforcingSuccessRate)
 		}
 	}
 	var failurePercentageThreshold *uint32
 	if fpt := od.GetFailurePercentageThreshold(); fpt != nil {
-		// if it hits here not nil - even if it's zero set
 		if failurePercentageThreshold = uint32p(fpt.GetValue()); *failurePercentageThreshold > 100 {
 			return nil, fmt.Errorf("outlier_detection.failure_percentage_threshold = %v; must be <= 100", *failurePercentageThreshold)
 		}
@@ -669,16 +636,14 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 		failurePercentageRequestVolume = uint32p(fprv.GetValue())
 	}
 
-	// use successrateenforcement percentage to prepare this layered intermediate config
 	// "if the enforcing_success_rate field is set to 0, the config
 	// success_rate_ejection field will be null and all success_rate_* fields
 	// will be ignored." - A50
-	// var sre *successRateEjection
 	var sre *successRateEjection
 	if enforcingSuccessRate == nil || *enforcingSuccessRate != 0 {
 		sre = &successRateEjection{
-			StdevFactor: successRateStdevFactor, // does nil equal empty here? I thinkkk so zero value
-			EnforcementPercentage: enforcingSuccessRate, // this will still be nil...communicate that throguh the hiearchy, nil causes this to be created, nil gets put on, nil gets marshaled into JSON, OD overwrites that not present field with new stuff
+			StdevFactor: successRateStdevFactor,
+			EnforcementPercentage: enforcingSuccessRate,
 			MinimumHosts: successRateMinimumHosts,
 			RequestVolume: successRateRequestVolume,
 		}
@@ -687,7 +652,6 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	// "If the enforcing_failure_percent field is set to 0 or null, the config
 	// failure_percent_ejection field will be null and all failure_percent_*
 	// fields will be ignored." - A50
-	// var fpe *failurePercentageEjection
 	var fpe *failurePercentageEjection
 	if enforcingFailurePercentage != nil && *enforcingFailurePercentage != 0 {
 		fpe = &failurePercentageEjection{
@@ -704,19 +668,8 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 		MaxEjectionTime: maxEjectionTime,
 		MaxEjectionPercent: maxEjectionPercent,
 		SuccessRateEjection: sre,
-		FailurePercentageEjection: fpe, // tests this breaks tests if present?
+		FailurePercentageEjection: fpe,
 	}
-	// in cds if json is nil no-op if not nil...take the JSON, marshal in
-	// ParseConfig into balancer (presence or not determines overwriting
-	// defaults), not set enforcing percentage will create first layer than get
-	// overwritten with 100
-	
-	// so pass nil || set here vvv (no this gets communicated from the first
-	// check in this function - pass it nil, returns nil, communicates that to
-	// CDS Balancer)
-
-	// json marshal error to trigger nack? is that the correct behavior? I think json preperation in registry
-	// also causes NACK.
 	odLBCfgJSON, err := json.Marshal(odLBCfg)
 	if err != nil { // NACK just like xDS LB policy registry if it errors preparing JSON
 		return nil, err

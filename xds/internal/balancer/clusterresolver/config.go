@@ -103,16 +103,8 @@ type DiscoveryMechanism struct {
 	// OutlierDetection is the Outlier Detection LB configuration for this
 	// priority.
 	OutlierDetection json.RawMessage `json:"outlierDetection,omitempty"`
-	// after unmarshaling ^^^ from the lb config
-
-
-	// Does this correctly get filled out after ParseConfig(), use same DiscoveryMechanism
-	// heap memory?
-
-	// How to ignore this in JSON parsing - leave as written?
-	// convert to vvv in the ParseConfig (also validates)
-	outlierDetection outlierdetection.LBConfig // and now use this thing where previously the exported filled out field was used
-} // holy fuck this will break so many tests
+	outlierDetection outlierdetection.LBConfig
+}
 
 // Equal returns whether the DiscoveryMechanism is the same with the parameter.
 func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
@@ -129,10 +121,6 @@ func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
 		return false
 	case dm.DNSHostname != b.DNSHostname:
 		return false
-	// Only if this is called after ParseConfig() has been called can this be expected...idek what fucking test this is used
-	// all other reads can change
-	// nil checks still correct?
-	// this ignores json luckily
 	case !od.EqualIgnoringChildPolicy(&b.outlierDetection):
 		print("od isn't equal")
 		return false
@@ -167,12 +155,7 @@ type LBConfig struct {
 	DiscoveryMechanisms []DiscoveryMechanism `json:"discoveryMechanisms,omitempty"`
 
 	// XDSLBPolicy specifies the policy for locality picking and endpoint picking.
-	// ignore this for cmp.Diff
-	XDSLBPolicy json.RawMessage `json:"xdsLbPolicy,omitempty"` // switch all usages of this as well to json message now
+	XDSLBPolicy json.RawMessage `json:"xdsLbPolicy,omitempty"`
 
 	xdsLBPolicy internalserviceconfig.BalancerConfig
 }
-
-// conversion from JSON to OD config happens in ParseConfig returns that
-// pass to cluster resolver, persists, once it gets enoguh information
-// marshals into JSON and calls Parse Config again

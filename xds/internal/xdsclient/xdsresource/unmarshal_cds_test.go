@@ -18,11 +18,6 @@
 package xdsresource
 
 import (
-	"regexp"
-	"strings"
-	"testing"
-	"time"
-
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/grpc/internal/envconfig"
@@ -32,6 +27,9 @@ import (
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+	"regexp"
+	"strings"
+	"testing"
 
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -1382,13 +1380,6 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 			OutlierDetection: od,
 		}
 	}
-	odToClusterUpdate := func(od *OutlierDetection) ClusterUpdate {
-		return ClusterUpdate{
-			ClusterName:      clusterName,
-			LRSServerConfig:  ClusterLRSOff,
-			OutlierDetection: od,
-		}
-	}
 
 	tests := []struct {
 		name       string
@@ -1396,74 +1387,6 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 		wantUpdate ClusterUpdate
 		wantErr    bool
 	}{
-		// Just realized need a test for all 3 buckets I'd say for each failure percentage
-		// and success rate in CDS Balancer (Figure out way to test)
-		{
-			name: "successful-case-all-defaults",
-			// Outlier detection proto is present without any fields specified,
-			// so should trigger all nil values in the update. (i.e. unspecified)
-			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{}),
-			wantUpdate: odToClusterUpdate(&OutlierDetection{}),
-		},
-
-		// switch this red stuff to the json - since it doesn't use exported od type can
-		// actually can just put it here instead
-		{
-			name: "successful-case-all-fields-configured-and-valid",
-			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{
-				Interval:                       &durationpb.Duration{Seconds: 1},
-				BaseEjectionTime:               &durationpb.Duration{Seconds: 2},
-				MaxEjectionTime:                &durationpb.Duration{Seconds: 3},
-				MaxEjectionPercent:             &wrapperspb.UInt32Value{Value: 1},
-				SuccessRateStdevFactor:         &wrapperspb.UInt32Value{Value: 2},
-				EnforcingSuccessRate:           &wrapperspb.UInt32Value{Value: 3},
-				SuccessRateMinimumHosts:        &wrapperspb.UInt32Value{Value: 4},
-				SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},
-				FailurePercentageThreshold:     &wrapperspb.UInt32Value{Value: 6},
-				EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 7},
-				FailurePercentageMinimumHosts:  &wrapperspb.UInt32Value{Value: 8},
-				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
-			}),
-			// This won't point to the same heap memory - do I need to write a comparer on the type?
-			wantUpdate: odToClusterUpdate(&OutlierDetection{
-				Interval:                       durationp(time.Second), // this is a const
-				BaseEjectionTime:               durationp(time.Second * 2),
-				MaxEjectionTime:                durationp(time.Second * 3),
-				MaxEjectionPercent:             uint32p(1),
-				SuccessRateStdevFactor:         uint32p(2),
-				EnforcingSuccessRate:           uint32p(3),
-				SuccessRateMinimumHosts:        uint32p(4),
-				SuccessRateRequestVolume:       uint32p(5),
-				FailurePercentageThreshold:     uint32p(6),
-				EnforcingFailurePercentage:     uint32p(7),
-				FailurePercentageMinimumHosts:  uint32p(8),
-				FailurePercentageRequestVolume: uint32p(9),
-			}),
-		},
-		// Shouldn't set defaults, only those configured, those not configured
-		// should stay not set.
-		{
-			name: "successful-case-some-fields-configured-and-valid",
-			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{
-				Interval:                       &durationpb.Duration{Seconds: 1},
-				MaxEjectionTime:                &durationpb.Duration{Seconds: 3},
-				MaxEjectionPercent:             &wrapperspb.UInt32Value{Value: 1},
-				EnforcingSuccessRate:           &wrapperspb.UInt32Value{Value: 3},
-				SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},
-				EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 7},
-				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
-			}),
-			wantUpdate: odToClusterUpdate(&OutlierDetection{
-				Interval:                       durationp(time.Second), // this is a const
-				MaxEjectionTime:                durationp(time.Second * 3),
-				MaxEjectionPercent:             uint32p(1),
-				EnforcingSuccessRate:           uint32p(3),
-				SuccessRateRequestVolume:       uint32p(5),
-				EnforcingFailurePercentage:     uint32p(7),
-				FailurePercentageRequestVolume: uint32p(9),
-			}),
-		},
-		// These validations stay the same...
 		{
 			name:    "interval-is-negative",
 			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{Interval: &durationpb.Duration{Seconds: -10}}),
@@ -1514,16 +1437,13 @@ func (s) TestValidateClusterWithOutlierDetection(t *testing.T) {
 			cluster: odToClusterProto(&v3clusterpb.OutlierDetection{EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 150}}),
 			wantErr: true,
 		},
-		// because we want NACKs
-
-
-
 		// A Outlier Detection proto not present should lead to a nil
 		// OutlierDetection field in the ClusterUpdate, which is implicitly
 		// tested in every other test in this file.
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			// merge od json tests with this t test...
 			update, err := validateClusterAndConstructClusterUpdate(test.cluster)
 			if (err != nil) != test.wantErr {
 				t.Errorf("validateClusterAndConstructClusterUpdate() returned err %v wantErr %v)", err, test.wantErr)

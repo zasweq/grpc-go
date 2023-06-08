@@ -77,7 +77,6 @@ var (
 		BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
 		MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 		MaxEjectionPercent: 10,
-		// Could populate with default values top level
 	}
 )
 
@@ -199,7 +198,6 @@ func TestBuildPriorityConfig(t *testing.T) {
 				Cluster:          testClusterName,
 				Type:             DiscoveryMechanismTypeEDS,
 				EDSServiceName:   testEDSServiceName,
-				// if this is assumed to come after ParseConfig change this to the unexported type
 				outlierDetection: noopODCfg,
 			},
 			edsResp: xdsresource.EndpointsUpdate{

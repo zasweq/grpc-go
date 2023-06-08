@@ -89,8 +89,9 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 		MaxEjectionPercent: 10,
 	}
 	print("about to JSON unmarshal into top level config")
-	// Handles underlying layers sre and fpe which have their own defaults if
-	// either of the fields aree present.
+
+	// This unmarshalling handles underlying layers sre and fpe which have their
+	// own defaults for their fields if either sre or fpe are present.
 	if err := json.Unmarshal(s, lbCfg); err != nil { // Validates child config if present as well.
 		return nil, fmt.Errorf("xds: unable to unmarshal LBconfig: %s, error: %v", string(s), err)
 	}
