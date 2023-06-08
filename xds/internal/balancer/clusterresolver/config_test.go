@@ -125,7 +125,7 @@ const (
     "outlierDetection": {}
   }],
   "xdsLbPolicy":[{"ROUND_ROBIN":{}}]
-}` // does it need to declare an outlier detection config for logical dns?
+}`
 	testJSONConfig3 = `{
   "discoveryMechanisms": [{
     "cluster": "test-cluster-name",
@@ -202,9 +202,9 @@ func TestParseConfig(t *testing.T) {
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
 						outlierDetection: outlierdetection.LBConfig{
-							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 							MaxEjectionPercent: 10,
 							// sre and fpe are both nil
 						},
@@ -229,29 +229,25 @@ func TestParseConfig(t *testing.T) {
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
 						outlierDetection: outlierdetection.LBConfig{
-							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 							MaxEjectionPercent: 10,
 							// sre and fpe are both nil
 						},
 					},
 					{
 						Type: DiscoveryMechanismTypeLogicalDNS,
-						// Move all open correctness questions to after 1:1 doc with Doug
-						// requires it for type dns, is this correct...will just be ignored but it's fine to leave.
-						// od struct emits nil and will convert the cluster od to empty for dns
-						// then be ignored in config builder I think since root is rr above Outlier Detection?
 						outlierDetection: outlierdetection.LBConfig{
-							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 							MaxEjectionPercent: 10,
 							// sre and fpe are both nil
 						},
 					},
 				},
-				xdsLBPolicy: iserviceconfig.BalancerConfig{ // do we want to make this not pointer
+				xdsLBPolicy: iserviceconfig.BalancerConfig{
 					Name:   "ROUND_ROBIN",
 					Config: nil,
 				},
@@ -270,9 +266,9 @@ func TestParseConfig(t *testing.T) {
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
 						outlierDetection: outlierdetection.LBConfig{
-							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 							MaxEjectionPercent: 10,
 							// sre and fpe are both nil
 						},
@@ -297,9 +293,9 @@ func TestParseConfig(t *testing.T) {
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
 						outlierDetection: outlierdetection.LBConfig{
-							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 							MaxEjectionPercent: 10,
 							// sre and fpe are both nil
 						},
@@ -314,7 +310,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "noop-outlier-detection",
-			js: testJSONConfig5,
+			js:   testJSONConfig5,
 			want: &LBConfig{
 				DiscoveryMechanisms: []DiscoveryMechanism{
 					{
@@ -324,9 +320,9 @@ func TestParseConfig(t *testing.T) {
 						Type:                  DiscoveryMechanismTypeEDS,
 						EDSServiceName:        testEDSService,
 						outlierDetection: outlierdetection.LBConfig{
-							Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-							BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-							MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+							Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+							BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+							MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 							MaxEjectionPercent: 10,
 							// sre and fpe are both nil
 						},
@@ -357,8 +353,6 @@ func TestParseConfig(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
-			// ignore both od field and xds lb policy field
-			// cmpopts.IgnoreFields(grpcLogEntry{}, "CallID", "Peer"),
 			if diff := cmp.Diff(got, tt.want, cmp.AllowUnexported(LBConfig{}), cmpopts.IgnoreFields(LBConfig{}, "XDSLBPolicy")); diff != "" {
 				t.Errorf("parseConfig() got unexpected output, diff (-got +want): %v", diff)
 			}

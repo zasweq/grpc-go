@@ -508,25 +508,25 @@ func uint32p(i uint32) *uint32 {
 // Helper types to prepare Outlier Detection JSON. Pointer types to distinguish
 // between unset and a zero value.
 type successRateEjection struct {
-	StdevFactor *uint32 `json:"stdevFactor,omitempty"`
+	StdevFactor           *uint32 `json:"stdevFactor,omitempty"`
 	EnforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
-	MinimumHosts *uint32 `json:"minimumHosts,omitempty"`
-	RequestVolume *uint32 `json:"requestVolume,omitempty"`
+	MinimumHosts          *uint32 `json:"minimumHosts,omitempty"`
+	RequestVolume         *uint32 `json:"requestVolume,omitempty"`
 }
 
 type failurePercentageEjection struct {
-	Threshold *uint32 `json:"threshold,omitempty"`
+	Threshold             *uint32 `json:"threshold,omitempty"`
 	EnforcementPercentage *uint32 `json:"enforcementPercentage,omitempty"`
-	MinimumHosts *uint32 `json:"minimumHosts,omitempty"`
-	RequestVolume *uint32 `json:"requestVolume,omitempty"`
+	MinimumHosts          *uint32 `json:"minimumHosts,omitempty"`
+	RequestVolume         *uint32 `json:"requestVolume,omitempty"`
 }
 
 type odLBConfig struct {
-	Interval *iserviceconfig.Duration `json:"interval,omitempty"`
-	BaseEjectionTime *iserviceconfig.Duration `json:"baseEjectionTime,omitempty"`
-	MaxEjectionTime *iserviceconfig.Duration `json:"maxEjectionTime,omitempty"`
-	MaxEjectionPercent *uint32 `json:"maxEjectionPercent,omitempty"`
-	SuccessRateEjection *successRateEjection `json:"successRateEjection,omitempty"`
+	Interval                  *iserviceconfig.Duration   `json:"interval,omitempty"`
+	BaseEjectionTime          *iserviceconfig.Duration   `json:"baseEjectionTime,omitempty"`
+	MaxEjectionTime           *iserviceconfig.Duration   `json:"maxEjectionTime,omitempty"`
+	MaxEjectionPercent        *uint32                    `json:"maxEjectionPercent,omitempty"`
+	SuccessRateEjection       *successRateEjection       `json:"successRateEjection,omitempty"`
 	FailurePercentageEjection *failurePercentageEjection `json:"failurePercentageEjection,omitempty"`
 }
 
@@ -550,13 +550,11 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	// values." - A50
 	var interval *iserviceconfig.Duration
 	if i := od.GetInterval(); i != nil {
-		print("Checking interval validity")
 		if err := i.CheckValid(); err != nil {
 			return nil, fmt.Errorf("outlier_detection.interval is invalid with error: %v", err)
 		}
-		print("Setting interval")
 		if interval = idurationp(i.AsDuration()); *interval < 0 {
-			return nil, fmt.Errorf("outlier_detection.interval = %v; must be a valid duration and >= 0", *interval) // or does this log pointer automatically?
+			return nil, fmt.Errorf("outlier_detection.interval = %v; must be a valid duration and >= 0", *interval)
 		}
 	}
 
@@ -642,10 +640,10 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	var sre *successRateEjection
 	if enforcingSuccessRate == nil || *enforcingSuccessRate != 0 {
 		sre = &successRateEjection{
-			StdevFactor: successRateStdevFactor,
+			StdevFactor:           successRateStdevFactor,
 			EnforcementPercentage: enforcingSuccessRate,
-			MinimumHosts: successRateMinimumHosts,
-			RequestVolume: successRateRequestVolume,
+			MinimumHosts:          successRateMinimumHosts,
+			RequestVolume:         successRateRequestVolume,
 		}
 	}
 
@@ -655,23 +653,23 @@ func outlierConfigFromCluster(cluster *v3clusterpb.Cluster) (json.RawMessage, er
 	var fpe *failurePercentageEjection
 	if enforcingFailurePercentage != nil && *enforcingFailurePercentage != 0 {
 		fpe = &failurePercentageEjection{
-			Threshold: failurePercentageThreshold,
+			Threshold:             failurePercentageThreshold,
 			EnforcementPercentage: enforcingFailurePercentage,
-			MinimumHosts: failurePercentageMinimumHosts,
-			RequestVolume: failurePercentageRequestVolume,
+			MinimumHosts:          failurePercentageMinimumHosts,
+			RequestVolume:         failurePercentageRequestVolume,
 		}
 	}
 
 	odLBCfg := &odLBConfig{
-		Interval: interval,
-		BaseEjectionTime: baseEjectionTime,
-		MaxEjectionTime: maxEjectionTime,
-		MaxEjectionPercent: maxEjectionPercent,
-		SuccessRateEjection: sre,
+		Interval:                  interval,
+		BaseEjectionTime:          baseEjectionTime,
+		MaxEjectionTime:           maxEjectionTime,
+		MaxEjectionPercent:        maxEjectionPercent,
+		SuccessRateEjection:       sre,
 		FailurePercentageEjection: fpe,
 	}
 	odLBCfgJSON, err := json.Marshal(odLBCfg)
-	if err != nil { // NACK just like xDS LB policy registry if it errors preparing JSON
+	if err != nil {
 		return nil, err
 	}
 	return odLBCfgJSON, nil

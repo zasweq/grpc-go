@@ -108,7 +108,6 @@ type DiscoveryMechanism struct {
 
 // Equal returns whether the DiscoveryMechanism is the same with the parameter.
 func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
-	print("In DM Equal")
 	od := &dm.outlierDetection
 	switch {
 	case dm.Cluster != b.Cluster:
@@ -122,7 +121,6 @@ func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
 	case dm.DNSHostname != b.DNSHostname:
 		return false
 	case !od.EqualIgnoringChildPolicy(&b.outlierDetection):
-		print("od isn't equal")
 		return false
 	}
 
@@ -156,6 +154,5 @@ type LBConfig struct {
 
 	// XDSLBPolicy specifies the policy for locality picking and endpoint picking.
 	XDSLBPolicy json.RawMessage `json:"xdsLbPolicy,omitempty"`
-
 	xdsLBPolicy internalserviceconfig.BalancerConfig
 }

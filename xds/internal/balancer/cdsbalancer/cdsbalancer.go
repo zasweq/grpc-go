@@ -376,7 +376,7 @@ func (b *cdsBalancer) handleWatchUpdate(update clusterHandlerUpdate) {
 	// get configuration to send downward to Cluster Resolver.
 	lbCfg := &clusterresolver.LBConfig{
 		DiscoveryMechanisms: dms,
-		XDSLBPolicy: update.lbPolicy,
+		XDSLBPolicy:         update.lbPolicy,
 	}
 	crLBCfgJSON, err := json.Marshal(lbCfg)
 	if err != nil {

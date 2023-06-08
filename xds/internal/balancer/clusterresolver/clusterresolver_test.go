@@ -325,7 +325,7 @@ func newLBConfigWithOneEDS(edsServiceName string) *LBConfig {
 			Type:           DiscoveryMechanismTypeEDS,
 			EDSServiceName: edsServiceName,
 		}},
-		xdsLBPolicy: iserviceconfig.BalancerConfig{ // do we want to make this not pointer
+		xdsLBPolicy: iserviceconfig.BalancerConfig{
 			Name:   "ROUND_ROBIN",
 			Config: nil,
 		},
@@ -388,16 +388,16 @@ func (s) TestOutlierDetection(t *testing.T) {
 				Config: &iserviceconfig.BalancerConfig{
 					Name: outlierdetection.Name,
 					Config: &outlierdetection.LBConfig{
-						Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-						BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-						MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+						Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+						BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+						MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 						MaxEjectionPercent: 10,
 						ChildPolicy: &iserviceconfig.BalancerConfig{
 							Name: clusterimpl.Name,
 							Config: &clusterimpl.LBConfig{
 								Cluster:        testClusterName,
 								EDSServiceName: "test-eds-service-name",
-								ChildPolicy: &iserviceconfig.BalancerConfig{ // do we want to make this not pointer
+								ChildPolicy: &iserviceconfig.BalancerConfig{
 									Name:   "ROUND_ROBIN",
 									Config: nil,
 								},

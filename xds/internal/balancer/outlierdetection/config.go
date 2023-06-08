@@ -54,7 +54,8 @@ type SuccessRateEjection struct {
 	RequestVolume uint32 `json:"requestVolume,omitempty"`
 }
 
-// For UnmarshalJSON to work correctly without infinite recursion.
+// For UnmarshalJSON to work correctly and set defaults without infinite
+// recursion.
 type successRateEjection SuccessRateEjection
 
 func (sre *SuccessRateEjection) UnmarshalJSON(j []byte) error {
@@ -62,11 +63,10 @@ func (sre *SuccessRateEjection) UnmarshalJSON(j []byte) error {
 	sre.EnforcementPercentage = 100
 	sre.MinimumHosts = 5
 	sre.RequestVolume = 100
-
-	print("about to overwrite default fields in success rate ejection...") // commit something with all the print, then run tests then if everything passes delete
-	// Unmarshal JSON on a type with zero values for methods...
-	// overwrites defaults *if set*, leaves alone if not
-	// typecast to avoid infinite recursion
+	// Unmarshal JSON on a type with zero values for methods, including
+	// UnmarshalJSON. Overwrites defaults, leaves alone if not. typecast to
+	// avoid infinite recursion by not recalling this function and causing stack
+	// overflow.
 	return json.Unmarshal(j, (*successRateEjection)(sre))
 }
 
@@ -117,6 +117,8 @@ type FailurePercentageEjection struct {
 	RequestVolume uint32 `json:"requestVolume,omitempty"`
 }
 
+// For UnmarshalJSON to work correctly and set defaults without infinite
+// recursion.
 type failurePercentageEjection FailurePercentageEjection
 
 func (fpe *FailurePercentageEjection) UnmarshalJSON(j []byte) error {
@@ -124,8 +126,10 @@ func (fpe *FailurePercentageEjection) UnmarshalJSON(j []byte) error {
 	fpe.EnforcementPercentage = 0
 	fpe.MinimumHosts = 5
 	fpe.RequestVolume = 50
-	print("about to overwrite default fields in failure percentage ejection...")
-	// first print to see if it's even getting this, it's just not setting anything it seems...
+	// Unmarshal JSON on a type with zero values for methods, including
+	// UnmarshalJSON. Overwrites defaults, leaves alone if not. typecast to
+	// avoid infinite recursion by not recalling this function and causing stack
+	// overflow.
 	return json.Unmarshal(j, (*failurePercentageEjection)(fpe))
 }
 
@@ -183,30 +187,22 @@ type LBConfig struct {
 // parameter outside of the child policy, only comparing the Outlier Detection
 // specific configuration.
 func (lbc *LBConfig) EqualIgnoringChildPolicy(lbc2 *LBConfig) bool {
-	print("in equal ignoring child policy")
 	if lbc == nil && lbc2 == nil {
 		return true
 	}
 	if (lbc != nil) != (lbc2 != nil) {
-		print("Returning false")
 		return false
 	}
 	if lbc.Interval != lbc2.Interval {
-		print("lbc.Interval = ", lbc.Interval)
-		print("lbc2.Interval = ", lbc2.Interval)
-		print("returning false interval")
 		return false
 	}
 	if lbc.BaseEjectionTime != lbc2.BaseEjectionTime {
-		print("returning false bet")
 		return false
 	}
 	if lbc.MaxEjectionTime != lbc2.MaxEjectionTime {
-		print("returning false met")
 		return false
 	}
 	if lbc.MaxEjectionPercent != lbc2.MaxEjectionPercent {
-		print("returning false mep")
 		return false
 	}
 	if !lbc.SuccessRateEjection.Equal(lbc2.SuccessRateEjection) {

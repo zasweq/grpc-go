@@ -228,9 +228,9 @@ func TestBuildPriorityConfig(t *testing.T) {
 				Config: &iserviceconfig.BalancerConfig{
 					Name: outlierdetection.Name,
 					Config: &outlierdetection.LBConfig{
-						Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-						BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-						MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+						Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+						BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+						MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 						MaxEjectionPercent: 10,
 						ChildPolicy: &iserviceconfig.BalancerConfig{
 							Name: clusterimpl.Name,
@@ -248,9 +248,9 @@ func TestBuildPriorityConfig(t *testing.T) {
 				Config: &iserviceconfig.BalancerConfig{
 					Name: outlierdetection.Name,
 					Config: &outlierdetection.LBConfig{
-						Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-						BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-						MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+						Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+						BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+						MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 						MaxEjectionPercent: 10,
 						ChildPolicy: &iserviceconfig.BalancerConfig{
 							Name: clusterimpl.Name,
@@ -268,9 +268,9 @@ func TestBuildPriorityConfig(t *testing.T) {
 				Config: &iserviceconfig.BalancerConfig{
 					Name: outlierdetection.Name,
 					Config: &outlierdetection.LBConfig{
-						Interval: iserviceconfig.Duration(10 * time.Second), // default interval
-						BaseEjectionTime: iserviceconfig.Duration(30 * time.Second),
-						MaxEjectionTime: iserviceconfig.Duration(300 * time.Second),
+						Interval:           iserviceconfig.Duration(10 * time.Second), // default interval
+						BaseEjectionTime:   iserviceconfig.Duration(30 * time.Second),
+						MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 						MaxEjectionPercent: 10,
 						ChildPolicy: &iserviceconfig.BalancerConfig{
 							Name: clusterimpl.Name,

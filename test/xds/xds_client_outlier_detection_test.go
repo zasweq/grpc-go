@@ -242,7 +242,7 @@ func (s) TestOutlierDetectionWithOutlier(t *testing.T) {
 // present with SuccessRateEjection unset, then Outlier Detection should be
 // turned on. The test setups and xDS system with xDS resources with Outlier
 // Detection present in the CDS update, but with SuccessRateEjection unset, and
-// asserts that Outlier Detection is correctly turned on and works.
+// asserts that Outlier Detection is turned on and ejects upstreams.
 func (s) TestOutlierDetectionXDSDefaultOn(t *testing.T) {
 	managementServer, nodeID, _, r, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
 	defer cleanup()
@@ -264,12 +264,12 @@ func (s) TestOutlierDetectionXDSDefaultOn(t *testing.T) {
 	port3 := testutils.ParsePort(t, backend3.Address)
 	defer backend3.Stop()
 
-
 	// Configure CDS resources with Outlier Detection set but
 	// EnforcingSuccessRate unset. This should cause Outlier Detection to be
 	// configured with SuccessRateEjection present in configuration, which will
-	// eventually be populated with it's default values, and thus Outlier
-	// Detection should correctly work and eject upstreams.
+	// eventually be populated with it's default values along with the knobs set
+	// as SuccessRate fields in the proto, and thus Outlier Detection should be
+	// on and actively eject upstreams.
 	const serviceName = "my-service-client-side-xds"
 	resources := clientResourcesMultipleBackendsAndOD(e2e.ResourceParams{
 		DialTarget: serviceName,
@@ -279,18 +279,17 @@ func (s) TestOutlierDetectionXDSDefaultOn(t *testing.T) {
 	}, []uint32{port1, port2, port3}, &v3clusterpb.OutlierDetection{
 		// Need to set knobs to trigger ejection within the test time frame.
 		Interval: &durationpb.Duration{Nanos: 50000000},
-		// EnforcingSuccessRateSet to nil, causes success rate algorithm to be turned on.
-		SuccessRateMinimumHosts: &wrapperspb.UInt32Value{Value: 1},
+		// EnforcingSuccessRateSet to nil, causes success rate algorithm to be
+		// turned on.
+		SuccessRateMinimumHosts:  &wrapperspb.UInt32Value{Value: 1},
 		SuccessRateRequestVolume: &wrapperspb.UInt32Value{Value: 8},
-		SuccessRateStdevFactor: &wrapperspb.UInt32Value{Value: 1},
+		SuccessRateStdevFactor:   &wrapperspb.UInt32Value{Value: 1},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	if err := managementServer.Update(ctx, resources); err != nil {
 		t.Fatal(err)
 	}
-
-
 
 	cc, err := grpc.Dial(fmt.Sprintf("xds:///%s", serviceName), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(r))
 	if err != nil {

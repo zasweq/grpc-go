@@ -124,7 +124,7 @@ func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalservi
 			retAddrs = append(retAddrs, addrs...)
 			var odCfg *outlierdetection.LBConfig
 			if envconfig.XDSOutlierDetection {
-				odCfg = makeClusterImplOutlierDetectionChild(config, p.mechanism.outlierDetection) // this is expected to come after parse config (equivalent to filling out struct and sending down parseconfig comes at same time) so I think this is fine
+				odCfg = makeClusterImplOutlierDetectionChild(config, p.mechanism.outlierDetection)
 				retConfig.Children[name] = &priority.Child{
 					Config: &internalserviceconfig.BalancerConfig{Name: outlierdetection.Name, Config: odCfg},
 					// Not ignore re-resolution from DNS children, they will trigger

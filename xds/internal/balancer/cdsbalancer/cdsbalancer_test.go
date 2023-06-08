@@ -58,8 +58,8 @@ var (
 			Type: "insecure",
 		},
 	}
-	noopODLBCfg = outlierdetection.LBConfig{}
-	noopODLBCfgJSON, _ = json.Marshal(noopODLBCfg)
+	noopODLBCfg         = outlierdetection.LBConfig{}
+	noopODLBCfgJSON, _  = json.Marshal(noopODLBCfg)
 	wrrLocalityLBConfig = &internalserviceconfig.BalancerConfig{
 		Name: wrrlocality.Name,
 		Config: &wrrlocality.LBConfig{
@@ -165,9 +165,10 @@ func (tb *testEDSBalancer) waitForClientConnUpdate(ctx context.Context, wantCCS 
 	if xdsclient.FromResolverState(gotCCS.ResolverState) == nil {
 		return fmt.Errorf("want resolver state with XDSClient attached, got one without")
 	}
-	// Calls into lower level, which ignores JSON configuration but compares the
-	// Parsed Configuration of the JSON fields emitted from ParseConfig() on the
-	// cluster resolver.
+
+	// Calls into Cluster Resolver LB Config Equal(), which ignores JSON
+	// configuration but compares the Parsed Configuration of the JSON fields
+	// emitted from ParseConfig() on the cluster resolver.
 	if diff := cmp.Diff(gotCCS, wantCCS, cmpopts.IgnoreFields(resolver.State{}, "Attributes"), cmp.AllowUnexported(clusterresolver.LBConfig{})); diff != "" {
 		return fmt.Errorf("received unexpected ClientConnState, diff (-got +want): %v", diff)
 	}
@@ -234,16 +235,16 @@ func cdsCCS(cluster string, xdsC xdsclient.XDSClient) balancer.ClientConnState {
 // edsCCS is a helper function to construct a Client Conn update which
 // represents what the CDS Balancer passes to the Cluster Resolver. It calls
 // into Cluster Resolver's ParseConfig to get the service config to fill out the
-// Client Conn State. This is to fill out unexported parts of the cluster
-// resolver config struct. Returns an empty Client Conn State if it encounters
-// an error building Client Conn update.
+// Client Conn State. This is to fill out unexported parts of the Cluster
+// Resolver config struct. Returns an empty Client Conn State if it encounters
+// an error building out the Client Conn State.
 func edsCCS(service string, countMax *uint32, enableLRS bool, xdslbpolicy json.RawMessage, odConfig json.RawMessage) balancer.ClientConnState {
 	builder := balancer.Get(clusterresolver.Name)
 	if builder == nil {
 		// Shouldn't happen, registered through imported Cluster Resolver,
 		// defensive programming.
 		logger.Errorf("%q LB policy is needed but not registered", clusterresolver.Name)
-		return balancer.ClientConnState{} // will fail the test eventually through erroring out of diff.
+		return balancer.ClientConnState{} // will fail the calling test eventually through error in diff.
 	}
 	crParser, ok := builder.(balancer.ConfigParser)
 	if !ok {
@@ -460,7 +461,7 @@ func (s) TestHandleClusterUpdate(t *testing.T) {
 				OutlierDetection: json.RawMessage(`{
 				"successRateEjection": {}
 			}`),
-				LBPolicy:    wrrLocalityLBConfigJSON,
+				LBPolicy: wrrLocalityLBConfigJSON,
 			},
 			wantCCS: edsCCS(serviceName, nil, false, wrrLocalityLBConfigJSON, json.RawMessage(`{
 				"successRateEjection": {}

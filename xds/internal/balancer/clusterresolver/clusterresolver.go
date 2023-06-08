@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/balancer/base"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal/buffer"
+	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/pretty"
@@ -110,53 +111,30 @@ func (bb) ParseConfig(j json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 		return nil, fmt.Errorf("%q LB policy does not implement a config parser", outlierdetection.Name)
 	}
 
-	// This might need to be
-	// cfg := &LBConfig to prevent nil
-
-	// parser for OD lter 0 can you persist?
-
-	// Keep the valid json requirement, def an important part of validation
-	var cfg *LBConfig // no defaults I think, pointer?
+	var cfg *LBConfig
 	if err := json.Unmarshal(j, &cfg); err != nil {
-		// invalidate
 		return nil, fmt.Errorf("unable to unmarshal balancer config %s into cluster-resolver config, error: %v", string(j), err)
 	}
 
-	// Also, need to call into the balancer regitsry here, is there a way to persisst this though
-
-	// Now has this intermediate JSON thing
-
-	// So each cluster (each aggregate cluster EDS DNS e.g.) but for EDS
-	// has it's own (Even for dns with pick first root?) OD config...
 	odCfgs := make([]outlierdetection.LBConfig, len(cfg.DiscoveryMechanisms))
 	for i, dm := range cfg.DiscoveryMechanisms {
 		lbCfg, err := odParser.ParseConfig(dm.OutlierDetection)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing Outlier Detection config: %v", dm.OutlierDetection)
 		}
-		odCfg, ok := lbCfg.(*outlierdetection.LBConfig) // we want a pointer since the interface zero value is a pointer...this is a struct so needs a pointer
+		odCfg, ok := lbCfg.(*outlierdetection.LBConfig)
 		if !ok {
 			// Shouldn't happen, Parser built at build time with Outlier Detection
 			// builder pulled from gRPC LB Registry.
 			return nil, fmt.Errorf("odParser returned config with unexpected type %T: %v", lbCfg, lbCfg)
 		}
-		// this doesss copy though so could help there to not overwrite memory or something like that?
-		print("setting outlier detection")
-		print("odCfg.maxEjectionPercent: ", odCfg.MaxEjectionPercent)
-		print("odCfg.maxEjectionTime: ", odCfg.MaxEjectionTime)
-		odCfgs[i] = *odCfg // Switch to persist the pointer I think
-		print("dm.outlierDetection.MaxEjectionPercent: ", dm.outlierDetection.MaxEjectionPercent)
-		print("dm.outlierDetection.maxEjectionTime: ", dm.outlierDetection.MaxEjectionTime)
+		odCfgs[i] = *odCfg
 	}
-	for i, odCfg := range odCfgs {
-		cfg.DiscoveryMechanisms[i].outlierDetection = odCfg
+	if envconfig.XDSOutlierDetection {
+		for i, odCfg := range odCfgs {
+			cfg.DiscoveryMechanisms[i].outlierDetection = odCfg
+		}
 	}
-
-	// big question: Should outlier detection be **required** for dns clusters
-
-	// this is the same as master, I thik this correctly unmarshals
-	// if nothing??>
-	// pointer type? will be nil so I thinkkk it's fine...
 	if err := json.Unmarshal(cfg.XDSLBPolicy, &cfg.xdsLBPolicy); err != nil {
 		// This will never occur, valid configuration is emitted from the xDS
 		// Client. Validity is already checked in the xDS Client, however, this

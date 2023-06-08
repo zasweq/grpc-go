@@ -36,7 +36,6 @@ import (
 	"google.golang.org/grpc/xds/internal/balancer/ringhash"
 	"google.golang.org/grpc/xds/internal/balancer/wrrlocality"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	v3xdsxdstypepb "github.com/cncf/xds/go/xds/type/v3"
@@ -599,128 +598,6 @@ func (s) TestValidateCluster_Success(t *testing.T) {
 			}
 			if diff := cmp.Diff(bc, test.wantLBConfig); diff != "" {
 				t.Fatalf("update.LBConfig got unexpected output, diff (-got +want): %v", diff)
-			}
-		})
-	}
-}
-
-// TestOutlierDetectionJSON tests the Outlier Detection configuration JSON
-// emitted from the xDS Client.
-func (s) TestOutlierDetectionJSON(t *testing.T) {
-	odToClusterProto := func(od *v3clusterpb.OutlierDetection) *v3clusterpb.Cluster {
-		return &v3clusterpb.Cluster{
-			Name:                 clusterName,
-			ClusterDiscoveryType: &v3clusterpb.Cluster_Type{Type: v3clusterpb.Cluster_EDS},
-			EdsClusterConfig: &v3clusterpb.Cluster_EdsClusterConfig{
-				EdsConfig: &v3corepb.ConfigSource{
-					ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{
-						Ads: &v3corepb.AggregatedConfigSource{},
-					},
-				},
-			},
-			LbPolicy:         v3clusterpb.Cluster_ROUND_ROBIN,
-			OutlierDetection: od,
-		}
-	}
-	tests := []struct{
-		name string
-		clusterWithOD *v3clusterpb.Cluster
-		wantODCfg     string
-	}{
-		{
-			name: "success-and-failure-null",
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{}),
-			wantODCfg: `{"successRateEjection": {}}`,
-		},
-		{
-			name: "success-and-failure-zero",
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
-				EnforcingSuccessRate: &wrapperspb.UInt32Value{Value: 0}, // Thus doesn't create sre - to focus on fpe
-				EnforcingFailurePercentage: &wrapperspb.UInt32Value{Value: 0},
-			}),
-			wantODCfg: `{}`,
-		},
-		// no defaults as well tested here ^^^ vvv
-		{ // Should only set in JSON what is explicitly set here...
-			name: "some-fields-set",
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
-				Interval:                       &durationpb.Duration{Seconds: 1},
-				MaxEjectionTime:                &durationpb.Duration{Seconds: 3},
-				EnforcingSuccessRate:           &wrapperspb.UInt32Value{Value: 3},
-				SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},
-				EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 7},
-				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
-			}),
-			wantODCfg: `{
-				"interval": "1s",
-				"maxEjectionTime": "3s",
-				"successRateEjection": {
-					"enforcementPercentage": 3,
-					"requestVolume": 5
-				},
-				"failurePercentageEjection": {
-					"enforcementPercentage": 7,
-					"requestVolume": 9
-				}
-			}`,
-		},
-		{
-			name: "every-field-set-non-zero",
-			clusterWithOD: odToClusterProto(&v3clusterpb.OutlierDetection{
-				// all fields set (including ones that will be layered)
-				// should pick up that/those too and explicitly set it in the JSON generated.
-				Interval:                       &durationpb.Duration{Seconds: 1},
-				BaseEjectionTime:               &durationpb.Duration{Seconds: 2},
-				MaxEjectionTime:                &durationpb.Duration{Seconds: 3},
-				MaxEjectionPercent:             &wrapperspb.UInt32Value{Value: 1},
-				SuccessRateStdevFactor:         &wrapperspb.UInt32Value{Value: 2},
-				EnforcingSuccessRate:           &wrapperspb.UInt32Value{Value: 3},
-				SuccessRateMinimumHosts:        &wrapperspb.UInt32Value{Value: 4},
-				SuccessRateRequestVolume:       &wrapperspb.UInt32Value{Value: 5},
-				FailurePercentageThreshold:     &wrapperspb.UInt32Value{Value: 6},
-				EnforcingFailurePercentage:     &wrapperspb.UInt32Value{Value: 7},
-				FailurePercentageMinimumHosts:  &wrapperspb.UInt32Value{Value: 8},
-				FailurePercentageRequestVolume: &wrapperspb.UInt32Value{Value: 9},
-			}),
-			wantODCfg: `{
-				"interval": "1s",
-				"baseEjectionTime": "2s",
-				"maxEjectionTime": "3s",
-				"maxEjectionPercent": 1,
-				"successRateEjection": {
-					"stdevFactor": 2,
-					"enforcementPercentage": 3,
-					"minimumHosts": 4,
-					"requestVolume": 5
-				},
-				"failurePercentageEjection": {
-					"threshold": 6,
-					"enforcementPercentage": 7,
-					"minimumHosts": 8,
-					"requestVolume": 9
-				}
-			}`,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			update, err := xdsresource.ValidateClusterAndConstructClusterUpdateForTesting(test.clusterWithOD)
-			if err != nil {
-				t.Errorf("validateClusterAndConstructClusterUpdate(%+v) failed: %v", test.clusterWithOD, err)
-			}
-			// got and want must be unmarshalled since JSON strings shouldn't
-			// generally be directly compared.
-			var got map[string]interface{}
-			if err := json.Unmarshal(update.OutlierDetection, &got); err != nil {
-				t.Fatalf("Error unmarshalling update.OutlierDetection (%q): %v", update.OutlierDetection, err)
-			}
-			var want map[string]interface{}
-			if err := json.Unmarshal(json.RawMessage(test.wantODCfg), &want); err != nil {
-				t.Fatalf("Error unmarshalling wantODCfg (%q): %v", test.wantODCfg, err)
-			}
-			if diff := cmp.Diff(got, want); diff != "" {
-				t.Fatalf("cluster.OutlierDetection got unexpected output, diff (-got, +want): %v", diff)
 			}
 		})
 	}

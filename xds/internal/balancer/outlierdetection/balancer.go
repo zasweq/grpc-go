@@ -88,7 +88,6 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 		MaxEjectionTime:    iserviceconfig.Duration(300 * time.Second),
 		MaxEjectionPercent: 10,
 	}
-	print("about to JSON unmarshal into top level config")
 
 	// This unmarshalling handles underlying layers sre and fpe which have their
 	// own defaults for their fields if either sre or fpe are present.
