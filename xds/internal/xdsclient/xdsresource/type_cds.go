@@ -19,6 +19,7 @@ package xdsresource
 
 import (
 	"encoding/json"
+
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
