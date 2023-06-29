@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/stats"
 	"math"
 	"net/url"
 	"strings"
@@ -743,6 +744,9 @@ func (cc *ClientConn) waitForResolvedAddrs(ctx context.Context) error {
 	}
 	select {
 	case <-cc.firstResolveEvent.Done():
+		for _, sh := range cc.dopts.copts.StatsHandlers {
+			sh.HandleRPC(ctx, &stats.ResolverResolved{})
+		}
 		return nil
 	case <-ctx.Done():
 		return status.FromContextError(ctx.Err()).Err()
@@ -1108,10 +1112,31 @@ func (cc *ClientConn) healthCheckConfig() *healthCheckConfig {
 }
 
 func (cc *ClientConn) getTransport(ctx context.Context, failfast bool, method string) (transport.ClientTransport, balancer.PickResult, error) {
-	return cc.blockingpicker.pick(ctx, failfast, balancer.PickInfo{
+	// picked := cc.blockingpicker.pick(
+	ct, pr, err := cc.blockingpicker.pick(ctx, failfast, balancer.PickInfo{
 		Ctx:            ctx,
 		FullMethodName: method,
 	})
+	// are these reads safe? I think it's guaranteed to be written by here...
+	// now where do I do this for resolver?
+
+	// where is blocking resolver call
+
+	// If we queue a call pending a resolver result, then we should add a event
+	// to the call trace when the call is removed from the queue. The event will
+	// be logged using a new method on the CallTracer, and it will show up in
+	// the trace as an event on the top-level call span.
+	for _, sh := range cc.dopts.copts.StatsHandlers {
+		// is this the right context (already sent through interceptor)
+		// or do I need to use cc.ctx or same? I guess triage through unit tests
+		sh.HandleRPC(ctx, &stats.PickerPicked{})
+	}
+
+	return ct, pr, err
+	/*return cc.blockingpicker.pick(ctx, failfast, balancer.PickInfo{
+		Ctx:            ctx,
+		FullMethodName: method,
+	})*/
 }
 
 func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSelector iresolver.ConfigSelector, addrs []resolver.Address) {

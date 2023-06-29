@@ -88,7 +88,7 @@ func populateSpan(ctx context.Context, rs stats.RPCStats, ti *traceInfo) {
 		logger.Error("ctx passed into stats handler tracing event handling has no span present")
 		return
 	}
-	span := ti.span
+	span := ti.span // this is always most recent one - overall call span or attempt span
 
 	switch rs := rs.(type) {
 	case *stats.Begin:
@@ -99,9 +99,28 @@ func populateSpan(ctx context.Context, rs stats.RPCStats, ti *traceInfo) {
 			trace.BoolAttribute("Client", rs.Client),
 			trace.BoolAttribute("FailFast", rs.FailFast),
 		)
+	// span.addAnnotation("Delayed LB pick complete"); java
+	// call_tracer->RecordAnnotation("Delayed name resolution complete.");
+	// context_.AddSpanAnnotation(annotation, {}); what is the equivalent in Go? Does this add timestamps in Java and C?
+	case *stats.ResolverResolved:
+		// two pieces of data I see:
+		// timestamp
+		// string representing resolver finished resolving
+		// span.AddAttributes()
+		span.Annotate(nil,"Delayed name resolution complete") // or do we need attributes?
+		// I think this call actually picks up the timestamp from what I can see from internal span kind
+		// so I thinkkkk this is all you need
+
+
+	// call_attempt_tracer_->RecordAnnotation("Delayed LB pick complete.");
+	case *stats.PickerPicked:
+		span.Annotate(nil, "Delayed LB pick complete")
+		// two pieces of data I see:
+		// timestamp
+		// string representing picker finished picking
 	case *stats.InPayload:
 		// message id - "must be calculated as two different counters starting
-		// from 1 one for sent messages and one for received messages."
+		// from one for sent messages and one for received messages."
 		mi := atomic.AddUint32(&ti.countRecvMsg, 1)
 		span.AddMessageReceiveEvent(int64(mi), int64(rs.Length), int64(rs.CompressedLength))
 	case *stats.OutPayload:
