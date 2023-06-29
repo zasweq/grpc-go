@@ -199,17 +199,6 @@ func (csh *clientStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo
 	return setRPCInfo(ctx, ri)
 }
 
-// rpc start - interceptor creates top level
-
-// once resolve resolves *if blocked* sh callout - records an annotation on top level span
-
-// rpc attempt start
-
-// once picker picks *if blocked* sh callout - records an annotation on attempt span
-// how to verify? needs to come through attempt span
-
-// so TagRPC must come before this blocking picker call it seems
-
 func (csh *clientStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	ri := getRPCInfo(ctx)
 	if ri == nil {

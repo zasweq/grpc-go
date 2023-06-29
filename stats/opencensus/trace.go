@@ -88,7 +88,7 @@ func populateSpan(ctx context.Context, rs stats.RPCStats, ti *traceInfo) {
 		logger.Error("ctx passed into stats handler tracing event handling has no span present")
 		return
 	}
-	span := ti.span // this is always most recent one - overall call span or attempt span
+	span := ti.span
 
 	switch rs := rs.(type) {
 	case *stats.Begin:
@@ -99,10 +99,8 @@ func populateSpan(ctx context.Context, rs stats.RPCStats, ti *traceInfo) {
 			trace.BoolAttribute("Client", rs.Client),
 			trace.BoolAttribute("FailFast", rs.FailFast),
 		)
-	// this will break tests in stats/opencensus and gcp/observability...? no binary logging != stats handler (metrics and traces)
-	//
 	case *stats.ResolverResolved:
-		span.Annotate(nil,"Delayed name resolution complete")
+		span.Annotate(nil, "Delayed name resolution complete")
 	case *stats.PickerPicked:
 		span.Annotate(nil, "Delayed LB pick complete")
 	case *stats.InPayload:
