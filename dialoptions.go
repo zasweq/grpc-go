@@ -428,7 +428,7 @@ func WithDialer(f func(string, time.Duration) (net.Conn, error)) DialOption {
 
 // WithStatsHandler returns a DialOption that specifies the stats handler for
 // all the RPCs and underlying network connections in this ClientConn.
-func WithStatsHandler(h stats.Handler) DialOption { // if it has ref to Client Option has ref to the stats handler so for over it
+func WithStatsHandler(h stats.Handler) DialOption {
 	return newFuncDialOption(func(o *dialOptions) {
 		if h == nil {
 			logger.Error("ignoring nil parameter in grpc.WithStatsHandler ClientOption")

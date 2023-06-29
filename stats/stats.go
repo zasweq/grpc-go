@@ -79,23 +79,6 @@ func (pp *PickerPicked) IsClient() bool { return true }
 
 func (pp *PickerPicked) isRPCStats() {}
 
-// sh.HandleRPC(ResolverResolved{})
-
-// sh.HandleRPC(PickerPicked{})
-
-
-// where to do this in client conn
-// also need a ref to stats handler in the place I want, also pass the correct context to this layer
-
-// sh.HandleRPC(ref to context, &ResolverResolved{}) - what is the logical place this happens?
-// sh.HandleRPC(ref to context, &PickerPicked{}) - what is the logical place this happens? Easwar mentioned somewhere around transport
-
-// will this break tests?
-
-
-// called from stats.HandleRPC...
-
-
 // InPayload contains the information for an incoming payload.
 type InPayload struct {
 	// Client is true if this InPayload is from client side.

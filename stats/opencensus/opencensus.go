@@ -205,16 +205,11 @@ func (csh *clientStatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo
 
 // rpc attempt start
 
-// once picker picks *if blocked* sh callout - records an annotation on top level span
+// once picker picks *if blocked* sh callout - records an annotation on attempt span
+// how to verify? needs to come through attempt span
 
+// so TagRPC must come before this blocking picker call it seems
 
-// these client conn concepts rest on top of this layering...
-// stream hold stats handler object for callouts
-// and ct
-
-
-
-// this is now only called in stream.go and transport
 func (csh *clientStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	ri := getRPCInfo(ctx)
 	if ri == nil {

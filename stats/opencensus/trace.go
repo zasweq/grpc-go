@@ -99,25 +99,12 @@ func populateSpan(ctx context.Context, rs stats.RPCStats, ti *traceInfo) {
 			trace.BoolAttribute("Client", rs.Client),
 			trace.BoolAttribute("FailFast", rs.FailFast),
 		)
-	// span.addAnnotation("Delayed LB pick complete"); java
-	// call_tracer->RecordAnnotation("Delayed name resolution complete.");
-	// context_.AddSpanAnnotation(annotation, {}); what is the equivalent in Go? Does this add timestamps in Java and C?
+	// this will break tests in stats/opencensus and gcp/observability...? no binary logging != stats handler (metrics and traces)
+	//
 	case *stats.ResolverResolved:
-		// two pieces of data I see:
-		// timestamp
-		// string representing resolver finished resolving
-		// span.AddAttributes()
-		span.Annotate(nil,"Delayed name resolution complete") // or do we need attributes?
-		// I think this call actually picks up the timestamp from what I can see from internal span kind
-		// so I thinkkkk this is all you need
-
-
-	// call_attempt_tracer_->RecordAnnotation("Delayed LB pick complete.");
+		span.Annotate(nil,"Delayed name resolution complete")
 	case *stats.PickerPicked:
 		span.Annotate(nil, "Delayed LB pick complete")
-		// two pieces of data I see:
-		// timestamp
-		// string representing picker finished picking
 	case *stats.InPayload:
 		// message id - "must be calculated as two different counters starting
 		// from one for sent messages and one for received messages."

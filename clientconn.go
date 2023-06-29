@@ -22,7 +22,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/stats"
 	"math"
 	"net/url"
 	"strings"
@@ -43,6 +42,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 
 	_ "google.golang.org/grpc/balancer/roundrobin"           // To register roundrobin.
@@ -350,7 +350,7 @@ func (cc *ClientConn) exitIdleMode() error {
 	cc.idlenessState = ccIdlenessStateExitingIdle
 	exitedIdle := false
 	if cc.blockingpicker == nil {
-		cc.blockingpicker = newPickerWrapper()
+		cc.blockingpicker = newPickerWrapper(cc.dopts.copts.StatsHandlers)
 	} else {
 		cc.blockingpicker.exitIdleMode()
 		exitedIdle = true
@@ -1112,31 +1112,10 @@ func (cc *ClientConn) healthCheckConfig() *healthCheckConfig {
 }
 
 func (cc *ClientConn) getTransport(ctx context.Context, failfast bool, method string) (transport.ClientTransport, balancer.PickResult, error) {
-	// picked := cc.blockingpicker.pick(
-	ct, pr, err := cc.blockingpicker.pick(ctx, failfast, balancer.PickInfo{
+	return cc.blockingpicker.pick(ctx, failfast, balancer.PickInfo{
 		Ctx:            ctx,
 		FullMethodName: method,
 	})
-	// are these reads safe? I think it's guaranteed to be written by here...
-	// now where do I do this for resolver?
-
-	// where is blocking resolver call
-
-	// If we queue a call pending a resolver result, then we should add a event
-	// to the call trace when the call is removed from the queue. The event will
-	// be logged using a new method on the CallTracer, and it will show up in
-	// the trace as an event on the top-level call span.
-	for _, sh := range cc.dopts.copts.StatsHandlers {
-		// is this the right context (already sent through interceptor)
-		// or do I need to use cc.ctx or same? I guess triage through unit tests
-		sh.HandleRPC(ctx, &stats.PickerPicked{})
-	}
-
-	return ct, pr, err
-	/*return cc.blockingpicker.pick(ctx, failfast, balancer.PickInfo{
-		Ctx:            ctx,
-		FullMethodName: method,
-	})*/
 }
 
 func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSelector iresolver.ConfigSelector, addrs []resolver.Address) {
