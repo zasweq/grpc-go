@@ -101,7 +101,7 @@ func (ssh *serverStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCT
 		method:    info.FullMethodName,
 	}
 
-	if tagsBin := stats.Tags(ctx); tagsBin != nil {
+	if tagsBin := stats.Tags(ctx); tagsBin != nil { // server method tag to OpenCensus tag...
 		if tags, err := tag.Decode(tagsBin); err == nil {
 			ctx = tag.NewContext(ctx, tags)
 		}

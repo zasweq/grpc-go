@@ -120,3 +120,10 @@ func populateSpan(ctx context.Context, rs stats.RPCStats, ti *traceInfo) {
 		span.End()
 	}
 }
+
+
+// err no sub conns
+
+// signal to lb policy from test
+
+// send good picker back to trigger determinisitcally
