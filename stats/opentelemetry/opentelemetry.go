@@ -55,8 +55,9 @@ var (
 // MetricsOptions are the metrics options for OpenTelemetry instrumentation.
 type MetricsOptions struct {
 	// MeterProvider is the MeterProvider instance that will be used for access
-	// to Named Meter instances to instrument an application. Overwrites the
-	// global default if set.
+	// to Named Meter instances to instrument an application. Defaults to a
+	// no-op if unset (will cause no metrics to be recorded...?).
+
 
 	// Intended to be set by the SDK implementation?
 
@@ -66,36 +67,40 @@ type MetricsOptions struct {
 	EnabledMetrics []string
 	// DisabledMetrics are the metrics disabled that gRPC will not record.
 	// gRPC OTel component (doesn't record) -> MeterProvider with the basics registered.
-	DisabledMetrics []string
-} // set this struct and call DialOption right?
+	DisabledMetrics []string // views set at sdk take precedence
+
+	// This is api ^^^, my api will just be a []string that defaults are exposed to users and then you can set or not...
+
+	// Export Default Metrics...take this and build a set and you have that set part of my algorithm
+	Metrics []string
+
+
+}
 
 func DialOption(mo MetricsOptions/*, to TraceOptions*/) grpc.DialOption {
 	// both the interceptor (how to persist)?
 	// and stats handler have to persist these options since they all work in conjunction...
 	csh := &clientStatsHandler{mo: mo} // before creating interceptor (which records metrics) needs to build out metrics list
+	csh.buildMetricsDataStructuresAtInitTime() // perhaps make this a constructor...that links the two together
 
-	// ohhh since interceptor is on stats handler good
+	// if MeterProvider isn't set default to no-op
+	if mo.MeterProvider == nil {
+		// Default to no-op...what does this even entail?
+		// should I be setting it on the passed in (copied if no pointer) metrics options?
+
+		// is the whole flow plumbing nils
+		// return a nil meter and have a nil check on meter and early return if so...just don't record
+		// what exactly is implementation of no-op?
+
+	}
+
 	return joinDialOptions(grpc.WithChainUnaryInterceptor(csh.unaryInterceptor), grpc.WithStreamInterceptor(csh.streamInterceptor), grpc.WithStatsHandler(csh))
 } // multiple by grpc.DialOption, grpc.DialOption
 
-func (csh *clientStatsHandler) messAroundWithMetricsOptions() {
-	csh.mo.EnabledMetrics // []string set at beginning - register more metrics...at what layer this or MeterProvider?
-	csh.mo.DisabledMetrics // []string when to actually disable the metrics...
-	// this is implemented by SDK or user can
-
-	// sdk implements that
-	csh.mo.MeterProvider // metric.MeterProvider
-	csh.mo.MeterProvider.Meter(/*name string, meter option*/)
-}
-
 // preprocessing:
-//        create call span - but only if traces aren't disabled...do I need to give an option disable traces
+//        create call span - but only if traces aren't disabled...do I need to give an option disable traces? I can answer that in next pr
 //
 //
-
-// postprocessing:
-//        finish the call span
-//        record call latency...
 
 // what does the interceptor do...?
 // top level span for sure
@@ -127,65 +132,57 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 	// this metric aims to measure the end-to-end time the gRPC
 	// library takes to complete an RPC from the applications perspective
 
+	// for target attribute:
+
+
+
+
 	// 1. create per call data needed for traces and metrics
 	// call span
+	startTime := time.Now()
 
 	// 2. do rpc
 	err := invoker(ctx, method, req, reply, cc, opts...)
 
 	// 3. post processing (callback in streaming flow...)
-
+	csh.perCallMetrics(ctx, err, startTime, method, cc.Target())
 	return err
 }
 
 func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	// same logic as unary
-
-	// 1. create per call data needed for traces and metrics
-	// call span, start time for duration of full call...
-	// startTime := time.Now(), where this will be call duration
-
-	// 2. do rpc
+	startTime := time.Now()
+	callback := func(err error) {
+		csh.perCallMetrics(ctx, err, startTime, method, cc.Target())
+	}
+	opts = append([]grpc.CallOption{grpc.OnFinish(callback)}, opts...)
 	s, err := streamer(ctx, desc, cc, method, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return s, nil
-	// 3. post processing (callback in streaming flow...)
 }
 
-func (csh *clientStatsHandler) perCallMetrics(err error, ctx context.Context, startTime time.Time, method string, target string) { // oh can't do inline for reusability...
+func (csh *clientStatsHandler) perCallMetrics(ctx context.Context, err error, startTime time.Time, method string, target string) { // oh can't do inline for reusability...
 	s := status.Convert(err)
 	callLatency := float64(time.Since(startTime)) / float64(time.Millisecond)
-	// method target and status:
-	// method: method
-	// target: cc.target
-	// status: s
-
-	// remake the variable here...
-
-
-
-
 	if csh.registeredMetrics.clientCallDuration != nil {
 		csh.registeredMetrics.clientCallDuration.Record(ctx, callLatency, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(method)), attribute.String("grpc.target", target), attribute.String("grpc.status", canonicalString(s.Code())))) // needs method target and status should I persist this?
 	}
 }
 
 
-
-	// Same thing...Dial Option with everything configured
-
-// metrics flow
-// tracing flow
-
-
 func ServerOption(mo MetricsOptions) grpc.ServerOption {
+	ssh := &serverStatsHandler{mo: mo}
+	ssh.buildMetricsDataStructuresAtInitTime() // or make it as part of new?...make one constructor
+	// if MeterProvider isn't set default to no-op
+	if mo.MeterProvider == nil {
+		// default to no-op...what does that mean?
+	}
 	return grpc.StatsHandler(&serverStatsHandler{mo: mo}) // why is this a pointer?
 }
 
 
-// In the top level context...
+// In the top level context...per call level stuff
 
 // opencensus top level span + timestamp (only call metric outside) we also will
 // have retry metrics which need to persist a counter so add something to
@@ -204,7 +201,7 @@ type perCallInfo struct {
 }
 
 type perAttemptInfo struct { // created at beginning of stats handler tag, scoped to attempt, data needed per attempt and/attempt is handled
-
+	// I think this is mi and ti
 }
 
 type clientStatsHandler struct {
@@ -214,12 +211,8 @@ type clientStatsHandler struct {
 
 	registeredMetrics registeredMetrics // pointer or not
 
-	target string // this only needs to be set once
-	// so either if target != "" set
+	target string // this only needs to be set once - put it in call info
 
-	// also put target string in top level object
-
-	// or just always set
 }
 
 // retry delay per call (A45)...through interceptor will be wrt the talking between interceptor and stats handler right...
@@ -305,79 +298,6 @@ type metricsInfo struct { // rename? can I just reuse althoguh I think I want to
 
 // run after enabled disabled, run through these
 
-func (csh *clientStatsHandler) constructMetricsForStatsHandler(mp metric.MeterProvider) {
-	// mp.Meter() // persist all these measures in stats handler
-
-	// One meter persisted with all counter?
-	// map[metric name]counter?
-
-	// Each telemetry component has it's own MeterProvider...and thus everything
-	// can be scoped to csh's memory. The question is how far along do you
-	// persist?
-	// get a default bounds...OTel provides API later, so keep experimental
-	m := csh.mo.MeterProvider.Meter("noop" /*what options do you provide, Attributes Type and Unit (/attempt is this just implied by dashboard? Do I need to explicitly set this?) are part of spec for instrument...*/) // The total number of RPC attempts started, including those that have not completed.
-	// I think this is like a measure?
-	// Float64Counter returns a new Float64Counter instrument identified by
-	// name and configured with options. The instrument is used to
-	// synchronously record increasing float64 measurements during a
-	// computational operation.
-
-	// one meter at instantiation
-	// instruments the user specifies for that component
-
-	// instrument...counter on an instrument
-	/*
-		grpc.client.attempt.started
-		The total number of RPC attempts started, including those that have not completed.
-		Attributes: grpc.method, grpc.target (handled with an add option)
-		Type: Counter (count (/attempt) is this also an add option?)
-		Unit: {attempt}
-	*/
-	// sdk you can provide explicit bounds (so o11y plugins can use), api still coming
-	f64c, err := m.Int64Counter("grpc.client.attempt.started" /*<- correct string?*, what options do you provide here?*/, metric.WithUnit("attempt")) // over an attempt so do you have to provide this unit?
-	if err != nil {
-		// handle error - where should this codeblock be?
-	}
-
-	// clearly VVV recording does...
-	// persist ^^^ in a map? How do instruments fit into this?
-
-	// and then get map[measureName], Add to that?
-
-	// assuming ctx propgates timeouts...
-
-	// at least this is part of metric recording point
-	f64c.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.target", "grpc target string here - target URI used when creating a gRPC Channel..."))) // Add records a change to the counter...
-	// ||
-	// Use the WithAttributeSet (or, if performance is not a concern, the WithAttributes) option to include measurement attributes.
-	metric.WithAttributeSet(/*attribute set of method and target here...*/) // Set makes it more performant...
-
-
-	/*
-	grpc.client.attempt.sent_total_compressed_message_size
-	Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.
-	Attributes: grpc.method, grpc.target, grpc.status
-	Type: Histogram (Size Buckets) (Histogram with a parameter of buckets)
-	*/
-	i64his, err := m.Int64Histogram("grpc.client.attempt.duration"/*name, histogram option, I'm assuming you plumb in from htere*/, metric.Int64HistogramOption /*plug in a histogram option that specifies buckets - prob in a different package*/)
-	if err != nil {
-		// what to do, error out of the whole module?
-	}
-	/*
-	var st string
-		if e.Error != nil {
-			s, _ := status.FromError(e.Error)
-			st = canonicalString(s.Code())
-		} else {
-			st = "OK"
-		}
-	*/
-	i64his.Record(ctx, /*compressed message bytes sent down*/, /*RecordOptions - def method target and status, should I write a helper for this?*/metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.target", "grpc target string here - target URI used when creating a gRPC Channel..."), attribute.String("grpc.status", st)))
-
-	// if you store this as an interface, will need to typecast downward, not one it all implements
-
-}
-
 // set of names
 
 // in init
@@ -407,12 +327,7 @@ type registeredMetrics struct { // nil or not nil means presence
 	serverCallRcvdTotalCompressedMessageSize metric.Int64Histogram
 	// "grpc.server.call.duration"
 	serverCallDuration metric.Float64Histogram
-
 } // use this for both client and server side, so that way you can have metrics recording for both
-
-// keep the flows separate for client and server, avoid the branch and pull
-// authority from client headers
-
 
 
 // make it required for Meter Provider, don't fallback to global (so we chose this vvv)
@@ -425,26 +340,40 @@ type registeredMetrics struct { // nil or not nil means presence
 
 // api (what's gated by presence checks) gets overwritten by sdk if saves
 
-func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime(mo *MetricsOptions) {
-	var setOfMetrics map[string]struct{}
+type noopMeterProvider struct { // defaults to this, returns a nil meter (way to hard to implement that) and if meter is nil exit call early? Is that definition of no-op
+
+} // looks like it already provides it according to the documentation
+
+func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime() {
+	// Don't use no-op, just don't fill out any of the metrics, and if none of the
+	// metrics are set then you just don't record.
+	if ssh.mo.MeterProvider == nil {
+		return
+	}
+
+	var setOfMetrics map[string]struct{} // pre allocate?
+	for _, metric := range ssh.mo.Metrics {
+		setOfMetrics[metric] = struct{}{}
+	}
 
 	var registeredMetrics registeredMetrics
 
-	// or pass in a meter
-	meter := mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?")
-	// counter name - sdk takes precedence, then api (api here is defaults)
+	// Same thing defaults to no-op if unset - so if gets a nil just a no-op?
+	// nil check on mo?
+	// or pass in a meter - what is a no op meter provider?
+	meter := ssh.mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?")
+	// counter name - sdk takes precedence, then api (api here is defaults overwritten by SDK)
+
 	if _, ok := setOfMetrics["grpc.server.call.started"]; ok {
-		// grpc.client.attempt.started - Yash mentioned all this stuff is hardcoded based off metrics definitions...
-		scs, err := meter.Int64Counter("grpc.server.call.started", metric.WithUnit("call") /*any other options?*/) // I think this handled with unit
+		scs, err := meter.Int64Counter("grpc.server.call.started", metric.WithUnit("call"))
 		if err != nil {
 			// handle error - should this fully error or continue onto the next metric...just not put it in the map, and future metrics recording points won't record
 			// continue to next metric
 			// log it didn't register - on what logger
 		} else {
-			// persist in map (as what)
-			registeredMetrics.serverCallStarted = scs // will this cause some weird stuff with Garbage collector wrt pointer?
+			registeredMetrics.serverCallStarted = scs
 		}
-	} // record on asc (by pulling out from persisting) in RPC Start on server side (is there a way to avoid this branch
+	}
 
 	if _, ok := setOfMetrics["grpc.server.call.sent_total_compressed_message_size"]; ok {
 		ss, err := meter.Int64Histogram("grpc.server.call.sent_total_compressed_message_size" /*option specifying size buckets here*/)
@@ -453,7 +382,7 @@ func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime(mo *MetricsO
 		} else {
 			registeredMetrics.serverCallSentTotalCompressedMessageSize = ss
 		}
-	} // record on scs in stats.End
+	}
 
 	if _, ok := setOfMetrics["grpc.server.call.rcvd_total_compressed_message_size"]; ok {
 		sr, err := meter.Int64Histogram("grpc.server.rcvd.sent_total_compressed_message_size" /*option specifying size buckets here*/)
@@ -462,31 +391,46 @@ func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime(mo *MetricsO
 		} else {
 			registeredMetrics.serverCallRcvdTotalCompressedMessageSize = sr
 		}
-	} // record on scs in stats.End
+	}
 
 	if _, ok := setOfMetrics["grpc.server.call.duration"]; ok {
-		// grpc.client.attempt.duration - e2e time it takes to complete an RPC attempt including time it takes to pick subchannel (do I need to plumb these description strings anywhere?)
-		scd, err := meter.Float64Histogram("grpc.server.call.duration", metric.Float64HistogramOption()) // there's gotta be like with bounds (latency bucket) or something...also declare bounds above
+		// plumb description string anywhere?
+		scd, err := meter.Float64Histogram("grpc.server.call.duration") // there's gotta be like with bounds (latency bucket) or something...also declare bounds above only settable at sdk level not api level which wins out anyway precedence wise anyway...otherwise default bounds
 		if err != nil {
 			// handle error - should this fully error or continue onto the next metric...just not put it in the map, and future metrics recording points won't record
 			// Yash mentioned just log failed registration - and agreed with behavior of continuing
 		} else {
 			registeredMetrics.serverCallDuration = scd
 		}
-	} // record on cad in stats.End
+	}
 }
 
-func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime(mo *MetricsOptions) {
+// Don't use no-op, just don't fill out any of the metrics, and if none of the
+// metrics are set then you just don't record.
+
+// To enable metrics collection, set a meter provider. If unset, no metrics will be recorded.
+
+func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 	// master set of metrics - metrics type?
 
+	// Don't use no-op, just don't fill out any of the metrics, and if none of the
+	// metrics are set then you just don't record.
+	if csh.mo.MeterProvider == nil {
+		return
+	}
+
 	// []set of metrics - whether from his api or my api where you pass in directly and append
-	var setOfMetrics map[string]struct{} // Yash had this passed in, provide default metrics to user, maybe I can just say register metrics...
+	// var setOfMetrics map[string]struct{} // Yash had this passed in, provide default metrics to user, maybe I can just say register metrics...
+	var setOfMetrics map[string]struct{} // pre allocate?
+	for _, metric := range csh.mo.Metrics {
+		setOfMetrics[metric] = struct{}{}
+	}
 
 	// build a map[metric name]interface{} where interface{} is arbitary counter type no use what Yash did
 	// var mapOfMetrics map[string]interface{} // presence in this will be used for registration
 	var registeredMetrics registeredMetrics // pointer or not?
 
-	meter := mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?"/*any options here?*/)
+	meter := csh.mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?"/*any options here?*/)
 
 	if _, ok := setOfMetrics["grpc.client.attempt.started"]; ok {
 		// grpc.client.attempt.started - Yash mentioned all this stuff is hardcoded based off metrics definitions...
@@ -549,57 +493,12 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime(mo *MetricsO
 		}
 	}
 
-
-	// counter name - sdk takes precedence, then api (api here is defaults)
-	if _, ok := setOfMetrics["grpc.server.call.started"]; ok {
-		// grpc.client.attempt.started - Yash mentioned all this stuff is hardcoded based off metrics definitions...
-		scs, err := meter.Int64Counter("grpc.server.call.started", metric.WithUnit("call") /*any other options?*/) // I think this handled with unit
-		if err != nil {
-			// handle error - should this fully error or continue onto the next metric...just not put it in the map, and future metrics recording points won't record
-			// continue to next metric
-			// log it didn't register
-		} else {
-			// persist in map (as what)
-			registeredMetrics.serverCallStarted = scs // will this cause some weird stuff with Garbage collector wrt pointer?
-		}
-	} // record on asc (by pulling out from persisting) in RPC Start on server side (is there a way to avoid this branch
-
-	if _, ok := setOfMetrics["grpc.server.call.sent_total_compressed_message_size"]; ok {
-		ss, err := meter.Int64Histogram("grpc.server.call.sent_total_compressed_message_size" /*option specifying size buckets here*/)
-		if err != nil {
-			// log it didn't register
-		} else {
-			registeredMetrics.serverCallSentTotalCompressedMessageSize = ss
-		}
-	} // record on scs in stats.End
-
-	if _, ok := setOfMetrics["grpc.server.call.rcvd_total_compressed_message_size"]; ok {
-		sr, err := meter.Int64Histogram("grpc.server.rcvd.sent_total_compressed_message_size" /*option specifying size buckets here*/)
-		if err != nil {
-			// log it didn't register
-		} else {
-			registeredMetrics.serverCallRcvdTotalCompressedMessageSize = sr
-		}
-	} // record on scs in stats.End
-
-	if _, ok := setOfMetrics["grpc.server.call.duration"]; ok {
-		// grpc.client.attempt.duration - e2e time it takes to complete an RPC attempt including time it takes to pick subchannel (do I need to plumb these description strings anywhere?)
-		scd, err := meter.Float64Histogram("grpc.server.call.duration", metric.Float64HistogramOption()) // there's gotta be like with bounds (latency bucket) or something...also declare bounds above
-		if err != nil {
-			// handle error - should this fully error or continue onto the next metric...just not put it in the map, and future metrics recording points won't record
-			// Yash mentioned just log failed registration - and agreed with behavior of continuing
-		} else {
-			registeredMetrics.serverCallDuration = scd
-		}
-	} // record on cad in stats.End
-
 	// at this point extra metrics to register, still based on set regardless of how it's built.
 	// structure api like you just pass in set
 	csh.registeredMetrics = registeredMetrics
 
 	// delete server stuff
-
-}
+} // call this function after init time
 
 // how does no-op get plumbed
 
@@ -652,7 +551,7 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime(mo *MetricsO
 func (csh *clientStatsHandler) recordRPCData(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
 	// subset and the same stuff?
 	switch st := s.(type) {
-	case *stats.OutHeader, *stats.InTrailer, *stats.OutTrailer:
+	case *stats.InHeader, *stats.OutHeader, *stats.InTrailer, *stats.OutTrailer:
 
 		// does authority come before begin...if not that's undefined
 
@@ -661,7 +560,7 @@ func (csh *clientStatsHandler) recordRPCData(ctx context.Context, s stats.RPCSta
 		// Headers and Trailers are not relevant to the measures, as the
 		// measures concern number of messages and bytes for messages. This
 		// aligns with flow control.
-	case *stats.InHeader:
+	case *stats.InHeader: // but does this haveeee to come in?
 		st.Header /*"get this and persist :authority"...per call also can you use this to record*/
 		st.Client // can branch
 	case *stats.Begin: // records started RPCs
@@ -728,17 +627,10 @@ func (csh *clientStatsHandler) recordRPCData(ctx context.Context, s stats.RPCSta
 		// OpenCensus:
 		// Measures (i.e. a number you add 1 on)
 		// Views on ^^^ can have more than one view on the same measure and do stuff like distribution and count...etc.
-		if st.Client {
+
 			// early return
-			if csh.registeredMetrics.clientAttemptStarted != nil {
-				csh.registeredMetrics.clientAttemptStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.target", "grpc target string here - target URI used when creating a gRPC Channel..."))) // Add records a change to the counter...
-			}
-			return
-		}
-		// else (implicit from early return)
-		if csh.registeredMetrics.serverCallStarted != nil { // could read this into a local var for readability see what they say on CLs
-			// persist method and authority and status from register or from interceptor is what doug said
-			csh.registeredMetrics.serverCallStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("authority", /*authority is part of parsed target*/)))
+		if csh.registeredMetrics.clientAttemptStarted != nil {
+			csh.registeredMetrics.clientAttemptStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.target", "grpc target string here - target URI used when creating a gRPC Channel..."))) // Add records a change to the counter...
 		}
 
 	case *stats.OutPayload: // the other events just record stuff for metrics info...scoped to per attempt
@@ -754,7 +646,7 @@ func (csh *clientStatsHandler) recordRPCData(ctx context.Context, s stats.RPCSta
 
 		// so MeterProvider is clearly per opentelemetry (customize views means the views can't be global need to go through Meter Provider...)
 		// looks like enable/disable metric are too
-
+		csh.recordDataEnd(ctx, mi, st)
 
 	default:
 		// Shouldn't happen. gRPC calls into stats handler, and will never not
@@ -836,19 +728,21 @@ func (ssh *serverStatsHandler) recordRPCData(ctx context.Context, s stats.RPCSta
 	case *stats.Begin:
 		if ssh.registeredMetrics.serverCallStarted != nil { // could read this into a local var for readability see what they say on CLs
 			// persist method and authority and status from register or from interceptor is what doug said
-			ssh.registeredMetrics.serverCallStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("authority", /*persisted authority from InHeader...comes after*/)))
+			ssh.registeredMetrics.serverCallStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("authority", /*persisted authority from InHeader...comes after or just move recording point to in header if in header is 1:1 for an RPC and is always called*/)))
 		}
 		// or move this recording point to InHeader
 	case *stats.OutPayload:
 		atomic.AddInt64(&mi.sentCompressedBytes, int64(st.CompressedLength))
 	case *stats.InPayload:
 		atomic.AddInt64(&mi.recvCompressedBytes, int64(st.CompressedLength))
+	case *stats.End:
+		ssh.recordDataEnd(ctx, mi, st)
 	default:
 		// Shouldn't happen. gRPC calls into stats handler, and will never not
 		// be one of the types above.
 		logger.Errorf("Received unexpected stats type (%T) with data: %v", s, s)
 	}
-}
+} // keeping it separate will also help over time...
 
 type serverStatsHandler struct {
 	// to - opencensus is just trace sampler and whether you disable - same thing here?
@@ -871,7 +765,6 @@ func (ssh *serverStatsHandler) recordDataEnd(ctx context.Context, mi *metricsInf
 
 	serverAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.authority", "persisted authority here"), attribute.String("grpc.status", st))
 
-	// need to build registered metrics for both
 	if ssh.registeredMetrics.serverCallSentTotalCompressedMessageSize != nil {
 		ssh.registeredMetrics.serverCallSentTotalCompressedMessageSize.Record(ctx, mi.sentCompressedBytes, serverAttributeOption)
 	}

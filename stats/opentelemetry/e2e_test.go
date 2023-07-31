@@ -54,6 +54,12 @@ func (s) TestMessAround(t *testing.T) {
 	// trace.Tracer is a TracerProvider.Tracer() <- Tracer provider comes from SDK and you register a SpanExporter
 
 	// call Start() on trace.Tracer
+
+	// pass the provider as a metrics option, the provider has the exporter, put
+	// a fake exporter in and I think it will do it that way. ping Yash on how
+	// he tested the exporting part?
+
 }
 
 // similar flow for metrics?
+
