@@ -35,25 +35,38 @@ const Name = "least_request_experimental"
 
 var logger = grpclog.Component("least request")
 
+func init() {
+	balancer.Register(bb{})
+}
+
+// LBConfig is the balancer config for least_request_experimental balancer.
+type LBConfig struct {
+	serviceconfig.LoadBalancingConfig `json:"-"`
+
+	// ChoiceCount is the number of random SubConns to sample to try and find
+	// the one with the Least Request. If unset, defaults to 2. If set to < 2,
+	// will become 2, and if set to > 10, will become 10.
+	ChoiceCount uint32 `json:"choiceCount,omitempty"`
+}
+
 type bb struct{}
 
 func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	lbConfig := &leastRequestConfig{
+	lbConfig := &LBConfig{
 		ChoiceCount: 2,
 	}
 	if err := json.Unmarshal(s, lbConfig); err != nil {
 		return nil, fmt.Errorf("least-request: unable to unmarshal LBConfig: %v", err)
 	}
+	// "If `choice_count < 2`, the config will be rejected." - A48
+	if lbConfig.ChoiceCount < 2 { // sweet
+		return nil, fmt.Errorf("least-request: lbConfig.choiceCount: %v, must be >= 2", lbConfig.ChoiceCount)
+	}
 	// "If a LeastRequestLoadBalancingConfig with a choice_count > 10 is
 	// received, the least_request_experimental policy will set choice_count =
-	// 10."
+	// 10." - A48
 	if lbConfig.ChoiceCount > 10 {
 		lbConfig.ChoiceCount = 10
-	}
-	// I asked about this in chat but what happens if choiceCount < 2 (0 or 1)?
-	// Doing this for now.
-	if lbConfig.ChoiceCount < 2 {
-		lbConfig.ChoiceCount = 2
 	}
 	return lbConfig, nil
 }
@@ -132,7 +145,7 @@ type picker struct {
 func (p *picker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
 	var pickedSC *scWithRPCCount
 	for i := 0; i < int(p.choiceCount); i++ {
-		index := grpcrand.Uint32() % uint32(len(p.subConns))
+		index := grpcrand.Uint32() % uint32(len(p.subConns)) // inject randomness here for deterministic picks/tests/expectations of backends routed to
 		sc := p.subConns[index]
 		if pickedSC == nil {
 			pickedSC = &sc
@@ -158,3 +171,22 @@ func (p *picker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
 		Done:    done,
 	}, nil
 }
+
+
+// testing...
+// top level balancer of channel - will inherently have to be a random selection
+// and rpc distribution
+
+// any unit style tests?
+
+
+// xDS plumbing
+// plumbed into both fields
+// new thing in registry  -> both converted into the same JSON that hits this file and becomes a real lb config
+// old thing              ->
+
+// don't mind cluster resolver speced stuff...
+
+// xDS - sanity check
+// inject randomness, pick first
+// expect random thing to be called return 1, 2
