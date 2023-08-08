@@ -40,6 +40,10 @@ var (
 	// pick_first LB policy, which can be enabled by setting the environment
 	// variable "GRPC_EXPERIMENTAL_PICKFIRST_LB_CONFIG" to "true".
 	PickFirstLBConfig = boolFromEnv("GRPC_EXPERIMENTAL_PICKFIRST_LB_CONFIG", false)
+	// LeastRequestLB is set if we should support the least_request_experimental
+	// LB policy, which can be enabled by setting the environment variable
+	// "GRPC_EXPERIMENTAL_ENABLE_LEAST_REQUEST" to "true".
+	LeastRequestLB = boolFromEnv("GRPC_EXPERIMENTAL_ENABLE_LEAST_REQUEST", false)
 	// ALTSMaxConcurrentHandshakes is the maximum number of concurrent ALTS
 	// handshakes that can be performed.
 	ALTSMaxConcurrentHandshakes = uint64FromEnv("GRPC_ALTS_MAX_CONCURRENT_HANDSHAKES", 100, 1, 100)
