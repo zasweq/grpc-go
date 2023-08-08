@@ -39,7 +39,7 @@ type bb struct{}
 
 func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	lbConfig := &leastRequestConfig{
-		choiceCount: 2,
+		ChoiceCount: 2,
 	}
 	if err := json.Unmarshal(s, lbConfig); err != nil {
 		return nil, fmt.Errorf("least-request: unable to unmarshal LBConfig: %v", err)
@@ -47,13 +47,13 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 	// "If a LeastRequestLoadBalancingConfig with a choice_count > 10 is
 	// received, the least_request_experimental policy will set choice_count =
 	// 10."
-	if lbConfig.choiceCount > 10 {
-		lbConfig.choiceCount = 10
+	if lbConfig.ChoiceCount > 10 {
+		lbConfig.ChoiceCount = 10
 	}
 	// I asked about this in chat but what happens if choiceCount < 2 (0 or 1)?
 	// Doing this for now.
-	if lbConfig.choiceCount < 2 {
-		lbConfig.choiceCount = 2
+	if lbConfig.ChoiceCount < 2 {
+		lbConfig.ChoiceCount = 2
 	}
 	return lbConfig, nil
 }
@@ -80,8 +80,11 @@ type leastRequestBalancer struct {
 
 type leastRequestConfig struct {
 	serviceconfig.LoadBalancingConfig `json:"-"`
-	// Optional - defaults to 2.
-	choiceCount uint32 `json:"choiceCount,omitempty"`
+
+	// ChoiceCount is the number of random SubConns to sample to try and find
+	// the one with the Least Request. If unset, defaults to 2. If set to < 2,
+	// will become 2, and if set to > 10, will become 10.
+	ChoiceCount uint32 `json:"choiceCount,omitempty"`
 }
 
 func (lrb *leastRequestBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
@@ -91,7 +94,7 @@ func (lrb *leastRequestBalancer) UpdateClientConnState(s balancer.ClientConnStat
 		return balancer.ErrBadResolverState
 	}
 
-	lrb.choiceCount = lrCfg.choiceCount
+	lrb.choiceCount = lrCfg.ChoiceCount
 	return lrb.Balancer.UpdateClientConnState(s)
 }
 
