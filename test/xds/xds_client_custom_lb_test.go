@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/balancer/weightedroundrobin" // To register weighted_round_robin
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/internal/balancer/leastrequest"
 	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/internal/testutils"
@@ -41,6 +42,7 @@ import (
 	v3listenerpb "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	v3clientsideweightedroundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/client_side_weighted_round_robin/v3"
+	v3leastrequestpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/least_request/v3"
 	v3roundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/round_robin/v3"
 	v3wrrlocalitypb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
 	"github.com/golang/protobuf/proto"
@@ -96,6 +98,23 @@ func (s) TestWrrLocality(t *testing.T) {
 	defer func() {
 		envconfig.XDSCustomLBPolicy = oldCustomLBSupport
 	}()
+	oldLeastRequestLBSupport := envconfig.LeastRequestLB
+	envconfig.LeastRequestLB = true
+	defer func() {
+		envconfig.LeastRequestLB = oldLeastRequestLBSupport
+	}()
+	defer func(u func() uint32) {
+		leastrequest.GRPCranduint32 = u
+	}(leastrequest.GRPCranduint32)
+	var index int
+	indexes := []uint32{
+		0, 1, 2, 3, 4, 5, // Triggers a round robin distribution of indexes for two addresses or three addresses (i.e. the number of addresses in each locality).
+	}
+	leastrequest.GRPCranduint32 = func() uint32 {
+		ret := indexes[index%len(indexes)]
+		index++
+		return ret
+	}
 
 	backend1 := stubserver.StartTestService(t, nil)
 	port1 := testutils.ParsePort(t, backend1.Address)
@@ -194,6 +213,30 @@ func (s) TestWrrLocality(t *testing.T) {
 				{addr: backend5.Address, count: 8},
 			},
 		},
+		// Custom LB with least_request - will be flaky random unless there's a single subconn per locality
+		{
+			name: "custom_lb_least_request",
+			wrrLocalityConfiguration: wrrLocality(&v3leastrequestpb.LeastRequest{
+				// I feel like mathematically if you set this to high enough
+				// should be logical round robin.
+				ChoiceCount: wrapperspb.UInt32(3),
+			}),
+			// Each addresses expected probability is locality weight of
+			// locality / total locality weights multiplied by 1 / number of
+			// endpoints in each locality (due to round robin across endpoints
+			// in a locality). Thus, address 1 and address 2 have 1/3 * 1/2
+			// probability, and addresses 3 4 5 have 2/3 * 1/3 probability of
+			// being routed to. (write a comment explaining why)
+			addressDistributionWant: []struct {
+				addr  string
+				count int
+			}{
+				{addr: backend1.Address, count: 1}, // pick first because hook always chooses first index of address lists with lengths of multiples of 2 or 3
+				{addr: backend3.Address, count: 2},
+			},
+		},
+		// try it with config and see if it flakes or it eventually tails towards 50 50
+
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

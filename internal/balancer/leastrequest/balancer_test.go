@@ -18,14 +18,31 @@
 package leastrequest
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/internal/grpctest"
+	"google.golang.org/grpc/internal/stubserver"
+	testgrpc "google.golang.org/grpc/interop/grpc_testing"
+	testpb "google.golang.org/grpc/interop/grpc_testing"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/serviceconfig"
+)
+
+const (
+	defaultTestTimeout = 5 * time.Second
 )
 
 type s struct {
@@ -97,5 +114,347 @@ func (s) TestParseConfig(t *testing.T) {
 				t.Fatalf("ParseConfig(%v) got unexpected output, diff (-got +want): %v", test.input, diff)
 			}
 		})
+	}
+}
+
+// setupBackends spins up three test backends, each listening on a port on
+// localhost. The three backends always reply with an empty response with no
+// error, and for streaming receive until hitting an EOF error.
+func setupBackends(t *testing.T) ([]string, func()) {
+	t.Helper()
+
+	backends := make([]*stubserver.StubServer, 4)
+	addresses := make([]string, 4)
+	// Construct and start 4 working backends.
+	for i := 0; i < 4; i++ {
+		backend := &stubserver.StubServer{
+			EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) {
+				return &testpb.Empty{}, nil
+			},
+			FullDuplexCallF: func(stream testgrpc.TestService_FullDuplexCallServer) error {
+				for {
+					_, err := stream.Recv()
+					if err == io.EOF {
+						return nil
+					}
+				}
+			},
+		}
+		if err := backend.StartServer(); err != nil {
+			t.Fatalf("Failed to start backend: %v", err)
+		}
+		t.Logf("Started good TestService backend at: %q", backend.Address)
+		backends[i] = backend
+		addresses[i] = backend.Address
+	}
+	cancel := func() {
+		for _, backend := range backends {
+			backend.Stop()
+		}
+	}
+	return addresses, cancel
+}
+
+// checkRoundRobinRPCs verifies that EmptyCall RPCs on the given ClientConn,
+// connected to a server exposing the test.grpc_testing.TestService, are
+// roundrobined across the given backend addresses.
+//
+// Returns a non-nil error if context deadline expires before RPCs start to get
+// roundrobined across the given backends.
+func checkRoundRobinRPCs(ctx context.Context, client testgrpc.TestServiceClient, addrs []resolver.Address) error {
+	wantAddrCount := make(map[string]int)
+	for _, addr := range addrs {
+		wantAddrCount[addr.Addr]++
+	}
+	gotAddrCount := make(map[string]int)
+	for ; ctx.Err() == nil; <-time.After(time.Millisecond) {
+		gotAddrCount = make(map[string]int)
+		// Perform 3 iterations.
+		var iterations [][]string
+		for i := 0; i < 3; i++ {
+			iteration := make([]string, len(addrs))
+			for c := 0; c < len(addrs); c++ {
+				var peer peer.Peer
+				client.EmptyCall(ctx, &testpb.Empty{}, grpc.Peer(&peer))
+				if peer.Addr != nil {
+					iteration[c] = peer.Addr.String()
+				}
+			}
+			iterations = append(iterations, iteration)
+		}
+		// Ensure the the first iteration contains all addresses in addrs.
+		for _, addr := range iterations[0] {
+			gotAddrCount[addr]++
+		}
+		if diff := cmp.Diff(gotAddrCount, wantAddrCount); diff != "" {
+			continue
+		}
+		// Ensure all three iterations contain the same addresses.
+		if !cmp.Equal(iterations[0], iterations[1]) || !cmp.Equal(iterations[0], iterations[2]) {
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("timeout when waiting for roundrobin distribution of RPCs across addresses: %v; got: %v", addrs, gotAddrCount)
+}
+
+// TestLeastRequestE2E tests the Least Request LB policy in an e2e style. The
+// Least Request balancer is configured as the top level balancer of the
+// channel, and is passed three addresses. Eventually, the test creates three
+// streams, which should be on certain backends according to the least request
+// algorithm. The randomness in the picker is injected in the test to be
+// deterministic, allowing the test to make assertions on the distribution.
+func (s) TestLeastRequestE2E(t *testing.T) {
+	defer func(u func() uint32) {
+		GRPCranduint32 = u
+	}(GRPCranduint32)
+	var index int
+	indexes := []uint32{
+		0, 0, 1, 1, 2, 2, // Triggers a round robin distribution.
+	}
+	GRPCranduint32 = func() uint32 {
+		ret := indexes[index%len(indexes)]
+		index++
+		return ret
+	}
+	addresses, cancel := setupBackends(t)
+	defer cancel()
+
+	mr := manual.NewBuilderWithScheme("lr-e2e")
+	defer mr.Close()
+
+	// Configure least request as top level balancer of channel.
+	lrscJSON := `
+{
+  "loadBalancingConfig": [
+    {
+      "least_request_experimental": {
+        "choiceCount": 2
+      }
+    }
+  ]
+}`
+	sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(lrscJSON)
+	firstThreeAddresses := []resolver.Address{
+		{Addr: addresses[0]},
+		{Addr: addresses[1]},
+		{Addr: addresses[2]},
+	}
+	mr.InitialState(resolver.State{
+		Addresses:     firstThreeAddresses,
+		ServiceConfig: sc,
+	})
+
+	cc, err := grpc.Dial(mr.Scheme()+":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc.Dial() failed: %v", err)
+	}
+	defer cc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	testServiceClient := testgrpc.NewTestServiceClient(cc)
+
+	// Wait for all 3 backends to round robin across. The happens because a
+	// SubConn transitioning into READY causes a new picker update. Once the
+	// picker update with all 3 backends is present, this test can start to make
+	// assertions based on those backends.
+	if err := checkRoundRobinRPCs(ctx, testServiceClient, firstThreeAddresses); err != nil {
+		t.Fatalf("error in expected round robin: %v", err)
+	}
+
+	// Map ordering of READY SubConns is non deterministic. Thus, perform 3 RPCs
+	// mocked from the random to each index to learn the addresses of SubConns
+	// at each index.
+	index = 0
+	peerAtIndex := make([]string, 3)
+	var peer0 peer.Peer
+	if _, err := testServiceClient.EmptyCall(ctx, &testpb.Empty{}, grpc.Peer(&peer0)); err != nil {
+		t.Fatalf("testServiceClient.EmptyCall failed: %v", err)
+	}
+	peerAtIndex[0] = peer0.Addr.String()
+	if _, err := testServiceClient.EmptyCall(ctx, &testpb.Empty{}, grpc.Peer(&peer0)); err != nil {
+		t.Fatalf("testServiceClient.EmptyCall failed: %v", err)
+	}
+	peerAtIndex[1] = peer0.Addr.String()
+	if _, err := testServiceClient.EmptyCall(ctx, &testpb.Empty{}, grpc.Peer(&peer0)); err != nil {
+		t.Fatalf("testServiceClient.EmptyCall failed: %v", err)
+	}
+	peerAtIndex[2] = peer0.Addr.String()
+
+	// Start streaming RPCs, but do not finish them. Each subsequent stream
+	// should be started according to the least request algorithm, and chosen
+	// between the indexes provided.
+	index = 0
+	indexes = []uint32{
+		0, 0, // Causes first stream to be on first address.
+		0, 1, // Compares first address (which already has a RPC) to second, so choose second.
+		1, 2, // Compares second address (which already has a RPC) to third, so choose third.
+	}
+	// Start a streaming call on first, but don't finish the stream.
+	var peer1 peer.Peer
+	stream1, err := testServiceClient.FullDuplexCall(ctx, grpc.Peer(&peer1))
+	if err != nil {
+		t.Fatalf("testServiceClient.FullDuplexCall failed: %v", err)
+	}
+
+	// Start a second streaming call. From the indexes injected into random
+	// number generator, this should compare Address 1, which already has a RPC
+	// to Address 2, so thus should start the stream on Address 2.
+	var peer2 peer.Peer
+	stream2, err := testServiceClient.FullDuplexCall(ctx, grpc.Peer(&peer2))
+	if err != nil {
+		t.Fatalf("testServiceClient.FullDuplexCall failed: %v", err)
+	}
+
+	// Start a third streaming call. From the indexes injected into random
+	// number generator, this should compare Address 2, which already has a RPC
+	// to Address 3, so thus should start the stream on Address 3.
+	var peer3 peer.Peer
+	stream3, err := testServiceClient.FullDuplexCall(ctx, grpc.Peer(&peer3))
+	if err != nil {
+		t.Fatalf("testServiceClient.FullDuplexCall failed: %v", err)
+	}
+
+	// Finish the streams to collect peer information.
+	stream1.CloseSend()
+	if _, err = stream1.Recv(); err != io.EOF {
+		t.Fatalf("unexpected error: %v, expected an EOF error", err)
+	}
+	stream2.CloseSend()
+	if _, err = stream2.Recv(); err != io.EOF {
+		t.Fatalf("unexpected error: %v, expected an EOF error", err)
+	}
+	stream3.CloseSend()
+	if _, err = stream3.Recv(); err != io.EOF {
+		t.Fatalf("unexpected error: %v, expected an EOF error", err)
+	}
+	if peer1.Addr.String() != peerAtIndex[0] {
+		t.Fatalf("got: %v, want: %v", peer1.Addr.String(), peerAtIndex[0])
+	}
+	if peer2.Addr.String() != peerAtIndex[1] {
+		t.Fatalf("got: %v, want: %v", peer2.Addr.String(), peerAtIndex[1])
+	}
+	if peer3.Addr.String() != peerAtIndex[2] {
+		t.Fatalf("got: %v, want: %v", peer3.Addr.String(), peerAtIndex[2])
+	}
+}
+
+// TestLeastRequestPersistsCounts tests that the Least Request Balancer persists
+// counts once it gets a new picker update. It first updates the Least Request
+// Balancer with two backends, and creates a bunch of streams on them. Then, it
+// updates the Least Request Balancer with three backends, including the two
+// previous. Any created streams should then be started on the new backend.
+func (s) TestLeastRequestPersistsCounts(t *testing.T) {
+	defer func(u func() uint32) {
+		GRPCranduint32 = u
+	}(GRPCranduint32)
+	var index int
+	indexes := []uint32{
+		0, 1, 2, 3, 4, 5, // Triggers a round robin distribution of indexes for two addresses or three addresses.
+	}
+	GRPCranduint32 = func() uint32 {
+		ret := indexes[index%len(indexes)]
+		index++
+		return ret
+	}
+	addresses, cancel := setupBackends(t)
+	defer cancel()
+
+	mr := manual.NewBuilderWithScheme("lr-e2e")
+	defer mr.Close()
+
+	// Configure least request as top level balancer of channel.
+	lrscJSON := `
+{
+  "loadBalancingConfig": [
+    {
+      "least_request_experimental": {
+        "choiceCount": 2
+      }
+    }
+  ]
+}`
+	sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(lrscJSON)
+	firstTwoAddresses := []resolver.Address{
+		{Addr: addresses[0]},
+		{Addr: addresses[1]},
+	}
+	mr.InitialState(resolver.State{
+		Addresses:     firstTwoAddresses,
+		ServiceConfig: sc,
+	})
+
+	cc, err := grpc.Dial(mr.Scheme()+":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc.Dial() failed: %v", err)
+	}
+	defer cc.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	testServiceClient := testgrpc.NewTestServiceClient(cc)
+
+	// Start 50 streaming RPCs, and leave them unfinished for the duration of
+	// the test. This will populate the first two addresses with many active
+	// RPCs.
+	for i := 0; i < 50; i++ {
+		stream, err := testServiceClient.FullDuplexCall(ctx)
+		if err != nil {
+			t.Fatalf("testServiceClient.FullDuplexCall failed: %v", err)
+		}
+		defer func() {
+			stream.CloseSend()
+			if _, err = stream.Recv(); err != io.EOF {
+				t.Fatalf("unexpected error: %v, expected an EOF error", err)
+			}
+		}()
+	}
+
+	// Update the least request balancer to choice count 3. Also update the
+	// address list adding a third address. Alongside the injected randomness,
+	// this should trigger the least request balancer to search all created
+	// SubConns. Thus, since address 3 is the new address and the first two
+	// addresses are populated with RPCs, once the picker update of all 3 READY
+	// SubConns takes effect, all new streams should be started on address 3.
+	lrscJSON = `
+{
+  "loadBalancingConfig": [
+    {
+      "least_request_experimental": {
+        "choiceCount": 3
+      }
+    }
+  ]
+}`
+	sc = internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(lrscJSON)
+	fullAddresses := []resolver.Address{
+		{Addr: addresses[0]},
+		{Addr: addresses[1]},
+		{Addr: addresses[2]},
+	}
+	mr.UpdateState(resolver.State{
+		Addresses:     fullAddresses,
+		ServiceConfig: sc,
+	})
+	newAddress := fullAddresses[2]
+	// Poll for only address 3 to show up. This requires a polling loop because
+	// picker update with all three SubConns doesn't take into effect
+	// immediately, needs the third SubConn to become READY.
+	if err := checkRoundRobinRPCs(ctx, testServiceClient, []resolver.Address{newAddress}); err != nil {
+		t.Fatalf("error in expected round robin: %v", err)
+	}
+
+	for i := 0; i < 50; i++ {
+		var peer peer.Peer
+		stream, err := testServiceClient.FullDuplexCall(ctx, grpc.Peer(&peer))
+		if err != nil {
+			t.Fatalf("testServiceClient.FullDuplexCall failed: %v", err)
+		}
+		stream.CloseSend() // Finish stream to populate peer.
+		if _, err = stream.Recv(); err != io.EOF {
+			t.Fatalf("unexpected error: %v, expected an EOF error", err)
+		}
+		if peer.Addr.String() != addresses[2] {
+			t.Fatalf("got: %v, want: %v", peer.Addr.String(), addresses[2])
+		}
 	}
 }

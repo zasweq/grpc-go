@@ -13,6 +13,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
  */
 
 // Package leastrequest implements a least request load balancer.
@@ -21,17 +22,26 @@ package leastrequest
 import (
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 
 	"google.golang.org/grpc/balancer"
+	"google.golang.org/grpc/balancer/base"
+	"google.golang.org/grpc/grpclog"
+	"google.golang.org/grpc/internal/grpcrand"
 	"google.golang.org/grpc/serviceconfig"
 )
+
+// GRPCranduint32 is a global to stub out in tests.
+var GRPCranduint32 = grpcrand.Uint32
+
+// Name is the name of the least request balancer.
+const Name = "least_request_experimental"
+
+var logger = grpclog.Component("least request")
 
 func init() {
 	balancer.Register(bb{})
 }
-
-// Name is the name of the least request balancer.
-const Name = "least_request_experimental"
 
 // LBConfig is the balancer config for least_request_experimental balancer.
 type LBConfig struct {
@@ -53,7 +63,7 @@ func (bb) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, err
 		return nil, fmt.Errorf("least-request: unable to unmarshal LBConfig: %v", err)
 	}
 	// "If `choice_count < 2`, the config will be rejected." - A48
-	if lbConfig.ChoiceCount < 2 {
+	if lbConfig.ChoiceCount < 2 { // sweet
 		return nil, fmt.Errorf("least-request: lbConfig.choiceCount: %v, must be >= 2", lbConfig.ChoiceCount)
 	}
 	// "If a LeastRequestLoadBalancingConfig with a choice_count > 10 is
@@ -70,5 +80,104 @@ func (bb) Name() string {
 }
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
-	return nil
+	b := &leastRequestBalancer{scRPCCounts: make(map[balancer.SubConn]*int32)}
+	baseBuilder := base.NewBalancerBuilder(Name, b, base.Config{HealthCheck: true})
+	baseBalancer := baseBuilder.Build(cc, bOpts)
+	b.Balancer = baseBalancer
+	return b
+}
+
+type leastRequestBalancer struct {
+	// Embeds balancer.Balancer because needs to intercept UpdateClientConnState
+	// to learn about choiceCount.
+	balancer.Balancer
+
+	choiceCount uint32
+	scRPCCounts map[balancer.SubConn]*int32 // Hold onto RPC counts to keep track for subsequent picker updates.
+}
+
+func (lrb *leastRequestBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
+	lrCfg, ok := s.BalancerConfig.(*LBConfig)
+	if !ok {
+		logger.Errorf("least-request: received config with unexpected type %T: %v", s.BalancerConfig, s.BalancerConfig)
+		return balancer.ErrBadResolverState
+	}
+
+	lrb.choiceCount = lrCfg.ChoiceCount
+	return lrb.Balancer.UpdateClientConnState(s)
+}
+
+type scWithRPCCount struct {
+	sc      balancer.SubConn
+	numRPCs *int32
+}
+
+func (lrb *leastRequestBalancer) Build(info base.PickerBuildInfo) balancer.Picker {
+	logger.Infof("least-request: Build called with info: %v", info)
+	if len(info.ReadySCs) == 0 {
+		return base.NewErrPicker(balancer.ErrNoSubConnAvailable)
+	}
+
+	for sc := range lrb.scRPCCounts {
+		if _, ok := info.ReadySCs[sc]; !ok { // If no longer ready, no more need for the ref to count active RPCs.
+			delete(lrb.scRPCCounts, sc)
+		}
+	}
+
+	// Create new refs if needed.
+	for sc := range info.ReadySCs {
+		if _, ok := lrb.scRPCCounts[sc]; !ok {
+			lrb.scRPCCounts[sc] = new(int32)
+		}
+	}
+
+	// Copy refs to counters into picker.
+	scs := make([]scWithRPCCount, 0, len(info.ReadySCs))
+	for sc := range info.ReadySCs {
+		scs = append(scs, scWithRPCCount{
+			sc:      sc,
+			numRPCs: lrb.scRPCCounts[sc], // guaranteed to be present due to algorithm
+		})
+	}
+
+	return &picker{
+		choiceCount: lrb.choiceCount,
+		subConns:    scs,
+	}
+}
+
+type picker struct {
+	// choiceCount is the number of random SubConns to find the one with
+	// the least request.
+	choiceCount uint32
+	// Built out when receives list of ready RPCs.
+	subConns []scWithRPCCount
+}
+
+func (p *picker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
+	var pickedSC *scWithRPCCount
+	for i := 0; i < int(p.choiceCount); i++ {
+		index := GRPCranduint32() % uint32(len(p.subConns))
+		sc := p.subConns[index]
+		if pickedSC == nil {
+			pickedSC = &sc
+			continue
+		}
+		if *sc.numRPCs < *pickedSC.numRPCs {
+			pickedSC = &sc
+		}
+	}
+	// "The counter for a subchannel should be atomically incremented by one
+	// after it has been successfully picked by the picker." - A48
+	atomic.AddInt32(pickedSC.numRPCs, 1)
+	// "the picker should add a callback for atomically decrementing the
+	// subchannel counter once the RPC finishes (regardless of Status code)." -
+	// A48.
+	done := func(balancer.DoneInfo) {
+		atomic.AddInt32(pickedSC.numRPCs, -1)
+	}
+	return balancer.PickResult{
+		SubConn: pickedSC.sc,
+		Done:    done,
+	}, nil
 }

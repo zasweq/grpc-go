@@ -67,6 +67,7 @@ func ConvertToServiceConfig(lbPolicy *v3clusterpb.LoadBalancingPolicy, depth int
 	// stopping at the first supported policy." - A52
 	for _, policy := range lbPolicy.GetPolicies() {
 		policy.GetTypedExtensionConfig().GetTypedConfig().GetTypeUrl()
+		print("zasweq: ", policy.GetTypedExtensionConfig().GetTypedConfig().GetTypeUrl())
 		converter := m[policy.GetTypedExtensionConfig().GetTypedConfig().GetTypeUrl()]
 		// "Any entry not in the above list is unsupported and will be skipped."
 		// - A52
