@@ -60,7 +60,7 @@ func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime() {
 	if meter == nil {
 		return
 	}
-	var setOfMetrics map[string]struct{} // pre allocate? is that really more efficient?
+	setOfMetrics := make(map[string]struct{}) // pre allocate length?
 	for _, metric := range ssh.mo.Metrics {
 		setOfMetrics[metric] = struct{}{}
 	}

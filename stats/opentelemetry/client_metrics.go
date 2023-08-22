@@ -67,7 +67,7 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 		return
 	}
 
-	var setOfMetrics map[string]struct{} // pre allocate?
+	setOfMetrics := make(map[string]struct{}) // pre allocate length?
 	for _, metric := range csh.mo.Metrics {
 		setOfMetrics[metric] = struct{}{}
 	}

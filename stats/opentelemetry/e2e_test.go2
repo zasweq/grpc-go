@@ -34,16 +34,6 @@ import (
 	testpb "google.golang.org/grpc/interop/grpc_testing"
 )
 
-var defaultTestTimeout = 5 * time.Second
-
-type s struct {
-	grpctest.Tester
-}
-
-func Test(t *testing.T) {
-	grpctest.RunSubTests(t, s{})
-}
-
 
 // Tasks
 // Cleanup
