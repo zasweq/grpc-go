@@ -35,36 +35,26 @@ var logger = grpclog.Component("opentelemetry-instrumentation")
 
 var canonicalString = internal.CanonicalString.(func(codes.Code) string)
 
-// what is the global default for MeterProvider? the no-op or the SDK
-
-// I think we still want this to be dynamic...
 var (
 	joinDialOptions = internal.JoinDialOptions.(func(...grpc.DialOption) grpc.DialOption)
 )
 
-// make sure to mark as experimental, this is in flux.
-
-// traceoptions and metricsOptions?
-
-// takes this at registration time...not dynamic
+// make sure to mark as experimental, this is in flux. How to mark as experimental?
 
 // MetricsOptions are the metrics options for OpenTelemetry instrumentation.
 type MetricsOptions struct {
 	// MeterProvider is the MeterProvider instance that will be used for access
-	// to Named Meter instances to instrument an application. If unset, no
-	// metrics will be supported. The implementation knobs of this field take
-	// precedence over the API calls from the field in this component.
-	MeterProvider metric.MeterProvider // To enable metrics collection, set a meter provider. If unset, no metrics will be recorded. Merge this in with ^^^.
-
-	// This is api ^^^, my api will just be a []string that defaults are exposed to users and then you can set or not...
-
-	// Export Default Metrics...take this and build a set and you have that set part of my algorithm
+	// to Named Meter instances to instrument an application. To enable metrics
+	// collection, set a meter provider. If unset, no metrics will be recorded.
+	// Any implementation knobs (i.e. views, bounds) set in the passed in object
+	// take precedence over the API calls from the interface in this component
+	// (i.e. it will create default views for unset views).
+	MeterProvider metric.MeterProvider
 
 	// Metrics are the metrics to instrument. Will turn on the corresponding
-	// metric supported by this component if applicable.
-	Metrics []string // export the default names like opencensus
-
-
+	// metric supported by the client and server instrumentation components if
+	// applicable.
+	Metrics []string
 }
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation
@@ -74,6 +64,12 @@ type MetricsOptions struct {
 // pass the dial option returned from this function as the first dial option to
 // grpc.Dial().
 //
+// For the metrics supported by this instrumentation code, a user needs to
+// specify the client metrics to record in metrics options. A user also needs to
+// provide an implementation of a MeterProvider. If the passed in Meter Provider
+// does not have the view configured, the API call in this repo will create a
+// default view.
+
 // Talk about how to instrument here...like setting names of metrics and Meter Provider (which creates default views/bounds/instruments? if not set by caller)
 // and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func DialOption(mo MetricsOptions) grpc.DialOption {
@@ -90,6 +86,11 @@ func DialOption(mo MetricsOptions) grpc.DialOption {
 // the server option returned from this function as the first argument to
 // grpc.NewServer().
 //
+// For the metrics supported by this instrumentation code, a user needs to
+// specify the client metrics to record in metrics options. A user also needs to
+// provide an implementation of a MeterProvider. If the passed in Meter Provider
+// does not have the view configured, the API call in this repo will create a
+// default view.
 // Talk about how to instrument here...like setting names of metrics and Meter Provider (which creates default views/bounds/instruments? if not set by caller)
 // and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func ServerOption(mo MetricsOptions) grpc.ServerOption {
@@ -98,22 +99,12 @@ func ServerOption(mo MetricsOptions) grpc.ServerOption {
 	return grpc.StatsHandler(&serverStatsHandler{mo: mo})
 }
 
-// opencensus top level span + timestamp (only call metric outside) we also will
-// have retry metrics which need to persist a counter so add something to
-// context at interceptor level, Doug mentioned because the Dial Option always
-// has both components it's fine to assume need both to function properly, not
-// an API within a component
-
-// is mutable over the call lifespan as per Java
-type callInfo struct { // mutable, will be written to for timestamps for time without attempts...
-	// top level span - in OpenCensus starts span from ctx for attempt and for call holds a local var.
-
+// callInfo is information pertaining to the lifespan of the RPC client side.
+type callInfo struct {
 	target string
 
-	// Eventually for retry metrics some sort of full time - Doug mentioned communication between these two components is handled by stats handler
-
 	// TODO: When implementing retry metrics, this top level call object will be
-	// mutable and record time with no call attempt.
+	// mutable and record time with no RPC attempt in applicable place.
 }
 
 type callInfoKey struct {}
@@ -124,17 +115,17 @@ func setCallInfo(ctx context.Context, ci *callInfo) context.Context {
 
 // getCallInfo returns the callInfo stored in the context, or nil
 // if there isn't one.
-func getCallInfo(ctx context.Context) *callInfo { // if this errors in attempt component error out right?
+func getCallInfo(ctx context.Context) *callInfo { // if this errors in attempt component error out right? Or should this set method to empty string if call info isn't set?
 	ci, _ := ctx.Value(callInfoKey{}).(*callInfo)
 	return ci
 }
 
-// rename metrics info to this? no call info
-type attemptInfo struct { // created at beginning of stats handler tag, scoped to attempt, data needed per attempt and/attempt is handled
-	// I think this is mi and ti
-}
+// retry delay per call (A45)...through interceptor will be wrt the talking
+// between interceptor and stats handler right...actually retry stats are
+// handled in top level call object.
 
-// retry delay per call (A45)...through interceptor will be wrt the talking between interceptor and stats handler right...
+// rpcInfo is RPC information scoped to the RPC attempt life span client side,
+// and the RPC life span server side.
 type rpcInfo struct {
 	mi *metricsInfo
 }
@@ -152,7 +143,6 @@ func getRPCInfo(ctx context.Context) *rpcInfo {
 	return ri
 }
 
-
 func removeLeadingSlash(mn string) string {
 	return strings.TrimLeft(mn, "/")
 }
@@ -168,10 +158,13 @@ type metricsInfo struct {
 	recvCompressedBytes int64
 
 	startTime time.Time
-	method  string
+	method    string
 	authority string
 }
 
+// built out at client/server handler init time
+// nil pointers mean don't record, populate with a pointer
+// count if set, record on pointer.
 type registeredMetrics struct { // nil or not nil means presence
 	// "grpc.client.attempt.started"
 	clientAttemptStarted metric.Int64Counter
@@ -182,11 +175,11 @@ type registeredMetrics struct { // nil or not nil means presence
 	// "grpc.client.attempt.rcvd_total_compressed_message_size"
 	clientAttemptRcvdTotalCompressedMessageSize metric.Int64Histogram
 
-	// per call metrics - wait no that's at higher level, figure out how to plumb all these objects up there
+	// per call client metrics:
 	clientCallDuration metric.Float64Histogram
 
 	// "grpc.server.call.started"
-	serverCallStarted metric.Int64Counter // /call, needs method and authority
+	serverCallStarted metric.Int64Counter
 	// "grpc.server.call.sent_total_compressed_message_size"
 	serverCallSentTotalCompressedMessageSize metric.Int64Histogram
 	// "grpc.server.call.rcvd_total_compressed_message_size"

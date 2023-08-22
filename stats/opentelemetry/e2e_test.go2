@@ -18,18 +18,23 @@ package opentelemetry
 
 import (
 	"context"
-	"go.opencensus.io/metric/metricdata"
+	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"io"
+	"testing"
+	"time"
+
+	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/encoding/gzip"
-	"google.golang.org/grpc/internal/stubserver"
-	testpb "google.golang.org/grpc/interop/grpc_testing"
-	"testing"
-
 	"google.golang.org/grpc/internal/grpctest"
-	"go.opentelemetry.io/otel/sdk/instrumentation"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/aggregation"
+	"google.golang.org/grpc/internal/stubserver"
+	testgrpc "google.golang.org/grpc/interop/grpc_testing"
+	testpb "google.golang.org/grpc/interop/grpc_testing"
 )
+
+var defaultTestTimeout = 5 * time.Second
 
 type s struct {
 	grpctest.Tester
@@ -39,13 +44,18 @@ func Test(t *testing.T) {
 	grpctest.RunSubTests(t, s{})
 }
 
-// same structure? client and server side with instrumentation turned on?
-// verify exporter?
-
 
 // Tasks
 // Cleanup
 // Go get the sdk
+
+
+// go get at master to see if tests work
+// then they need to perform a (stable?) release...but David mentioned it's a few months from being stable.
+// so I can use it in my code
+
+// It's stable wrt emitted metrics might change some names around so I'm good wrt writing tests
+
 
 
 // maybe I need to update OTel Go to recent version to pull in reader/sdk
@@ -55,17 +65,18 @@ func Test(t *testing.T) {
 // Server Option configured specifying all the metrics provided by this package,
 // and makes a Unary RPC and a Streaming RPC. These two RPCs should cause
 // certain recording for each registered metric observed through a Manual
-// Metrics Reader on the Meter Provider.
+// Metrics Reader on the SDK's Meter Provider.
 func (s) TestAllMetricsOneFunction(t *testing.T) {
 	/*
 	// embeds a metric.NewManualReader...use this and hold ref to it. I think this is what I need
 	reader := metric.NewManualReader(cfg.manualReaderOptions()...) // do I want any options?
 	*/
+	reader := metric.NewManualReader()
 	// I think both NewMeterProvider and NewManualReader call come out of the metrics sdk...
 	provider := metric.NewMeterProvider( // go get this...is this function call actually available and this creates a meter provider?
 		metric.WithReader(reader), // is this a metric reader - yes it is! this is the complicated piece that observes metrics, part of Provider? No created before and specified in it's constructor...
 
-		metric.WithView(metric.NewView(
+		/*metric.WithView(metric.NewView(
 			// I think the only thing that setting this would cause is the
 			// bounds to not be default, but as below can use default bounds I
 			// think deterministically.
@@ -84,8 +95,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 				Aggregation: aggregation.ExplicitBucketHistogram{ // this sets the histogram bounds, which overwrites what you set in OTelinstrumentation library
 					Boundaries: []float64{64, 128, 256, 512, 1024, 2048, 4096},
 				},
-			},
-		)),
+			},)))*/
 	)
 
 	ss := &stubserver.StubServer{
@@ -132,7 +142,14 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		t.Fatalf("unexpected error: %v, expected an EOF error", err)
 	}
 
+	// Both these RPCs I know completed
+	rm := &metricdata.ResourceMetrics{} // can I do this or just declare a pointer? I think this is fine allocates the memory?
+	reader.Collect(ctx, rm)
 
+	// Get one working first, then move on to the next
+	if err := assertOnResourceMetrics(rm); err != nil {
+		t.Fatalf("resource metrics assertion failed with err %v", err)
+	}
 
 	/*
 	after reader plumbed ^^^
@@ -194,4 +211,54 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 
 		// same thing for server side metrics
 	*/
+}
+
+func assertOnResourceMetrics(rm *metricdata.ResourceMetrics) error {
+	// These come in a list, for it to have fast assertions make a map like OpenCensus e2e tests
+	/*rm.ScopeMetrics // []ScopeMetrics
+	for _, sm := range rm.ScopeMetrics {
+		sm.Metrics // []Metrics
+		for _, m := range sm.Metrics {
+			m.Name
+			m.Data
+			m.Description // describes the metric - can assert on this
+			m.Unit // only on counts
+		}
+	}*/
+	// name -> metric with name, persist name twice for fast access
+	mapToBuildOut/*ForFastAccess :) */ := map[string]metricdata.Metrics{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			mapToBuildOut[m.Name] = m
+		}
+	}
+
+	// sum := metricdata.Sum{}
+	sum := metricdata.Sum[int64]{} // what happens if I send this to cmp diff
+	// sum.DataPoints = wtf // can't find Data Points?
+	stringMetricsName := "grpc.client.attempt.started"
+	wantMetricData := metricdata.Metrics{
+		Name: "grpc.client.attempt.started",
+		Description: "The total number of RPC attempts started, including those that have not completed."/*description form registration here - does this also get overwritten?*/,
+		Unit: "attempt", // do these get overwritten if set in the sdk?
+		Data: sum,/*metricdata.Sum{ // generics might require a higher version of go
+			DataPoints:
+		},*/
+	}
+	val, ok := mapToBuildOut[stringMetricsName]
+	if !ok {
+		// pass this in or return error and log it in testing goroutine (do the latter)
+		return fmt.Errorf("metric %v not present in recorded metrics", stringMetricsName)
+	} // or could make this as part of assertion
+	// string metrics name
+
+	// Do I just cmp.Diff from val against metric want, I think just leave blank honestly for
+	// stuff that only pertains to certain metrics. Do I need to define an Equal function for cmp.Diff to assert on (see OpenCensus e2e tests for how I do so)
+
+	// cmp.Diff against the whole map or individual nodes?
+	// I cmp.Diffed against whole map in OpenCensus
+	if diff := cmp.Diff(val, wantMetricData); diff != "" { // What exactly to compare?
+		return fmt.Errorf("unexpected metrics data (-got, +want): %v", diff)
+	}
+	return nil
 }

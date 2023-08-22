@@ -18,12 +18,14 @@ package opentelemetry
 
 import (
 	"context"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"google.golang.org/grpc/stats"
-	"google.golang.org/grpc/status"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
+	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -36,12 +38,13 @@ var (
 	// count distribution
 	// 0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536.
 
+	// Set in o11y plugins ^^^
 )
 
 type serverStatsHandler struct {
 	mo MetricsOptions
 
-	registeredMetrics *registeredMetrics // I don't even know
+	registeredMetrics registeredMetrics
 }
 
 
@@ -52,14 +55,19 @@ func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime() {
 		return
 	}
 
+	// what happens if meter is nil?
+	meter := ssh.mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?")
+	if meter == nil {
+		return
+	}
 	var setOfMetrics map[string]struct{} // pre allocate? is that really more efficient?
 	for _, metric := range ssh.mo.Metrics {
 		setOfMetrics[metric] = struct{}{}
 	}
 
-	registeredMetrics := &registeredMetrics{}
-	// what happens if meter is nil?
-	meter := ssh.mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?")
+	registeredMetrics := registeredMetrics{}
+
+
 	// counter name - sdk takes precedence, then api (api here is defaults overwritten by SDK)
 
 	if _, ok := setOfMetrics["grpc.server.call.started"]; ok {
@@ -67,7 +75,7 @@ func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime() {
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.server.call.started\", will not record") // error or log?
 		} else {
-			registeredMetrics.serverCallStarted = scs
+			registeredMetrics.serverCallStarted = scs // if this is nil then it just doesn't record - no harm done
 		}
 	}
 
@@ -123,15 +131,15 @@ func (ssh *serverStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 
 // HandleRPC implements per RPC tracing and stats implementation.
 func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
-	ri := getRPCInfo(ctx)
+	ri := getRPCInfo(ctx) // you do need this though and this is how OpenCensus does it...
 	if ri == nil {
 		// Shouldn't happen because TagRPC populates this information.
 		return
 	}
-	ssh.recordRPCData(ctx, rs, ri.mi)
+	ssh.processRPCData(ctx, rs, ri.mi)
 }
 
-func (ssh *serverStatsHandler) recordRPCData(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
+func (ssh *serverStatsHandler) processRPCData(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
 	switch st := s.(type) {
 	case *stats.Begin, *stats.OutHeader, *stats.InTrailer, *stats.OutTrailer:
 		// Headers and Trailers are not relevant to the measures, as the
@@ -155,7 +163,7 @@ func (ssh *serverStatsHandler) recordRPCData(ctx context.Context, s stats.RPCSta
 	case *stats.InPayload:
 		atomic.AddInt64(&mi.recvCompressedBytes, int64(st.CompressedLength))
 	case *stats.End:
-		ssh.recordDataEnd(ctx, mi, st)
+		ssh.processRPCEnd(ctx, mi, st)
 	default:
 		// Shouldn't happen. gRPC calls into stats handler, and will never not
 		// be one of the types above.
@@ -164,7 +172,7 @@ func (ssh *serverStatsHandler) recordRPCData(ctx context.Context, s stats.RPCSta
 }
 
 
-func (ssh *serverStatsHandler) recordDataEnd(ctx context.Context, mi *metricsInfo, e *stats.End) {
+func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInfo, e *stats.End) {
 	// latency bounds for distribution data (speced millisecond bounds) have
 	// fractions, thus need a float.
 	latency := float64(time.Since(mi.startTime)) / float64(time.Millisecond)

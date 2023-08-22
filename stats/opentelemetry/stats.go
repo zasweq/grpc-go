@@ -16,10 +16,6 @@
 
 package opentelemetry
 
-import (
-	"context"
-	"google.golang.org/grpc/stats"
-)
 // I think put client stats handler in client_metrics
 
 // and server stats handler in server_metrics....idek
@@ -36,11 +32,11 @@ import (
 // for both client and server side
 // stats handlers, need to figure out OpenCensus way of TagRPC and sticking shit in metadata
 
-func (csh *clientStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCTagInfo) (context.Context /*, info you need to take metrics*/) {
+/*func (csh *clientStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCTagInfo) (context.Context /*, info you need to take metrics) {
 
 }
 
-func (ssh *serverStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCTagInfo) (context.Context /*, info needed to record it here...*/) {
+func (ssh *serverStatsHandler) statsTagRPC(ctx context.Context, info *stats.RPCTagInfo) (context.Context /*, info needed to record it here...) {
 	// timestamp for start time and also method name...helps record shit
 
 	// it gets tag info from the bin header and then decodes
@@ -84,3 +80,4 @@ func switchLol(ctx context.Context, s stats.RPCStats) {
 // figure out interface with opentel metrics recording equivalent to opencensus recording equivalent
 
 // the docs tell me OpenTel metrics are in Beta...so only thing I can really do is trances
+*/

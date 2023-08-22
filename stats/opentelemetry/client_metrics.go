@@ -45,15 +45,13 @@ import (
 // boundaries to the instrument, but the new iteration on the API makes it
 // possible to give ’advice’ on the boundaries.
 
+// Advice in API, needs to be set at implementation.
+
+
 type clientStatsHandler struct {
-	// what options/state needs to be persisted here?
-	// to: opencensus is just trace sampler and whether you disable - same thing here?
-	mo MetricsOptions // to avoid copy make these pointers/
+	mo MetricsOptions
 
-	registeredMetrics *registeredMetrics // pointer or not
-
-	target string // this only needs to be set once - put it in call info
-
+	registeredMetrics registeredMetrics
 }
 
 
@@ -64,16 +62,18 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 		return
 	}
 
-	// []set of metrics - whether from his api or my api where you pass in directly and append
-	// var setOfMetrics map[string]struct{} // Yash had this passed in, provide default metrics to user, maybe I can just say register metrics...
+	meter := csh.mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?"/*any options here? I don't thinkkk so...*/)
+	if meter == nil {
+		return
+	}
+
 	var setOfMetrics map[string]struct{} // pre allocate?
 	for _, metric := range csh.mo.Metrics {
 		setOfMetrics[metric] = struct{}{}
 	}
 
-	registeredMetrics := &registeredMetrics{}
+	registeredMetrics := registeredMetrics{}
 
-	meter := csh.mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?"/*any options here? I don't thinkkk so...*/)
 
 	if _, ok := setOfMetrics["grpc.client.attempt.started"]; ok {
 		asc, err := meter.Int64Counter("grpc.client.attempt.started", metric.WithUnit("attempt"), metric.WithDescription("The total number of RPC attempts started, including those that have not completed."))
@@ -127,15 +127,7 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 	csh.registeredMetrics = registeredMetrics
 }
 
-// what does the interceptor do...?
-// top level span for sure
-// top level metrics stuff like retry? server side doesn't have this concept right?
 func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	// if unset set and use that the rest of time, set at beginning of client conn and use that
-
-
-	// opencensus for both client and server side (server side does post processing with async callback)
-
 	ci := &callInfo{ // I don't think we need this server side...client side concepts. Server data scoped to context is implicitly call. Maybe call it client call info?
 		target: cc.Target(),
 	} // put inside top level call context, read target in non locking way write timestamp with a context held in attempt layer
@@ -153,6 +145,8 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 	// I think hedging is all to the same target though. It's the race between events and RPC end not all hedging.
 
 	// so create getters and setters and I think that works due to colliding key...
+
+
 
 
 
@@ -208,18 +202,10 @@ func (csh *clientStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 
 // TagRPC implements per RPC attempt context management.
 func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
-	// doesn't look like csh takes any meausrements in Tag all in Handle since that gets events
-
-	mi := &metricsInfo{
+	mi := &metricsInfo{ // populates information about RPC start.
 		startTime: time.Now(),
 		method: info.FullMethodName,
 	}
-
-	// appends to OpenCensus tag metadata if set by application...do I want to
-	// keep this feature for OTel...? Can this even be triggered in the OTel
-	// flow? Yash says wait to keep it compatible cross language
-
-	// creates an attempt span though...
 	ri := &rpcInfo{
 		mi: mi,
 	}
@@ -235,24 +221,14 @@ func (csh *clientStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats)
 
 	// gets metric info from tag rpc
 
-	// csh.mo.MeterProvider // has access to this? to record measurements
-	// and a list of disabled metrics and enabled metrics... (data passed because recordRPCData is on csh)
-
-	// helper that switches on rpc stats type...does it populate with RPCInfo as well?
-	csh.recordRPCData(ctx, rs, ri.mi) // maybe change these method name plumbing.
+	csh.processRPCEvent(ctx, rs, ri.mi) // maybe change these method name plumbing.
 }
 
-func (csh *clientStatsHandler) recordRPCData(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
+func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
 	switch st := s.(type) {
 	case *stats.InHeader, *stats.OutHeader, *stats.InTrailer, *stats.OutTrailer:
 	case *stats.Begin:
-		// read target from ctx - no lock - only sets before
-
-
-		// either write target into mi or read it later again...I think the
-		// former although that write and read could be racy for hedging. So this is faster operation wise.
-
-		ci := getCallInfo(ctx) // easier to do two look ups
+		ci := getCallInfo(ctx)
 		if ci == nil {
 			// Shouldn't happen, set by interceptor, defensive programming. Log it won't record?
 			return
@@ -266,7 +242,7 @@ func (csh *clientStatsHandler) recordRPCData(ctx context.Context, s stats.RPCSta
 	case *stats.InPayload:
 		atomic.AddInt64(&mi.recvCompressedBytes, int64(st.CompressedLength))
 	case *stats.End:
-		csh.recordDataEnd(ctx, mi, st)
+		csh.processRPCEnd(ctx, mi, st)
 	default:
 		// Shouldn't happen. gRPC calls into stats handler, and will never not
 		// be one of the types above.
@@ -274,13 +250,7 @@ func (csh *clientStatsHandler) recordRPCData(ctx context.Context, s stats.RPCSta
 	}
 }
 
-
-// if authority isn't present fallback to host, if neither fallback to empty string
-
-
-// top level and call level talk through context, record time no active attempt so has to fit in
-
-func (csh *clientStatsHandler) recordDataEnd(ctx context.Context, mi *metricsInfo, e *stats.End) {
+func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInfo, e *stats.End) {
 	ci := getCallInfo(ctx)
 	if ci == nil {
 		// Shouldn't happen, set by interceptor, defensive programming. Log it won't record?
