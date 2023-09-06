@@ -913,6 +913,24 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 	}
 	rawConn.SetDeadline(time.Now().Add(s.opts.connectionTimeout))
 
+	// rawConn gets here, I think just do it
+	// shs are persisted at this point right?
+	for _, sh := range s.opts.statsHandlers { // this is conn
+		// use servers context? Is that logically correct?
+
+		// context is created here, do it after?
+		// for context, do it after and see what Doug says
+		// sh.TagConn(/*what context, context for transport is created, could do it after this returns end*/)
+
+		// the ctx passed in here needs to be derived from for handle calls
+		sh.TagConn(/*ctx decided*/context.Background(), &stats.ConnTagInfo{
+			RemoteAddr: rawConn.RemoteAddr(),
+			LocalAddr:  rawConn.LocalAddr(),
+		})
+		connBegin := &stats.ConnBegin{}
+		sh.HandleConn(t.ctx, connBegin) // here too - so make context here before transport - ask Doug about it
+	}
+
 	// Finish handshaking (HTTP2)
 	st := s.newHTTP2Transport(rawConn)
 	rawConn.SetDeadline(time.Time{})
@@ -924,7 +942,7 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 		return
 	}
 	go func() {
-		s.serveStreams(st)
+		s.serveStreams(st) // this triggers new rpc
 		s.removeConn(lisAddr, st)
 	}()
 }
@@ -970,7 +988,17 @@ func (s *Server) newHTTP2Transport(c net.Conn) transport.ServerTransport {
 			if err != io.EOF {
 				channelz.Info(logger, s.channelzID, "grpc: Server.Serve failed to create ServerTransport: ", err)
 			}
-			c.Close()
+
+			// this flow would be bothered, if not then it gets created before -
+			// to keep consistent here (which I think you need - this is a flow
+			// that needs conn observability)
+
+			// this just closes conn not st, so it never gets created, so I think it's fine to not log conn close, also who cares
+			// ctx does have to be derived though.
+
+			// Doesn't close transport, so continue not to wrap this operation with Handle(ConnEnd{})
+			// same as now it wouldn't handle conn end, becuase this doesn't close
+			c.Close() // this triggers conn start at beginning in transport.NewServerTransport and triggers it here
 		}
 		return nil
 	}
@@ -979,7 +1007,7 @@ func (s *Server) newHTTP2Transport(c net.Conn) transport.ServerTransport {
 }
 
 func (s *Server) serveStreams(st transport.ServerTransport) {
-	defer st.Close(errors.New("finished serving streams for the server transport"))
+	defer st.Close(errors.New("finished serving streams for the server transport")) // this triggers st close - at the end of serve streams
 	var wg sync.WaitGroup
 
 	st.HandleStreams(func(stream *transport.Stream) {
@@ -1049,7 +1077,7 @@ func (s *Server) addConn(addr string, st transport.ServerTransport) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conns == nil {
-		st.Close(errors.New("Server.addConn called when server has already been stopped"))
+		st.Close(errors.New("Server.addConn called when server has already been stopped")) // this triggers too
 		return false
 	}
 	if s.drain {
@@ -1224,6 +1252,8 @@ func (s *Server) processUnaryRPC(ctx context.Context, t transport.ServerTranspor
 			}
 		}()
 	}
+	// no then would need to pull this out at beginning
+	// Rewrite so unary just calls three operations on stream
 	var binlogs []binarylog.MethodLogger
 	if ml := binarylog.GetMethodLogger(stream.Method()); ml != nil {
 		binlogs = append(binlogs, ml)
@@ -1234,7 +1264,7 @@ func (s *Server) processUnaryRPC(ctx context.Context, t transport.ServerTranspor
 		}
 	}
 	if len(binlogs) != 0 {
-		md, _ := metadata.FromIncomingContext(ctx)
+		md, _ := metadata.FromIncomingContext(ctx) // can I just move these logs to one place?
 		logEntry := &binarylog.ClientHeader{
 			Header:     md,
 			MethodName: stream.Method(),
@@ -1493,9 +1523,11 @@ func getChainStreamHandler(interceptors []StreamServerInterceptor, curr int, inf
 }
 
 func (s *Server) processStreamingRPC(ctx context.Context, t transport.ServerTransport, stream *transport.Stream, info *serviceInfo, sd *StreamDesc, trInfo *traceInfo) (err error) {
+	// conn wrapped in http 2 transport -> many streams created from headers received from the conn
 	if channelz.IsOn() {
 		s.incrCallsStarted()
 	}
+	// tag the rpc
 	shs := s.opts.statsHandlers
 	var statsBegin *stats.Begin
 	if len(shs) != 0 {
@@ -1506,11 +1538,21 @@ func (s *Server) processStreamingRPC(ctx context.Context, t transport.ServerTran
 			IsServerStream: sd.ServerStreams,
 		}
 		for _, sh := range shs {
-			sh.HandleRPC(ctx, statsBegin)
+			sh.HandleRPC(ctx, statsBegin) // comes later, but keep it backward compatible
+
+
+			/*sh.HandleRPC(ctx, &stats.InHeader{
+				FullMethod: /*s.method,
+				RemoteAddr: ,
+				LocalAddr: ,
+				Compression: ,
+				WireLength: ,
+				Header: ,
+			})*/
 		}
 	}
 	ctx = NewContextWithServerTransportStream(ctx, stream)
-	ss := &serverStream{
+	ss := &serverStream{ // grpc level ideal
 		ctx:                   ctx,
 		t:                     t,
 		s:                     stream,
@@ -1519,7 +1561,7 @@ func (s *Server) processStreamingRPC(ctx context.Context, t transport.ServerTran
 		maxReceiveMessageSize: s.opts.maxReceiveMessageSize,
 		maxSendMessageSize:    s.opts.maxSendMessageSize,
 		trInfo:                trInfo,
-		statsHandler:          shs,
+		statsHandler:          shs, // stats handlers here, server sets it and "owns" it
 	}
 
 	if len(shs) != 0 || trInfo != nil || channelz.IsOn() {
@@ -1689,6 +1731,37 @@ func (s *Server) processStreamingRPC(ctx context.Context, t transport.ServerTran
 	return t.WriteStatus(ss.s, statusOK)
 }
 
+// move the conn here too (after Accept())
+
+// write an operation with two operations, make sure tests still work
+func (s *Server) writeStatusAndLog(ctx context.Context, stream *transport.Stream, status *status.Status, st transport.ServerTransport) error {
+	// pass in stream.Context() so only have to read once
+	// preallocate callout data so only have to do once? then gate on if sh != nil, but then
+	// if vs. copy I think it's fine.
+	for _, sh := range s.opts.statsHandlers {
+		sh.HandleRPC(ctx, &stats.OutTrailer{
+			Trailer: stream.Trailer().Copy(),
+		})
+	}
+
+	return st.WriteStatus(stream, status) // signal plumbed to trigger it? Above is unconditional
+}
+
+// this is in writeHeaderLocked() so need to selectively trigger this
+func (s *Server) outHeaderLog(ctx context.Context, stream *transport.Stream, status *status.Status, st transport.ServerTransport) {
+	if len(s.opts.statsHandlers) != 0 { // need this for optimizations
+		header, _ := stream.Header()
+		oh := &stats.OutHeader{
+			Header: header,
+		}
+		for _, sh := range s.opts.statsHandlers {
+			sh.HandleRPC(ctx, oh) // don't modify it, or is that bad? Should we say read only?
+		}
+	}
+}
+
+// oh can delete all callouts from server handler transport now that it's here
+
 func (s *Server) handleStream(t transport.ServerTransport, stream *transport.Stream) {
 	ctx := stream.Context()
 	var ti *traceInfo
@@ -1732,6 +1805,34 @@ func (s *Server) handleStream(t transport.ServerTransport, stream *transport.Str
 	}
 	service := sm[:pos]
 	method := sm[pos+1:]
+
+	// or tag and handle here...only have to do it once, similar to how it does
+	// it once in the transport
+	md, _ := metadata.FromIncomingContext(ctx)
+	for _, sh := range s.opts.statsHandlers {
+		ctx = sh.TagRPC(ctx, &stats.RPCTagInfo{FullMethodName: stream.Method()}) // everything you need from every stats handler
+		sh.HandleRPC(ctx, &stats.InHeader{ // stats.InHeader
+			FullMethod: stream.Method()/*s.method*/, // to keep consistentw with before, need whole thing before editing
+
+
+			// These both come off the conn, pass the conn to this func?
+			// conn.RemoteAddr()
+			// conn.LocalAddr()
+
+
+			RemoteAddr: t.RemoteAddr(), // I think this is fine, comes from the listener
+			// listener populates local addr, passes it downward...find listener somewhere in the callstack
+			LocalAddr: t.LocalAddr()/*t.LocalAddr() the server's got to have information on it's own address*/,
+
+
+
+			// this comes off the wire
+			Compression: stream.RecvCompress(), // getter for it
+			WireLength: stream.HeaderWireLength()/*frame.WireLength - persist in stream since it happens before this - and then getter*/,
+			Header: md, // for all sh
+		})
+	}
+
 
 	srv, knownService := s.services[service]
 	if knownService {
@@ -1844,8 +1945,8 @@ func (s *Server) Stop() {
 		lis.Close()
 	}
 	for _, cs := range conns {
-		for st := range cs {
-			st.Close(errors.New("Server.Stop called"))
+		for st := range cs { // triggers here - from server.Stop all server tranpsorts close - wrap the close operation? Since 1:1 I think so
+			st.Close(errors.New("Server.Stop called")) // close here - handle conn end for sh
 		}
 	}
 	if s.opts.numServerWorkers > 0 {

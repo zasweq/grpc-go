@@ -282,8 +282,9 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 			updateFlowControl: t.updateFlowControl,
 		}
 	}
-	for _, sh := range t.stats {
-		t.ctx = sh.TagConn(t.ctx, &stats.ConnTagInfo{
+	for _, sh := range t.stats { // Don't give these shs to this layer
+		// Whatever is tagged here happens for the lifecycle of the tag (conn or rpc scope) global -> channel -> rpc on that channel.
+		t.ctx = sh.TagConn(t.ctx, &stats.ConnTagInfo{ // conn 1:1 transport, transport wraps it with http2 stuff on top of tcp, but can move this to server once conn accepted? maybe before the transport is created.
 			RemoteAddr: t.remoteAddr,
 			LocalAddr:  t.localAddr,
 		})
@@ -378,6 +379,8 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 		st:  t,
 		buf: buf,
 		fc:  &inFlow{limit: uint32(t.initialWindowSize)},
+		// WireLength:  int(frame.Header().Length),
+		headerWireLength: int(frame.Header().Length),
 	}
 	var (
 		// if false, content-type was missing or invalid
@@ -525,7 +528,7 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 	if len(mdata) > 0 {
 		s.ctx = metadata.NewIncomingContext(s.ctx, mdata)
 		if statsTags := mdata["grpc-tags-bin"]; len(statsTags) > 0 {
-			s.ctx = stats.SetIncomingTags(s.ctx, []byte(statsTags[len(statsTags)-1]))
+			s.ctx = stats.SetIncomingTags(s.ctx, []byte(statsTags[len(statsTags)-1])) // keep this
 		}
 		if statsTrace := mdata["grpc-trace-bin"]; len(statsTrace) > 0 {
 			s.ctx = stats.SetIncomingTrace(s.ctx, []byte(statsTrace[len(statsTrace)-1]))
@@ -597,18 +600,20 @@ func (t *http2Server) operateHeaders(frame *http2.MetaHeadersFrame, handle func(
 	s.requestRead = func(n int) {
 		t.adjustWindow(s, uint32(n))
 	}
-	for _, sh := range t.stats {
+	// Eventually don't send a stats handler here.
+	// maybe run e2e tests and make sure it still works
+	/*for _, sh := range t.stats {
 		s.ctx = sh.TagRPC(s.ctx, &stats.RPCTagInfo{FullMethodName: s.method})
-		inHeader := &stats.InHeader{
+		inHeader := &stats.InHeader{ // tag and this near begin, logically same thing but need to keep it working
 			FullMethod:  s.method,
 			RemoteAddr:  t.remoteAddr,
 			LocalAddr:   t.localAddr,
 			Compression: s.recvCompress,
-			WireLength:  int(frame.Header().Length),
+			WireLength:  int(frame.Header().Length), // persist stuff you need in the stream
 			Header:      mdata.Copy(),
 		}
 		sh.HandleRPC(s.ctx, inHeader)
-	}
+	}*/
 	s.ctxDone = s.ctx.Done()
 	s.wq = newWriteQuota(defaultWriteQuota, s.ctxDone)
 	s.trReader = &transportReader{
@@ -1016,11 +1021,11 @@ func (t *http2Server) writeHeaderLocked(s *Stream) error {
 		t.closeStream(s, true, http2.ErrCodeInternal, false)
 		return ErrHeaderListSizeLimitViolation
 	}
-	for _, sh := range t.stats {
+	for _, sh := range t.stats { // same here, writeHeaderLocked
 		// Note: Headers are compressed with hpack after this call returns.
 		// No WireLength field is set here.
-		outHeader := &stats.OutHeader{
-			Header:      s.header.Copy(),
+		outHeader := &stats.OutHeader{ // what triggers the out header at gRPC layer?
+			Header:      s.header.Copy(), // you want just the stream headers
 			Compression: s.sendCompress,
 		}
 		sh.HandleRPC(s.Context(), outHeader)
@@ -1086,13 +1091,29 @@ func (t *http2Server) WriteStatus(s *Stream, st *status.Status) error {
 	// Send a RST_STREAM after the trailers if the client has not already half-closed.
 	rst := s.getState() == streamActive
 	t.finishStream(s, rst, http2.ErrCodeNo, trailingHeader, true)
+
+	// for server headers it's writeHeaderLocked() which can come from here or write header
+
+
+
+	// This needs some signal plumbed to server on whether it was successful or
+	// not. If it was to keep behavior has transport loogic which triggers,
+	// including writeHeaderLocked().
 	for _, sh := range t.stats {
 		// Note: The trailer fields are compressed with hpack after this call returns.
 		// No WireLength field is set here.
-		sh.HandleRPC(s.Context(), &stats.OutTrailer{
+
+		// trailer doesn't get appended to, can just read it at a higher layer
+		// and copy the trailers.
+		sh.HandleRPC(s.Context(), &stats.OutTrailer{ // grpc has access to all of this except one thing which you can persist in ss
 			Trailer: s.trailer.Copy(),
 		})
-	}
+	} // this returns early before this outtrailer logs, if so doesn't need to log in server transport layer.
+
+
+
+
+
 	return nil
 }
 
@@ -1244,7 +1265,7 @@ func (t *http2Server) Close(err error) {
 	for _, s := range streams {
 		s.cancel()
 	}
-	for _, sh := range t.stats {
+	for _, sh := range t.stats { // scope to higher layer - transport close
 		connEnd := &stats.ConnEnd{}
 		sh.HandleConn(t.ctx, connEnd)
 	}
@@ -1315,6 +1336,11 @@ func (t *http2Server) closeStream(s *Stream, rst bool, rstCode http2.ErrCode, eo
 
 func (t *http2Server) RemoteAddr() net.Addr {
 	return t.remoteAddr
+}
+
+// maybe add this local addr to peer?
+func (t *http2Server) LocalAddr() net.Addr {
+	return t.localAddr
 }
 
 func (t *http2Server) Drain(debugData string) {

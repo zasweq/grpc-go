@@ -167,6 +167,8 @@ func (ht *serverHandlerTransport) Close(err error) {
 
 func (ht *serverHandlerTransport) RemoteAddr() net.Addr { return strAddr(ht.req.RemoteAddr) }
 
+func (ht *serverHandlerTransport) LocalAddr() net.Addr { return nil } // this is just a stats handler callout
+
 // strAddr is a net.Addr backed by either a TCP "ip:port" string, or
 // the empty string if unknown.
 type strAddr string
@@ -335,7 +337,7 @@ func (ht *serverHandlerTransport) WriteHeader(s *Stream, md metadata.MD) error {
 		for _, sh := range ht.stats {
 			// Note: The header fields are compressed with hpack after this call returns.
 			// No WireLength field is set here.
-			sh.HandleRPC(s.Context(), &stats.OutHeader{
+			sh.HandleRPC(s.Context(), &stats.OutHeader{ // can get rid of these callouts in server handler transport as well
 				Header:      md.Copy(),
 				Compression: s.sendCompress,
 			})

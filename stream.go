@@ -1724,8 +1724,8 @@ func (ss *serverStream) RecvMsg(m any) (err error) {
 		return toRPCErr(err)
 	}
 	if len(ss.statsHandler) != 0 {
-		for _, sh := range ss.statsHandler {
-			sh.HandleRPC(ss.s.Context(), &stats.InPayload{
+		for _, sh := range ss.statsHandler { // only event in the server stream. Maybe move operations here?
+			sh.HandleRPC(ss.s.Context(), &stats.InPayload{ // Server side owns this. Java doesn't do it in transport either. Doug is fine with this.
 				RecvTime: time.Now(),
 				Payload:  m,
 				// TODO truncate large payload.
