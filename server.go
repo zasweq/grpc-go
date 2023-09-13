@@ -1701,7 +1701,7 @@ func (s *Server) processStreamingRPC(ctx context.Context, t transport.ServerTran
 	return t.WriteStatus(ss.s, statusOK)
 }
 
-type serverKey struct {}
+type serverKey struct{}
 
 // getServer gets the Server from the context.
 func getServer(ctx context.Context) *Server {
