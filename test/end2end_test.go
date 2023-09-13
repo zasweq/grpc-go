@@ -6544,47 +6544,30 @@ type statsHandlerServerAssert struct {
 	errorCh *testutils.Channel
 }
 
-// ctx represents what will get passed to every Handle call, so can just use that.
 func (shsa *statsHandlerServerAssert) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
-	// Tag context with stuff it needs the rest of it's lifetime...
-
-	// need to assert (either here or in main test goroutine)
-	// 1. has access to server ref (fail this with a certain ref)
-	server := internal.GetServer.(func(context.Context) *grpc.Server)(ctx) // create this ref
+	// OpenTelemetry instrumentation needs the passed in Server to determine if
+	// methods are registered in different handle calls in to record metrics.
+	// This tag RPC call context gets passed into every handle call, so can
+	// assert once here, since it maps to all the handle RPC calls that come
+	// after. These internal calls will be how the OpenTelemetry instrumentation
+	// component accesses this server and the subsequent helper on the server.
+	server := internal.GetServer.(func(context.Context) *grpc.Server)(ctx)
 	if server == nil {
-		// t.Fatalf(sh ctx has no server present) // or send on an error channel and make sure nil
-		shsa.errorCh.Send("sh ctx has no server present")
+		shsa.errorCh.Send("stats handler received ctx has no server present")
 	}
 
-	// it should be a server - I think the test can guarantee that and Doug is fine with panics
-	// svr, _ := server.(*grpc.Server) // is there /internal things on a type?
-
-	// 2. server ref has the correct method (either here or in unit test)
-	// doesn't have access - don't want to populate servers exported methods. can't call outside package
-	// maybe plumb one of the internal exported symbols to server unexported function
-
-	// Assumes Unary Call and FullDuplex call are the only methods registered
-	// server side.
-	// is this right to only take method at the end?
-	// method at the end can be compared in sh by chopping off stuff after last /
 	if registeredMethod := internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(server, "UnaryCall"); !registeredMethod {
 		shsa.errorCh.Send(errors.New("UnaryCall should be a registered method according to server"))
 		return ctx
 	}
 
-	// server.isRegisteredMethod(/*unary should be true, streaming should be true, other should be false*/) // does this e2e test have access to this? I guess run and find out.
-	// assert, ^^^
-
-	// non unary call: "grpc.testing.TestService/FullDuplexCall"
-	// internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(svr, "grpc.testing.TestService/FullDuplexCall")
 	if registeredMethod := internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(server, "FullDuplexCall"); !registeredMethod {
 		shsa.errorCh.Send(errors.New("FullDuplexCall should be a registered method according to server"))
 		return ctx
 	}
 
-	internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(server, "grpc.testing.TestService/UnimplementedCall")
 	if registeredMethod := internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(server, "DoesNotExistCall"); registeredMethod {
-		shsa.errorCh.Send(errors.New("DoesNotExistCall should nlt be a registered method according to server"))
+		shsa.errorCh.Send(errors.New("DoesNotExistCall should not be a registered method according to server"))
 		return ctx
 	}
 
@@ -6592,78 +6575,7 @@ func (shsa *statsHandlerServerAssert) TagRPC(ctx context.Context, _ *stats.RPCTa
 	return ctx
 }
 
-
-// more extensive unit tests on server? Or is that not needed it's a simple map
-// search and it's mainly about server ref I think this is fine (run it?)
-
-/*
-type serverKey struct {}
-
-// fuck OTel can't call this because internal...needs to live somewhere both can access? oh yeah same roort
-// actually looks like stats/otel can call this
-// GetServer gets the Server from the context.
-func GetServer(ctx context.Context) Server { // unsed except in e2e tests - represents what the stats handler will do
-	s, _ := ctx.Value(serverKey{}).(Server)
-	return s
-}
-
-// key is scoped to context cardinality
-// setServer sets the Server in the context.
-func setServer(ctx context.Context, server Server) context.Context {
-	return context.WithValue(ctx, serverKey{}, server)
-}
-
-// this needs to rest in gRPC, since that's the package that's setting this
-// also needs to go through internal
-*/
-
-// needs to be in tag RPC and Handle(End), handle(Begin too)
-
-// every handle call should get the ref to server, at least one success
-
-// typecasting internal.GetServer
-// and internal.IsRegisteredMethod downward is how OTel instrumentation is going to use...could try and get this working
-func (shsa *statsHandlerServerAssert) HandleRPC(ctx context.Context, s stats.RPCStats) {
-	// need to assert (either here or in main test goroutine)
-	// 1. has access to server ref (fail this with a certain ref)
-	/*server := internal.GetServer.(func(context.Context) *grpc.Server)(ctx) // create this ref
-	if server == nil {
-		// t.Fatalf(sh ctx has no server present) // or send on an error channel and make sure nil
-		shsa.errorCh.Send("sh ctx has no server present")
-	}
-
-	// it should be a server - I think the test can guarantee that and Doug is fine with panics
-	// svr, _ := server.(*grpc.Server) // is there /internal things on a type?
-
-	// 2. server ref has the correct method (either here or in unit test)
-	// doesn't have access - don't want to populate servers exported methods. can't call outside package
-	// maybe plumb one of the internal exported symbols to server unexported function
-
-	// Assumes Unary Call and FullDuplex call are the only methods registered
-	// server side.
-	if registeredMethod := internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(server, "grpc.testing.TestService/UnaryCall"); !registeredMethod {
-		shsa.errorCh.Send(errors.New("grpc.testing.TestService/UnaryCall should be a registered method according to server"))
-		return
-	}
-
-	// server.isRegisteredMethod(/*unary should be true, streaming should be true, other should be false) // does this e2e test have access to this? I guess run and find out.
-	// assert, ^^^
-
-	// non unary call: "grpc.testing.TestService/FullDuplexCall"
-	// internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(svr, "grpc.testing.TestService/FullDuplexCall")
-	if registeredMethod := internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(server, "grpc.testing.TestService/FullDuplexCall"); !registeredMethod {
-		shsa.errorCh.Send(errors.New("grpc.testing.TestService/UnaryCall should be a registered method according to server"))
-		return
-	}
-
-	internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(server, "grpc.testing.TestService/UnimplementedCall")
-	if registeredMethod := internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)(server, "grpc.testing.TestService/UnimplementedCall"); registeredMethod {
-		shsa.errorCh.Send(errors.New("grpc.testing.TestService/UnimplementedCall should be a registered method according to server"))
-		return
-	}
-
-	shsa.errorCh.Send(nil)*/
-}
+func (shsa *statsHandlerServerAssert) HandleRPC(ctx context.Context, s stats.RPCStats) {}
 
 func (shsa *statsHandlerServerAssert) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
 	return ctx
@@ -6671,59 +6583,41 @@ func (shsa *statsHandlerServerAssert) TagConn(ctx context.Context, _ *stats.Conn
 
 func (shsa *statsHandlerServerAssert) HandleConn(context.Context, stats.ConnStats) {}
 
-// TestStatsHandlerGetsServer tests whether a stats handler gets
-// access to a Server on the server side, and thus the method
-// that the server owns which specifies whether a method is made or not.
-// The test sets up a server with a unary call and full duplex call configured,
-// and makes an RPC. Within the stats handler, asking the server whether unary
-// or duplex method names are registered should return true, and any other query should
-// return false.
-func (s) TestStatsHandlerGetsServer(t *testing.T) {
-	errorCh := testutils.NewChannel() // have the stats handler own thiss
+// TestStatsHandlerCallsServerIsRegisteredMethod tests whether a stats handler
+// gets access to a Server on the server side, and thus the method that the
+// server owns which specifies whether a method is made or not. The test sets up
+// a server with a unary call and full duplex call configured, and makes an RPC.
+// Within the stats handler, asking the server whether unary or duplex method
+// names are registered should return true, and any other query should return
+// false.
+func (s) TestStatsHandlerCallsServerIsRegisteredMethod(t *testing.T) {
+	errorCh := testutils.NewChannel()
 	shsa := &statsHandlerServerAssert{
 		errorCh: errorCh,
 	}
-	// mock sh, does call/assertion - only on server side!
-
 	ss := &stubserver.StubServer{
 		UnaryCallF: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
 			return &testpb.SimpleResponse{}, nil
 		},
 		FullDuplexCallF: func(stream testpb.TestService_FullDuplexCallServer) error {
-			// No-op, it's about registering methods.
 			for {
 				if _, err := stream.Recv(); err == io.EOF {
 					return nil
 				}
 			}
 		},
-		// other methods - have to trigger calls that fall outside the registered methods ^^^ manually plumb a method header?
 	}
 	if err := ss.Start([]grpc.ServerOption{grpc.StatsHandler(shsa)}); err != nil {
 		t.Fatalf("Error starting endpoint server: %v", err)
 	}
 	defer ss.Stop()
-	// in every callout, let's do end to mock where opencensus will use
-	// should have access to server
 
-	// either sanity check here and have a test case for this in server test (register it with two methods)
-	// or have all three assertions here...
-	// server.Method(unary) - true
-	// server.Method(full duplex) - true
-	// server.Method(not registered) - false
-
-	// these three checks should block and if they pass
-	// send on some channel - Unary call triggers is
-
-	// make sure receive nil
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	if _, err := ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{Payload: &testpb.Payload{}}); err != nil {
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
 	}
-
-
-	err, errRecv := errorCh.Receive(ctx) // wraps operation with timeout
+	err, errRecv := errorCh.Receive(ctx)
 	if errRecv != nil {
 		t.Fatalf("error receiving from channel: %v", errRecv)
 	}

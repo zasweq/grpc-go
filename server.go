@@ -73,14 +73,9 @@ func init() {
 	internal.DrainServerTransports = func(srv *Server, addr string) {
 		srv.drainServerTransports(addr)
 	}
-	// client has no concept of registered methods or not so fine here...
-
-	// I think we want to keep it internal, security issue specific to otel
-	// also server needs to own it and determine logic
 	internal.IsRegisteredMethod = func(srv *Server, method string) bool {
 		return srv.isRegisteredMethod(method)
 	}
-	// setCan be internal, getters and setters into context should live in packages
 	internal.GetServer = getServer
 	internal.AddGlobalServerOptions = func(opt ...ServerOption) {
 		globalServerOptions = append(globalServerOptions, opt...)
@@ -1706,16 +1701,14 @@ func (s *Server) processStreamingRPC(ctx context.Context, t transport.ServerTran
 	return t.WriteStatus(ss.s, statusOK)
 }
 
-// does OTel have access to internal I think so canonical string...
 type serverKey struct {}
 
 // getServer gets the Server from the context.
-func getServer(ctx context.Context) *Server { // unsed except in e2e tests - represents what the stats handler will do
+func getServer(ctx context.Context) *Server {
 	s, _ := ctx.Value(serverKey{}).(*Server)
 	return s
 }
 
-// key is scoped to context cardinality
 // setServer sets the Server in the context.
 func setServer(ctx context.Context, server *Server) context.Context {
 	return context.WithValue(ctx, serverKey{}, server)
@@ -1723,8 +1716,7 @@ func setServer(ctx context.Context, server *Server) context.Context {
 
 func (s *Server) handleStream(t transport.ServerTransport, stream *transport.Stream) {
 	ctx := stream.Context()
-	// stick a ref to the server here so first sh call can have it...
-	ctx = setServer(ctx, s) // use this the rest of time
+	ctx = setServer(ctx, s)
 	var ti *traceInfo
 	if EnableTracing {
 		tr := trace.New("grpc.Recv."+methodFamily(stream.Method()), stream.Method())
@@ -1968,48 +1960,23 @@ func (s *Server) getCodec(contentSubtype string) baseCodec {
 	return codec
 }
 
-// internal only API - how to make internal only? called by stats handler so set an internal func on a Server?
-// this is public facing...are we ok scaling up?
-// internal only API
-
-// registration comes entirely before Serve() so I'm good here...
-
-// def can't be exposed, I think, part of gRPC like all the gRPC dial options
-
-
 // isRegisteredMethod returns whether the passed in method is registered as a
 // method on the server.
-func (s *Server) isRegisteredMethod(method string) bool { // full method path or part? In OTel if true ok if not fall back to another list of methods if not big bucket.
-	// early exit for efficiency
-	print("method searching for: ", method)
+func (s *Server) isRegisteredMethod(method string) bool {
 	for _, service := range s.services {
-		for mName := range service.methods { // should have one method and one stream from registration from test...
-			print("in service methods iteration: ", mName)
+		for mName := range service.methods {
 			if method == mName {
 				return true
 			}
 		}
 		for mName := range service.streams {
-			print("in service streams iteration: ", mName)
 			if method == mName {
 				return true
 			}
 		}
 	}
 	return false
-	// s.services // map[string]serviceInfo - can you have multiple services for the same server? I guess so
-} // test this e2e by registered two services, making three queries, first two queries return true and are in service, last oen returns false
-
-// pass a ref to server *after server creation time with methods* to global sh (global from o11y)
-
-// test:
-// test with mock sh with regular stub server
-// read server out of sh at different? one? event
-// and make sure you can a. read it (fail it at that point)
-// b. call s.methodInRegistered() (have stub server methods registered so can assert in list vs. out of list correctly), and it returns correct call
-
-// one resource type, with many potential resources, add a log with potential resources (len(resources) resp.gettypeurl())
-
+}
 
 // SetHeader sets the header metadata to be sent from the server to the client.
 // The context provided must be the context passed to the server's handler.
