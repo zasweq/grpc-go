@@ -84,6 +84,10 @@ to the ready connection.
 
 # custom_round_robin
 
+The third client is configured to use `weighted_round_robin`.
+`weighted_round_robin` connects to all the addresses it sees, and sends an RPC
+to the first one, except every n times (field in the config), in which it sends
+to the second addresses. (how to make determinsistic?)
 ```
 this is examples/load_balancing (from :50052)
 this is examples/load_balancing (from :50051)
