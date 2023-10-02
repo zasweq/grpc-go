@@ -24,18 +24,14 @@ import (
 	"google.golang.org/grpc/resolver"
 )
 
-type customRoundRobin3 struct {
-	// pass something else down as a client conn?
-	// cc?
+type customRoundRobin3 struct { // if Doug wants more complexity he'll ask for it...
 	cc balancer.ClientConn
 
 	bOpts balancer.BuildOptions
-	// cse *balancer.ConnectivityStateEvaluator - we don't need it - ready or not, mention this is barebones
 
 	state connectivity.State
 
 	pfs *resolver.EndpointMap
-	// I don't think I need the pickers, stores it as a value ^^^, need to figure out sync wrt operations
 
 	// resolverError, conn error...maybe handle this in pick first...
 	n uint32
@@ -60,17 +56,17 @@ func (crr3 *customRoundRobin3) UpdateClientConnState(state balancer.ClientConnSt
 	crr3.inhibitPickerUpdates = true
 	for _, endpoint := range state.ResolverState.Endpoints { // so manual resolver needs to spit out endpoints/scale up support for endpoints...
 		endpointSet.Set(endpoint, nil)
-		var pickFirst balancerWrapper2 // need to id child...
+		var pickFirst *balancerWrapper2 // need to id child...
 		pf, ok := crr3.pfs.Get(endpoint)
 		if ok {
-			pickFirst = pf.(balancerWrapper2)
+			pickFirst = pf.(*balancerWrapper2) // will these typecasts ever panic (it is an example though...)
 		} else {
-			// or pass down a client conn that ids...
 			bw := &balancerWrapper2{
 				ClientConn: crr3.cc,
-			} // embed client conn?
+			}
 			pfb := crr3.pickFirstBuilder.Build(bw, crr3.bOpts)
 			bw.Balancer = pfb
+			crr3.pfs.Set(endpoint, bw)
 		}
 		// update child uncondtionally...
 		pickFirst.UpdateClientConnState(balancer.ClientConnState{
@@ -81,6 +77,20 @@ func (crr3 *customRoundRobin3) UpdateClientConnState(state balancer.ClientConnSt
 			// no service config, never needs to turn on address list shuffling bool
 		})
 	}
+	// gets keys then immediately uses as value
+	for _, e := range crr3.pfs.Keys() { // yes uses endpoints as unique keys
+		ep, _ := crr3.pfs.Get(e)
+		pickFirst := ep.(balancer.Balancer)
+		// pick first was removed by resolver (unique endpoint logically corresponding to pick first was removed)
+		if _, ok := endpointSet.Get(e); !ok {
+			pickFirst.Close()
+			crr3.pfs.Delete(e) // is this allowed? I guess unit tests will find out
+		}
+
+		// I FEEL LIKE DELETE FROM ENDPOINT MAP
+
+
+	}
 	crr3.inhibitPickerUpdates = false
 	crr3.regeneratePicker() // one picker update per...
 }
@@ -89,15 +99,13 @@ func (crr3 *customRoundRobin3) ResolverError(err error) {
 	// what to do with resolver error and conn error? let the child send that back and determine?
 	crr3.inhibitPickerUpdates = true
 	for _, pf := range crr3.pfs.Values() { // ohhh unordered set operations...
-		pickFirst := pf.(balancerWrapper2) // typecast to pointer?
+		pickFirst := pf.(*balancerWrapper2)
 		pickFirst.ResolverError(err)
 	}
 	crr3.inhibitPickerUpdates = false
 	crr3.regeneratePicker()
 }
 
-// for the sake of scope resolver.AddressMap only shared util to add, group
-// maybe come later and won't let this get done
 
 // This function is deprecated. SubConnState updates now come through listener
 // callbacks. This balancer does not deal with SubConns directly or need to
@@ -107,15 +115,13 @@ func (crr3 *customRoundRobin3) UpdateSubConnState(sc balancer.SubConn, state bal
 }
 
 func (crr3 *customRoundRobin3) Close() {
-	// Same thing as before...
 	for _, pf := range crr3.pfs.Values() {
 		pickFirst := pf.(balancer.Balancer)
 		pickFirst.Close()
-	} // no need to inhibit, system is shutting down anyway.
-} // cleanup when get back and try plugging in (with manual resolver plumbing endpoints)
+	}
+}
 
-// also need to think about how all these operations deal with state/logic...
-func (crr3 *customRoundRobin3) regeneratePicker() { // what triggers this just balancer state updates? gets called inline from UpdateCCS, and async...need eventual consistency with most recent update
+func (crr3 *customRoundRobin3) regeneratePicker() {
 	// generates a picker based off state and sends it upward...only send upward once per call
 	if crr3.inhibitPickerUpdates {
 		// log ignoring picker updates...maybe write comments explaining this stuff
@@ -125,7 +131,7 @@ func (crr3 *customRoundRobin3) regeneratePicker() { // what triggers this just b
 	// generate and send. I don't know if needs to persist
 	var readyPickers []balancer.Picker
 	for _, bw := range crr3.pfs.Values() { // oh need to implement this map as well
-		pickFirst := bw.(balancerWrapper) // when you create it, wrap it and store it in endpoint map
+		pickFirst := bw.(*balancerWrapper) // when you create it, wrap it and store it in endpoint map
 		if pickFirst.state.ConnectivityState == connectivity.Ready {
 			readyPickers = append(readyPickers, pickFirst.state.Picker)
 		}
@@ -136,7 +142,7 @@ func (crr3 *customRoundRobin3) regeneratePicker() { // what triggers this just b
 		return
 	}
 
-	// Do I want to do anyhting with this
+	// Do I want to do anyhting with this later (aka need to persist?)
 	picker := &customRoundRobinPicker2{
 		pickers: readyPickers,
 		n: crr3.n,
@@ -155,7 +161,7 @@ type balancerWrapper2 struct {
 
 	crr *customRoundRobin2 // heap memory of top level custom round robin...
 
-	state balancer.State // most recent state
+	state balancer.State // most recent state (ids this, and provides a wrapper)
 }
 
 // this gets called from subconn state updates, which are also thread safe, so
@@ -178,7 +184,7 @@ func (bw2 *balancerWrapper2) UpdateState(state balancer.State) { // gets called 
 	bw2.state = state // persist recent connectivity state and picker
 	// persist the state but not the picker...
 
-	// in update ccs: inhibit, then call regeneratePicker() at the end of operation
+	// in update ccs: inhibit, then call regeneratePicker() at the end of operation (maybe make this comment somewhere)
 	// in resolver error: inhibit, then call regeneratePicker() at the end of operation
 	// in sc state update, calls down into pick first, calls back up here...so regeneratePicker() at end and gate at end
 	// sc state updates will come in with no inhibit picker updates. Same logic as base, calls into it trigger picker update, and calls into it are guarnateed sync.
