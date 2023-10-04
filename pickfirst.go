@@ -59,7 +59,7 @@ type pfConfig struct {
 	serviceconfig.LoadBalancingConfig `json:"-"`
 
 	// If set to true, instructs the LB policy to shuffle the order of the list
-	// of addresses received from the name resolver before attempting to
+	// of endpoints received from the name resolver before attempting to
 	// connect to them.
 	ShuffleAddressList bool `json:"shuffleAddressList"`
 }
@@ -77,7 +77,7 @@ func (*pickfirstBuilder) ParseConfig(js json.RawMessage) (serviceconfig.LoadBala
 		}
 		return nil, nil
 	}
-
+	print("about to unmarshal config")
 	var cfg pfConfig
 	if err := json.Unmarshal(js, &cfg); err != nil {
 		return nil, fmt.Errorf("pickfirst: unable to unmarshal LB policy config: %s, error: %v", string(js), err)
@@ -112,7 +112,37 @@ func (b *pickfirstBalancer) ResolverError(err error) {
 }
 
 func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState) error {
-	addrs := state.ResolverState.Addresses
+	// We don't have to guard this block with the env var because ParseConfig
+	// already does so.
+	cfg, ok := state.BalancerConfig.(pfConfig)
+	if state.BalancerConfig != nil && !ok {
+		return fmt.Errorf("pickfirst: received illegal BalancerConfig (type %T): %v", state.BalancerConfig, state.BalancerConfig)
+	}
+
+	if b.logger.V(2) {
+		b.logger.Infof("Received new config %s, resolver state %s", pretty.ToJSON(cfg), pretty.ToJSON(state.ResolverState))
+	}
+
+	endpoints := state.ResolverState.Endpoints
+	// Perform the optional shuffling described in gRFC A62. The shuffling will
+	// change the order of endpoints but not touch the order of the addresses
+	// within each endpoint. - A61
+	if cfg.ShuffleAddressList {
+		endpoints = append([]resolver.Endpoint{}, endpoints...)
+		grpcrand.Shuffle(len(endpoints), func(i, j int) { endpoints[i], endpoints[j] = endpoints[j], endpoints[i] })
+	}
+
+	var addrs []resolver.Address
+	// "Flatten the list by concatenating the ordered list of addresses for each
+	// of the endpoints, in order." - A61
+	for _, endpoint := range endpoints {
+		// "In the flattened list, interleave addresses from the two address
+		// families, as per RFC-8304 section 4." - A61
+		// This language is handled by this iteration through endpoints, as ipv4
+		// and ipv6 are specified as part of the same endpoint.
+		addrs = append(addrs, endpoint.Addresses...)
+	}
+
 	if len(addrs) == 0 {
 		// The resolver reported an empty address list. Treat it like an error by
 		// calling b.ResolverError.
@@ -126,27 +156,13 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 		return balancer.ErrBadResolverState
 	}
 
-	// We don't have to guard this block with the env var because ParseConfig
-	// already does so.
-	cfg, ok := state.BalancerConfig.(pfConfig)
-	if state.BalancerConfig != nil && !ok {
-		return fmt.Errorf("pickfirst: received illegal BalancerConfig (type %T): %v", state.BalancerConfig, state.BalancerConfig)
-	}
-	if cfg.ShuffleAddressList {
-		addrs = append([]resolver.Address{}, addrs...)
-		grpcrand.Shuffle(len(addrs), func(i, j int) { addrs[i], addrs[j] = addrs[j], addrs[i] })
-	}
-
-	if b.logger.V(2) {
-		b.logger.Infof("Received new config %s, resolver state %s", pretty.ToJSON(cfg), pretty.ToJSON(state.ResolverState))
-	}
-
 	if b.subConn != nil {
 		b.cc.UpdateAddresses(b.subConn, addrs)
 		return nil
 	}
 
 	var subConn balancer.SubConn
+	print("creating new subconn")
 	subConn, err := b.cc.NewSubConn(addrs, balancer.NewSubConnOptions{
 		StateListener: func(state balancer.SubConnState) {
 			b.updateSubConnState(subConn, state)
