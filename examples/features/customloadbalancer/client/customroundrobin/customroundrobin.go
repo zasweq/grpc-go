@@ -32,7 +32,6 @@ import (
 )
 
 func init() {
-	print("in init")
 	balancer.Register(customRoundRobinBuilder{})
 }
 
@@ -43,7 +42,7 @@ type customRRConfig struct {
 	serviceconfig.LoadBalancingConfig `json:"-"`
 
 	// N represents how often pick iterations chose the second SubConn
-	// in the list. Defaults to 3.
+	// in the list. Defaults to 3. If 0 never chose second SubConn.
 	N uint32 `json:"n,omitempty"`
 }
 
@@ -69,8 +68,9 @@ func (customRoundRobinBuilder) Build(cc balancer.ClientConn, bOpts balancer.Buil
 		return nil
 	}
 	return &customRoundRobin{
-		bOpts: bOpts,
-		pfs: resolver.NewEndpointMap(),
+		cc:               cc,
+		bOpts:            bOpts,
+		pfs:              resolver.NewEndpointMap(),
 		pickFirstBuilder: pfBuilder,
 	}
 }
@@ -84,16 +84,16 @@ type customRoundRobin struct {
 	// balancer.Balancer calls as well, and children are called one at a time),
 	// in which calls are guaranteed to come synchronously. Thus, no extra
 	// synchronization is required in this balancer.
-	cc balancer.ClientConn
+	cc    balancer.ClientConn
 	bOpts balancer.BuildOptions
 	// Note that this balancer is a petiole policy which wraps pick first (see
 	// gRFC A61). This is the intended way a user written custom lb should be
 	// specified, as pick first will contain a lot of useful functionality, such
 	// as Sticky Transient Failure, Happy Eyeballs, and Health Checking.
 	pickFirstBuilder balancer.Builder
-	pfs *resolver.EndpointMap
+	pfs              *resolver.EndpointMap
 
-	n uint32
+	n                    uint32
 	inhibitPickerUpdates bool
 }
 
@@ -105,20 +105,20 @@ func (crr *customRoundRobin) UpdateClientConnState(state balancer.ClientConnStat
 	if !ok {
 		return balancer.ErrBadResolverState
 	}
-	crrCfg.N = crrCfg.N
+	crr.n = crrCfg.N
 
 	endpointSet := resolver.NewEndpointMap()
 	crr.inhibitPickerUpdates = true
-	for _, endpoint := range state.ResolverState.Endpoints { // so manual resolver needs to spit out endpoints/scale up support for endpoints...so do whole seperate example maybe? with manual?
+	for _, endpoint := range state.ResolverState.Endpoints {
 		endpointSet.Set(endpoint, nil)
 		var pickFirst *balancerWrapper
 		pf, ok := crr.pfs.Get(endpoint)
 		if ok {
-			pickFirst = pf.(*balancerWrapper) // will these typecasts ever panic (it is an example though...)
+			pickFirst = pf.(*balancerWrapper)
 		} else {
 			pickFirst = &balancerWrapper{
 				ClientConn: crr.cc,
-				crr: crr,
+				crr:        crr,
 			}
 			pfb := crr.pickFirstBuilder.Build(pickFirst, crr.bOpts)
 			pickFirst.Balancer = pfb
@@ -129,7 +129,7 @@ func (crr *customRoundRobin) UpdateClientConnState(state balancer.ClientConnStat
 		// complicated to only update if we know something changed.
 		pickFirst.UpdateClientConnState(balancer.ClientConnState{
 			ResolverState: resolver.State{
-				Endpoints: []resolver.Endpoint{endpoint},
+				Endpoints:  []resolver.Endpoint{endpoint},
 				Attributes: state.ResolverState.Attributes,
 			},
 			// no service config, never needs to turn on address list shuffling
@@ -142,12 +142,12 @@ func (crr *customRoundRobin) UpdateClientConnState(state balancer.ClientConnStat
 		// pick first was removed by resolver (unique endpoint logically corresponding to pick first was removed)
 		if _, ok := endpointSet.Get(e); !ok {
 			pickFirst.Close()
-			crr.pfs.Delete(e) // is this working? I guess unit tests will find out
+			crr.pfs.Delete(e) // is this working? I guess unit tests will find out needs a second clientconn update.
 		}
 	}
 	crr.inhibitPickerUpdates = false
 	crr.regeneratePicker() // one synchronous picker update per Update Client Conn State operation.
-	return nil // what do I do about updating pick first children and that error?
+	return nil             // what do I do about updating pick first children and that error?
 }
 
 func (crr *customRoundRobin) ResolverError(err error) {
@@ -159,7 +159,6 @@ func (crr *customRoundRobin) ResolverError(err error) {
 	crr.inhibitPickerUpdates = false
 	crr.regeneratePicker()
 }
-
 
 // This function is deprecated. SubConnState updates now come through listener
 // callbacks. This balancer does not deal with SubConns directly or need to
@@ -192,7 +191,7 @@ func (crr *customRoundRobin) regeneratePicker() {
 		}
 	}
 
-	if len(readyPickers) != 2 {
+	if len(readyPickers) != 2 { // does this need to return something? to trigger sc creation?
 		return
 	}
 
@@ -212,7 +211,7 @@ func (crr *customRoundRobin) regeneratePicker() {
 
 	crr.cc.UpdateState(balancer.State{
 		ConnectivityState: connectivity.Ready,
-		Picker: picker,
+		Picker:            picker,
 	})
 }
 
@@ -224,7 +223,6 @@ type balancerWrapper struct {
 
 	state balancer.State
 }
-
 
 // Picker updates from pick first are all triggered by synchronous calls down
 // into balancer.Balancer (client conn state updates, resolver errors, subconn
@@ -243,14 +241,14 @@ func (bw *balancerWrapper) UpdateState(state balancer.State) { // gets called in
 
 type customRoundRobinPicker struct {
 	pickers []balancer.Picker
-	n uint32
-	next uint32
+	n       uint32
+	next    uint32
 }
 
 func (crrp *customRoundRobinPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	next := atomic.AddUint32(&crrp.next, 1)
 	index := 0
-	if next%crrp.n == 0 {
+	if next != 0 && next%crrp.n == 0 {
 		index = 1
 	}
 	childPicker := crrp.pickers[index%len(crrp.pickers)]
@@ -258,7 +256,7 @@ func (crrp *customRoundRobinPicker) Pick(info balancer.PickInfo) (balancer.PickR
 }
 
 // newErrPicker returns a Picker that always returns err on Pick().
-func newErrPicker(err error) balancer.Picker {
+func newErrPicker(err error) balancer.Picker { // should I use this for the case where you have an error? maybe from UpdateClientConnState?
 	return &errPicker{err: err}
 }
 

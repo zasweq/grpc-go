@@ -26,69 +26,49 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	_ "google.golang.org/grpc/examples/features/customloadbalancer/client/customroundrobin" // To register custom_round_robin.
 	"google.golang.org/grpc/examples/features/proto/echo"
 	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/serviceconfig"
-	_ "google.golang.org/grpc/examples/features/customloadbalancer/client/customroundrobin" // To register custom_round_robin.
 )
 
 var (
-	// or do I drop localhost?
 	addr1 = "localhost:20000"
-	addr2 = "localhost:20001" // change later perhaps
+	addr2 = "localhost:20001"
 )
 
-// hardcode addresses?
 func main() {
-	// Load Balancing Example
-	mr := manual.NewBuilderWithScheme("example") // how did Doug do it for ORCA example?
+	mr := manual.NewBuilderWithScheme("example")
 	defer mr.Close()
 
 	// You can also plug in your own custom lb policy, which needs to be
-	// configurable. This n is configurable. Try changing it and see how the
+	// configurable. This n is configurable. Try changing n and see how the
 	// behavior changes.
 	json := `{"loadBalancingConfig": [{"custom_round_robin":{"n": 3}}]}`
-	// Make another ClientConn with round_robin policy.
 	sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(json)
 	mr.InitialState(resolver.State{
 		Endpoints: []resolver.Endpoint{
-			{
-				Addresses: []resolver.Address{
-					{
-						Addr: addr1,
-					},
-				},
-				// need any attributes?
-			},
-			{
-				Addresses: []resolver.Address{
-					{
-						Addr: addr2,
-					},
-				},
-				// need any attributes?
-			},
+			{Addresses: []resolver.Address{{Addr: addr1}}},
+			{Addresses: []resolver.Address{{Addr: addr2}}},
 		},
-		ServiceConfig: sc, // I think this is right place to put service config...
+		ServiceConfig: sc,
 	})
 
-	cc, err := grpc.Dial(mr.Scheme() + ":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc, err := grpc.Dial(mr.Scheme()+":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to dial: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 	ec := echo.NewEchoClient(cc)
+	// Make 20 rpcs to show distribution.
 	for i := 0; i < 20; i++ {
-		r, err := ec.UnaryEcho(ctx, &echo.EchoRequest{}) // make 20 rpcs to show distribution
+		r, err := ec.UnaryEcho(ctx, &echo.EchoRequest{Message: "this is examples/customloadbalancing"})
 		if err != nil {
 			log.Fatalf("UnaryEcho failed: %v", err)
 		}
 		fmt.Println(r)
 	}
-
-	// Outlier Detection e2e test:
-	// stub server.Start()
 }

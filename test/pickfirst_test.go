@@ -384,8 +384,8 @@ func (s) TestPickFirst_ShuffleAddressList(t *testing.T) {
 	origShuf := grpcrand.Shuffle
 	defer func() { grpcrand.Shuffle = origShuf }()
 	grpcrand.Shuffle = func(n int, f func(int, int)) {
-		if n != 2 {
-			t.Errorf("Shuffle called with n=%v; want 2", n)
+		if n != 0 && n != 2 {
+			t.Errorf("Shuffle called with n=%v; want 0 or 2", n)
 			return
 		}
 		f(0, 1) // reverse the two addresses
@@ -400,7 +400,10 @@ func (s) TestPickFirst_ShuffleAddressList(t *testing.T) {
 
 	// Push an update with both addresses and shuffling disabled.  We should
 	// connect to backend 0.
-	r.UpdateState(resolver.State{Addresses: []resolver.Address{addrs[0], addrs[1]}})
+	r.UpdateState(resolver.State{Endpoints: []resolver.Endpoint{
+		{Addresses: []resolver.Address{addrs[0]}},
+		{Addresses: []resolver.Address{addrs[1]}},
+	}})
 	if err := pickfirst.CheckRPCsToBackend(ctx, cc, addrs[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +412,10 @@ func (s) TestPickFirst_ShuffleAddressList(t *testing.T) {
 	// but the channel should still be connected to backend 0.
 	shufState := resolver.State{
 		ServiceConfig: parseServiceConfig(t, r, serviceConfig),
-		Addresses:     []resolver.Address{addrs[0], addrs[1]},
+		Endpoints: []resolver.Endpoint{
+			{Addresses: []resolver.Address{addrs[0]}},
+			{Addresses: []resolver.Address{addrs[1]}},
+		},
 	}
 	r.UpdateState(shufState)
 	if err := pickfirst.CheckRPCsToBackend(ctx, cc, addrs[0]); err != nil {
@@ -417,7 +423,8 @@ func (s) TestPickFirst_ShuffleAddressList(t *testing.T) {
 	}
 
 	// Send a resolver update with no addresses. This should push the channel
-	// into TransientFailure.
+	// into TransientFailure. It still usess the old service config so can call
+	// shuffle with no endpoints.
 	r.UpdateState(resolver.State{})
 	testutils.AwaitState(ctx, t, cc, connectivity.TransientFailure)
 
@@ -460,7 +467,10 @@ func (s) TestPickFirst_ShuffleAddressListDisabled(t *testing.T) {
 	// instead.
 	shufState := resolver.State{
 		ServiceConfig: parseServiceConfig(t, r, serviceConfig),
-		Addresses:     []resolver.Address{addrs[0], addrs[1]},
+		Endpoints: []resolver.Endpoint{
+			{Addresses: []resolver.Address{addrs[0]}},
+			{Addresses: []resolver.Address{addrs[1]}},
+		},
 	}
 	r.UpdateState(shufState)
 	if err := pickfirst.CheckRPCsToBackend(ctx, cc, addrs[0]); err != nil {
