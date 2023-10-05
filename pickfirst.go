@@ -122,7 +122,6 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 		b.logger.Infof("Received new config %s, resolver state %s", pretty.ToJSON(cfg), pretty.ToJSON(state.ResolverState))
 	}
 
-	// and also fix tests in this balancer and all?
 	endpoints := state.ResolverState.Endpoints
 	// Perform the optional shuffling described in gRFC A62. The shuffling will
 	// change the order of endpoints but not touch the order of the addresses
@@ -135,7 +134,6 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 	var addrs []resolver.Address
 	// "Flatten the list by concatenating the ordered list of addresses for each
 	// of the endpoints, in order." - A61
-	// (once I shuffle, loop through endpoints - do it in place for the balancer.State passed in?)
 	for _, endpoint := range endpoints {
 		// "In the flattened list, interleave addresses from the two address
 		// families, as per RFC-8304 section 4." - A61
@@ -143,13 +141,6 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 		// and ipv6 are specified as part of the same endpoint.
 		addrs = append(addrs, endpoint.Addresses...)
 	}
-
-	// addrs := state.ResolverState.Endpoints[0].Addresses
-
-	/*addrs := state.ResolverState.Addresses*/
-
-	// eventually, want:
-	// []Addresses
 
 	if len(addrs) == 0 {
 		// The resolver reported an empty address list. Treat it like an error by

@@ -29,6 +29,10 @@ which creates a pick first child for every endpoint it receives. It waits until 
 become ready, then defers to the first pick first child's picker, choosing the connection to localhost:20000, except
 every n times, where it defers to second pick first child's picker, choosing the connection to localhost:20001.
 
+`custom_round_robin` is written as a petiole policy wrapping `pick_first` load balancers, one for every endpoint received.
+This is the intended way a user written custom lb should be specified, as pick first will contain a lot of useful
+functionlaity, such as Sticky Transient Failure, Happy Eyeballs, and Health Checking.
+
 ```
 this is examples/customloadbalancing (from localhost:20000)
 this is examples/customloadbalancing (from localhost:20000)

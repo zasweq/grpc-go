@@ -35,14 +35,13 @@ func init() {
 	balancer.Register(customRoundRobinBuilder{})
 }
 
-// Get this working then move over.
 const customRRName = "custom_round_robin"
 
 type customRRConfig struct {
 	serviceconfig.LoadBalancingConfig `json:"-"`
 
-	// N represents how often pick iterations chose the second SubConn
-	// in the list. Defaults to 3. If 0 never chose second SubConn.
+	// N represents how often pick iterations chose the second SubConn in the
+	// list. Defaults to 3. If 0 never choses second SubConn.
 	N uint32 `json:"n,omitempty"`
 }
 
@@ -124,7 +123,7 @@ func (crr *customRoundRobin) UpdateClientConnState(state balancer.ClientConnStat
 			pickFirst.Balancer = pfb
 			crr.pfs.Set(endpoint, pickFirst)
 		}
-		// update child uncondtionally, in case attributes or address ordering
+		// Update child uncondtionally, in case attributes or address ordering
 		// changed. Let pick first deal with any potential diffs, too
 		// complicated to only update if we know something changed.
 		pickFirst.UpdateClientConnState(balancer.ClientConnState{
@@ -132,22 +131,24 @@ func (crr *customRoundRobin) UpdateClientConnState(state balancer.ClientConnStat
 				Endpoints:  []resolver.Endpoint{endpoint},
 				Attributes: state.ResolverState.Attributes,
 			},
-			// no service config, never needs to turn on address list shuffling
+			// no service config, never needed to turn on address list shuffling
 			// bool in petiole policies.
 		})
+		// Ignore error because just care about ready children.
 	}
 	for _, e := range crr.pfs.Keys() {
 		ep, _ := crr.pfs.Get(e)
 		pickFirst := ep.(balancer.Balancer)
-		// pick first was removed by resolver (unique endpoint logically corresponding to pick first was removed)
+		// pick first was removed by resolver (unique endpoint logically
+		// corresponding to pick first child was removed).
 		if _, ok := endpointSet.Get(e); !ok {
 			pickFirst.Close()
-			crr.pfs.Delete(e) // is this working? I guess unit tests will find out needs a second clientconn update.
+			crr.pfs.Delete(e)
 		}
 	}
 	crr.inhibitPickerUpdates = false
 	crr.regeneratePicker() // one synchronous picker update per Update Client Conn State operation.
-	return nil             // what do I do about updating pick first children and that error?
+	return nil
 }
 
 func (crr *customRoundRobin) ResolverError(err error) {
@@ -160,9 +161,9 @@ func (crr *customRoundRobin) ResolverError(err error) {
 	crr.regeneratePicker()
 }
 
-// This function is deprecated. SubConnState updates now come through listener
-// callbacks. This balancer does not deal with SubConns directly or need to
-// intercept listener callbacks.
+// This function is deprecated. SubConn state updates now come through listener
+// callbacks. This balancer does not deal with SubConns directly and has no need
+// to intercept listener callbacks.
 func (crr *customRoundRobin) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
 	logger.Errorf("custom_round_robin: UpdateSubConnState(%v, %+v) called unexpectedly", sc, state)
 }
@@ -178,37 +179,30 @@ func (crr *customRoundRobin) Close() {
 // and forwards it upward. This is intended to be fully executed once per
 // relevant balancer.Balancer operation into custom round robin balancer.
 func (crr *customRoundRobin) regeneratePicker() {
-	if crr.inhibitPickerUpdates { // no need for picker updates...
+	if crr.inhibitPickerUpdates {
 		return
 	}
 
-	// generate and send. I don't know if needs to persist
 	var readyPickers []balancer.Picker
-	for _, bw := range crr.pfs.Values() { // oh need to implement this map as well
-		pickFirst := bw.(*balancerWrapper) // when you create it, wrap it and store it in endpoint map
+	for _, bw := range crr.pfs.Values() {
+		pickFirst := bw.(*balancerWrapper)
 		if pickFirst.state.ConnectivityState == connectivity.Ready {
 			readyPickers = append(readyPickers, pickFirst.state.Picker)
 		}
 	}
 
-	if len(readyPickers) != 2 { // does this need to return something? to trigger sc creation?
+	// For determinism, this balancer only updates it's picker when both
+	// backends of the example are ready. Thus, no need to keep track of
+	// aggregated state and can simply specify this balancer is READY once it
+	// has two ready children.
+	if len(readyPickers) != 2 {
 		return
 	}
-
 	picker := &customRoundRobinPicker{
 		pickers: readyPickers,
 		n:       crr.n,
 		next:    0,
 	}
-	// For determinism, this balancer only updates it's picker when both
-	// backends of the example are ready. Thus, no need to keep track of
-	// aggregated state and can simply specify this balancer is READY once it
-	// has two ready children.
-
-	// maybe just do a whole new example with this for a good read me
-	// either a. rewrite example to use manual resolver completly, or write a
-	// seperate example with just manual resolver. Honestly might do b.
-
 	crr.cc.UpdateState(balancer.State{
 		ConnectivityState: connectivity.Ready,
 		Picker:            picker,
@@ -216,7 +210,7 @@ func (crr *customRoundRobin) regeneratePicker() {
 }
 
 type balancerWrapper struct {
-	balancer.Balancer
+	balancer.Balancer   // Simply forward balancer.Balancer operations
 	balancer.ClientConn // embed to intercept UpdateState, doesn't deal with SubConns
 
 	crr *customRoundRobin
@@ -228,15 +222,14 @@ type balancerWrapper struct {
 // into balancer.Balancer (client conn state updates, resolver errors, subconn
 // state updates (through listener callbacks, which is still treated as part of
 // balancer API)).
-func (bw *balancerWrapper) UpdateState(state balancer.State) { // gets called inline multiple times from UpdateClientConnState and resolver error, persist new state and prevent upwards picker calls...
+func (bw *balancerWrapper) UpdateState(state balancer.State) {
 	bw.state = state
-
-	// in update ccs: inhibit, then call regeneratePicker() at the end of operation (maybe make this comment somewhere)
-	// in resolver error: inhibit, then call regeneratePicker() at the end of operation
-	// in sc state update, calls down into pick first, calls back up here...so regeneratePicker() at end and gate at end
-	// sc state updates will come in with no inhibit picker updates. Same logic as base, calls into it trigger picker update, and calls into it are guarnateed sync.
-
-	bw.crr.regeneratePicker() // call uncondtionally, don't gate, this regneration of picker won't happen
+	// Calls back into this inline will be inhibited when part of
+	// UpdateClientConnState() and ResolverError(), and regenerate picker will
+	// be called manually at the end of those operations. However, for
+	// UpdateSubConnState() and subsequent UpdateState(), this needs to update
+	// picker, so call this regeneratePicker() here.
+	bw.crr.regeneratePicker()
 }
 
 type customRoundRobinPicker struct {
@@ -253,17 +246,4 @@ func (crrp *customRoundRobinPicker) Pick(info balancer.PickInfo) (balancer.PickR
 	}
 	childPicker := crrp.pickers[index%len(crrp.pickers)]
 	return childPicker.Pick(info)
-}
-
-// newErrPicker returns a Picker that always returns err on Pick().
-func newErrPicker(err error) balancer.Picker { // should I use this for the case where you have an error? maybe from UpdateClientConnState?
-	return &errPicker{err: err}
-}
-
-type errPicker struct {
-	err error // Pick() always returns this err.
-}
-
-func (p *errPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
-	return balancer.PickResult{}, p.err
 }
