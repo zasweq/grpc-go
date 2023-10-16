@@ -111,18 +111,6 @@ func (b *pickfirstBalancer) ResolverError(err error) {
 }
 
 func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState) error {
-	if len(state.ResolverState.Addresses) == 0 && len(state.ResolverState.Endpoints) == 0 {
-		// The resolver reported an empty address list. Treat it like an error by
-		// calling b.ResolverError.
-		if b.subConn != nil {
-			// Shut down the old subConn. All addresses were removed, so it is
-			// no longer valid.
-			b.subConn.Shutdown()
-			b.subConn = nil
-		}
-		b.ResolverError(errors.New("produced zero addresses"))
-		return balancer.ErrBadResolverState
-	}
 	// We don't have to guard this block with the env var because ParseConfig
 	// already does so.
 	cfg, ok := state.BalancerConfig.(pfConfig)
@@ -166,6 +154,18 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 			addrs = append([]resolver.Address{}, addrs...)
 			grpcrand.Shuffle(len(addrs), func(i, j int) { addrs[i], addrs[j] = addrs[j], addrs[i] })
 		}
+	}
+	if len(state.ResolverState.Addresses) == 0 && len(state.ResolverState.Endpoints) == 0 {
+		// The resolver reported an empty address list. Treat it like an error by
+		// calling b.ResolverError.
+		if b.subConn != nil {
+			// Shut down the old subConn. All addresses were removed, so it is
+			// no longer valid.
+			b.subConn.Shutdown()
+			b.subConn = nil
+		}
+		b.ResolverError(errors.New("produced zero addresses"))
+		return balancer.ErrBadResolverState
 	}
 
 	if b.subConn != nil {
