@@ -384,8 +384,8 @@ func (s) TestPickFirst_ShuffleAddressList(t *testing.T) {
 	origShuf := grpcrand.Shuffle
 	defer func() { grpcrand.Shuffle = origShuf }()
 	grpcrand.Shuffle = func(n int, f func(int, int)) {
-		if n != 0 && n != 2 {
-			t.Errorf("Shuffle called with n=%v; want 0 or 2", n)
+		if n != 2 {
+			t.Errorf("Shuffle called with n=%v; want 2", n)
 			return
 		}
 		f(0, 1) // reverse the two addresses
@@ -423,8 +423,7 @@ func (s) TestPickFirst_ShuffleAddressList(t *testing.T) {
 	}
 
 	// Send a resolver update with no addresses. This should push the channel
-	// into TransientFailure. It still usess the old service config so can call
-	// shuffle with no endpoints.
+	// into TransientFailure.
 	r.UpdateState(resolver.State{})
 	testutils.AwaitState(ctx, t, cc, connectivity.TransientFailure)
 
