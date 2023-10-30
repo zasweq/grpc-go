@@ -189,24 +189,6 @@ func (s) TestListenerWrapper_InlineRouteConfig(t *testing.T) {
 	}
 }
 
-// This is what I need, LDS + RDS and then accept a conn that looks up:
-// This should trigger a nil panic
-// write it, it should pass with my change and not work on master.
-
-// the issue is this is testing the (listener) boundary (i.e. it going READY)
-// the issue is this is testing the (listener) boundary (i.e. it going READY)
-
-// I need (listener + server), where the server actually gets to serving and accepts a conn from client (so probably need to dial client side too) wraps tcp
-
-
-// LDS, RDS, then an Accept() on the listener (needs to serve on the listener). It's ready to serve, so server.Serve(lis)
-func (s) TestBug(t *testing.T) {
-	// need a management server to set lds + rds
-
-	// need to dial to trigger a conn accept
-}
-
-
 // Tests the case where a listenerWrapper is created and the management server
 // returns a Listener resource that specifies the name of a Route Configuration
 // resource. The test verifies that the listenerWrapper does not become ready

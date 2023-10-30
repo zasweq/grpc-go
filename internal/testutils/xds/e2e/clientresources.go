@@ -290,37 +290,6 @@ func defaultServerListenerCommon(host string, port uint32, secLevel SecurityLeve
 	}
 }
 
-// DefaultServerListenerInlineRouteConfig returns a basic xds Listener resource
-// to be used on the server side. The returned Listener resource contains an
-// inline route configuration with the name of routeName.
-func DefaultServerListenerInlineRouteConfig(host string, port uint32, secLevel SecurityLevel, routeName string) *v3listenerpb.Listener { // how to see if this works...
-	return defaultServerListenerCommon(host, port, secLevel, routeName, true)
-}
-
-// DefaultServerListener2 returns a basic xds Listener resource to be used on
-// the server side. The returned Listener resource specifies routeName for the
-// RDS resource.
-func DefaultServerListener2(host string, port uint32, secLevel SecurityLevel, routeName string) *v3listenerpb.Listener {
-	return defaultServerListenerCommon(host, port, secLevel, routeName, false)
-}
-
-// ^^^ Pull out common listener minus inline route name,
-// anotherHelper
-//		shared listener
-//		adds route name
-
-
-// call shared listener from test,
-// shared route from test as well (see below)
-// take route put in inline and return that here
-
-// or just call DefaultRouteConfig?
-
-func RouteResource(/*any knobs here?*/) *v3routepb.RouteConfiguration { // Is this the right configuration to return?
-
-}
-
-
 // DefaultServerListenerWithRouteConfigName returns a basic xds Listener
 // resource to be used on the server side. The returned Listener resource
 // contains a RouteCongiguration resource name that needs to be resolved.
@@ -337,11 +306,6 @@ func HTTPFilter(name string, config proto.Message) *v3httppb.HttpFilter {
 		},
 	}
 }
-
-
-
-
-// call this instead of inlining vvv
 
 // DefaultRouteConfig returns a basic xds RouteConfig resource.
 func DefaultRouteConfig(routeName, ldsTarget, clusterName string) *v3routepb.RouteConfiguration {
