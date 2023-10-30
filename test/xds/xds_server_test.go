@@ -37,7 +37,9 @@ import (
 // and then accept a conn.
 func (s) TestServeLDSRDS(t *testing.T) {
 	// Do I even need server side credentials? What about resolver builder?
-	managementServer, nodeID, bootstrapContents, resolverBuilder, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
+
+	// what do I need resolverBuilder for?
+	managementServer, nodeID, bootstrapContents, _, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
 	defer cleanup()
 
 	// creds, err := xdscreds.NewServerCredentials()
@@ -60,24 +62,17 @@ func (s) TestServeLDSRDS(t *testing.T) {
 		t.Fatalf("failed to retrieve host and port of server: %v", err)
 	}
 
-	// just need to split this up into default server listener
-	// and inline route config
-
-	listener := e2e.DefaultServerListener(host, port, e2e.SecurityLevelNone, "routeName")
-
-	listener2 := e2e.DefaultServerListener2(host, port, e2e.SecurityLevelNone, "routeName")
-
 	// Oh duh this is how listener wrapper alone tested it...
 
 	// make routeName a const?
 	// lol they already have it
-	listener3 := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
+	listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
 
 	routeConfig := e2e.DefaultRouteConfig("routeName", "*", "cluster") // clusterName = "cluster", is this actually used or is it nfa?
 
 	resources := e2e.UpdateOptions{
 		NodeID:    nodeID,
-		Listeners: []*v3listenerpb.Listener{listener3},
+		Listeners: []*v3listenerpb.Listener{listener},
 		// I don't think I want to skip validation...
 		// or could pull this out into a seperate update step, but I think this is fine...should tirgger another rds request which will hit management server
 		Routes: []*v3routepb.RouteConfiguration{routeConfig},
