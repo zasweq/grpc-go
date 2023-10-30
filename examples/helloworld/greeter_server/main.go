@@ -52,9 +52,9 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
-	pb.RegisterGreeterServer(s, &server{})
+	pb.RegisterGreeterServer(s, &server{}) // Yup you create a server, and register it with proto
 	log.Printf("server listening at %v", lis.Addr())
-	if err := s.Serve(lis); err != nil {
+	if err := s.Serve(lis); err != nil { // and you call serve on the underlying server, not the wrapper
 		log.Fatalf("failed to serve: %v", err)
 	}
 }

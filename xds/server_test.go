@@ -574,6 +574,80 @@ func (s) TestServeWithStop(t *testing.T) {
 	}
 }
 
+func (s) TestBug(t *testing.T) {
+	// I want a real xDS Client and fake management server
+
+	// lds + rds than a conn accept
+	mgmtServer, err := e2e.StartManagementServer(e2e.ManagementServerOptions{})
+	if err != nil {
+		t.Fatalf("Failed to start xDS management server: %v", err)
+	}
+	defer mgmtServer.Stop()
+
+	nodeID := uuid.NewString()
+	bootstrapContents, err := bootstrap.Contents(bootstrap.Options{
+		NodeID:    nodeID,
+		ServerURI: mgmtServer.Address,
+		ServerListenerResourceNameTemplate: e2e.ServerListenerResourceNameTemplate,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create bootstrap configuration: %v", err)
+	}
+
+
+	// This LDS + RDS will need to actually be able to perform an rpc
+	// give management server LDS (move this test onto master to try and trigger)
+	/*ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	host, port := hostPortFromListener(t, lis)
+	listener := e2e.DefaultServerListener(host, port, e2e.SecurityLevelMTLS, "routeName")
+	listener.ListenerFilters = []*v3listenerpb.ListenerFilter{{Name: "foo"}}
+	resources := e2e.UpdateOptions{
+		NodeID:    nodeID,
+		Listeners: []*v3listenerpb.Listener{listener},
+	}
+	if err := mgmtServer.Update(ctx, resources); err != nil {
+		t.Fatal(err)
+	}*/
+
+
+	server, err := NewGRPCServer(BootstrapContentsForTesting(bootstrapContents))
+	if err != nil {
+		t.Fatalf("Failed to create an xDS enabled gRPC server: %v", err)
+	}
+	defer server.Stop()
+
+	// create a tcp listener and pass it to server?
+	// Call Serve() in a goroutine.
+	lis, err := testutils.LocalTCPListener()
+	if err != nil {
+		t.Fatalf("testutils.LocalTCPListener() failed: %v", err)
+	}
+	go server.Serve(lis) // I'm guessing the defer on 608 waits for this exits
+	// LDS (needs to specify RDS)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	host, port := hostPortFromListener(t, lis)
+	listener := e2e.DefaultServerListener(host, port, e2e.SecurityLevelMTLS, "routeName")
+	listener.ListenerFilters = []*v3listenerpb.ListenerFilter{{Name: "foo"}}
+	resources := e2e.UpdateOptions{
+		NodeID:    nodeID,
+		Listeners: []*v3listenerpb.Listener{listener},
+	}
+	if err := mgmtServer.Update(ctx, resources); err != nil {
+		t.Fatal(err)
+	}
+
+	// Give it RDS corresponding to the RDS resource specified in LDS
+	e2e.DefaultRouteConfig("routeName")
+
+	// let it block on rds (does this even need to come after server creation)?
+
+	// dial to the server, make an rpc
+	// server (wrapped gRPC Server) how to dial to this server?
+
+}
+
 // TestNewServer_ClientCreationFailure tests the case where the xDS client
 // creation fails and verifies that the call to NewGRPCServer() fails.
 func (s) TestNewServer_ClientCreationFailure(t *testing.T) {
@@ -723,6 +797,7 @@ func (s) TestHandleListenerUpdate_ErrorUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("testutils.LocalTCPListener() failed: %v", err)
 	}
+	go server.Serve(lis)
 	go server.Serve(lis)
 
 	// Update the listener resource on the management server in such a way that
