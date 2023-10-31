@@ -61,7 +61,7 @@ func (s) TestServeLDSRDS(t *testing.T) {
 	resources := e2e.UpdateOptions{
 		NodeID:    nodeID,
 		Listeners: []*v3listenerpb.Listener{listener},
-		Routes: []*v3routepb.RouteConfiguration{routeConfig},
+		Routes:    []*v3routepb.RouteConfiguration{routeConfig},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)

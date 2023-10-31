@@ -336,18 +336,18 @@ func DefaultRouteConfig(routeName, ldsTarget, clusterName string) *v3routepb.Rou
 // the inline route configuration in DefaultServerListener.
 func RouteConfigNonForwardingTarget(routeName string) *v3routepb.RouteConfiguration {
 	return &v3routepb.RouteConfiguration{
-	Name: routeName,
-	VirtualHosts: []*v3routepb.VirtualHost{{
-		// This "*" string matches on any incoming authority. This is to ensure any
-		// incoming RPC matches to Route_NonForwardingAction and will proceed as
-		// normal.
-		Domains: []string{"*"},
-		Routes: []*v3routepb.Route{{
-			Match: &v3routepb.RouteMatch{
-				PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: "/"},
-			},
-			Action: &v3routepb.Route_NonForwardingAction{},
-		}}}}}
+		Name: routeName,
+		VirtualHosts: []*v3routepb.VirtualHost{{
+			// This "*" string matches on any incoming authority. This is to ensure any
+			// incoming RPC matches to Route_NonForwardingAction and will proceed as
+			// normal.
+			Domains: []string{"*"},
+			Routes: []*v3routepb.Route{{
+				Match: &v3routepb.RouteMatch{
+					PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: "/"},
+				},
+				Action: &v3routepb.Route_NonForwardingAction{},
+			}}}}}
 }
 
 // RouteConfigClusterSpecifierType determines the cluster specifier type for the
