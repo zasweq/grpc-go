@@ -342,7 +342,6 @@ func (l *listenerWrapper) handleRDSUpdate(update rdsHandlerUpdate) {
 	}
 	atomic.StorePointer(&l.rdsUpdates, unsafe.Pointer(&update.updates))
 	l.mu.Lock()
-	l.filterChains = nil
 	l.switchModeLocked(connectivity.ServingModeServing, nil)
 	l.mu.Unlock()
 	l.goodUpdate.Fire()
@@ -364,7 +363,7 @@ func (l *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
 	ilc := update.InboundListenerCfg
 	if ilc.Address != l.addr || ilc.Port != l.port {
 		l.mu.Lock()
-		l.filterChains = ilc.FilterChains
+		l.filterChains = nil
 		l.switchModeLocked(connectivity.ServingModeNotServing, fmt.Errorf("address (%s:%s) in Listener update does not match listening address: (%s:%s)", ilc.Address, ilc.Port, l.addr, l.port))
 		l.mu.Unlock()
 		return
@@ -388,6 +387,12 @@ func (l *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
 	// needed, and is ready to serve.
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	// I see, can this filter chains object be nil?
+	// What's behavior if it is nil?
+
+	print("ilc.filterChains: ", ilc.FilterChains)
+
 	l.filterChains = ilc.FilterChains // write uncondtionally
 	if len(ilc.FilterChains.RouteConfigNames) == 0 {
 		l.switchModeLocked(connectivity.ServingModeServing, nil)
