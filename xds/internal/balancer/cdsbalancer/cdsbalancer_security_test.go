@@ -295,9 +295,8 @@ func (s) TestSecurityConfigWithoutXDSCreds(t *testing.T) {
 		t.Fatal("Timeout when waiting to read handshake info passed to NewSubConn")
 	}
 	wantHI := xdscredsinternal.NewHandshakeInfo(nil, nil, nil, false)
-	if !cmp.Equal(gotHI, wantHI) { // Equal() defined on handshake info
-		t.Fatalf("FAILLOL")
-		// t.Fatalf("NewSubConn got handshake info %+v, want %+v", gotHI, wantHI)
+	if !cmp.Equal(gotHI, wantHI) {
+		t.Fatalf("NewSubConn got handshake info %+v, want %+v", gotHI, wantHI)
 	}
 }
 

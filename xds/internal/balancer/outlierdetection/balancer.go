@@ -523,7 +523,7 @@ func (b *outlierDetectionBalancer) appendIfPresent(addr string, scw *subConnWrap
 //
 // Caller must hold b.mu.
 func (b *outlierDetectionBalancer) removeSubConnFromAddressesMapEntry(scw *subConnWrapper) {
-	addrInfo := (*addressInfo)(atomic.LoadPointer(&scw.addressInfo)) // atomic.Load and atomic.Store need an address...
+	addrInfo := (*addressInfo)(atomic.LoadPointer(&scw.addressInfo))
 	if addrInfo == nil {
 		return
 	}

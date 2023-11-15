@@ -225,8 +225,8 @@ func newTestContextWithHandshakeInfo(parent context.Context, root, identity cert
 		sm = []matcher.StringMatcher{matcher.StringMatcherForTesting(newStringP(sanExactMatch), nil, nil, nil, nil, false)}
 	}
 	info := xdsinternal.NewHandshakeInfo(root, identity, sm, false)
-	uPtr := unsafe.Pointer(&info)
-	addr := xdsinternal.SetHandshakeInfoPtr(resolver.Address{}, &uPtr)
+	uPtr := unsafe.Pointer(info)
+	addr := xdsinternal.SetHandshakeInfo(resolver.Address{}, &uPtr)
 
 	// Moving the attributes from the resolver.Address to the context passed to
 	// the handshaker is done in the transport layer. Since we directly call the
@@ -540,8 +540,8 @@ func (s) TestClientCredsProviderSwitch(t *testing.T) {
 	// We need to repeat most of what newTestContextWithHandshakeInfo() does
 	// here because we need access to the underlying HandshakeInfo so that we
 	// can update it before the next call to ClientHandshake().
-	uPtr := unsafe.Pointer(&handshakeInfo)
-	addr := xdsinternal.SetHandshakeInfoPtr(resolver.Address{}, &uPtr)
+	uPtr := unsafe.Pointer(handshakeInfo)
+	addr := xdsinternal.SetHandshakeInfo(resolver.Address{}, &uPtr)
 	ctx = icredentials.NewClientHandshakeInfoContext(ctx, credentials.ClientHandshakeInfo{Attributes: addr.Attributes})
 	if _, _, err := creds.ClientHandshake(ctx, authority, conn); err == nil {
 		t.Fatal("ClientHandshake() succeeded when expected to fail")
@@ -563,11 +563,8 @@ func (s) TestClientCredsProviderSwitch(t *testing.T) {
 	// the HandshakeInfo with the new provider.
 	root2 := makeRootProvider(t, "x509/server_ca_cert.pem")
 	handshakeInfo = xdsinternal.NewHandshakeInfo(root2, nil, []matcher.StringMatcher{matcher.StringMatcherForTesting(newStringP(defaultTestCertSAN), nil, nil, nil, nil, false)}, false)
-	// We need to repeat most of what newTestContextWithHandshakeInfo() does
-	// here because we need access to the underlying HandshakeInfo so that we
-	// can update it before the next call to ClientHandshake().
-	uPtr = unsafe.Pointer(&handshakeInfo)
-	addr = xdsinternal.SetHandshakeInfoPtr(resolver.Address{}, &uPtr)
+	uPtr = unsafe.Pointer(handshakeInfo)
+	addr = xdsinternal.SetHandshakeInfo(resolver.Address{}, &uPtr)
 	ctx = icredentials.NewClientHandshakeInfoContext(ctx, credentials.ClientHandshakeInfo{Attributes: addr.Attributes})
 	_, ai, err := creds.ClientHandshake(ctx, authority, conn)
 	if err != nil {

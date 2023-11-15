@@ -116,19 +116,8 @@ func (c *credsImpl) ClientHandshake(ctx context.Context, authority string, rawCo
 		return c.fallback.ClientHandshake(ctx, authority, rawConn)
 	}
 
-	// hi := xdsinternal.GetHandshakeInfo(chi.Attributes)
-	// Read the *new* pointer, will either get before or after lifetime
-	hiPtr := xdsinternal.GetHandshakeInfoPtr(chi.Attributes)
-	/*
-		addrInfo := (*addressInfo)(atomic.LoadPointer(&scw.addressInfo))
-			if addrInfo == nil {
-				return
-			}
-			ab := (*bucket)(atomic.LoadPointer(&addrInfo.callCounter.activeBucket))
-	*/
-	// pointer to a pointer
-	// atomically loading and storing a pointer to an unsafe.Pointer
-	hi := (*xdsinternal.HandshakeInfo)(atomic.LoadPointer(hiPtr)) // stick this in the attributes
+	uPtr := xdsinternal.GetHandshakeInfo(chi.Attributes)
+	hi := (*xdsinternal.HandshakeInfo)(atomic.LoadPointer(uPtr))
 	if hi.UseFallbackCreds() {
 		return c.fallback.ClientHandshake(ctx, authority, rawConn)
 	}
@@ -145,7 +134,7 @@ func (c *credsImpl) ClientHandshake(ctx context.Context, authority string, rawCo
 	// 4. Key usage to match whether client/server usage.
 	// 5. A `VerifyPeerCertificate` function which performs normal peer
 	// 	  cert verification using configured roots, and the custom SAN checks.
-	cfg, err := hi.ClientSideTLSConfig(ctx) // errors
+	cfg, err := hi.ClientSideTLSConfig(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

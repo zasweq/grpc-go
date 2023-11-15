@@ -36,7 +36,7 @@ import (
 )
 
 func init() {
-	internal.GetXDSHandshakeInfoForTesting = GetHandshakeInfoPtr // this needs to return pointer...
+	internal.GetXDSHandshakeInfoForTesting = GetHandshakeInfo
 }
 
 // handshakeAttrKey is the type used as the key to store HandshakeInfo in
@@ -49,43 +49,28 @@ func (hi *HandshakeInfo) Equal(other *HandshakeInfo) bool {
 		return true
 	}
 	if hi == nil || other == nil {
-		print("THIS")
 		return false
 	}
 	if hi.rootProvider != other.rootProvider ||
 		hi.identityProvider != other.identityProvider ||
 		hi.requireClientCert != other.requireClientCert ||
 		len(hi.sanMatchers) != len(other.sanMatchers) {
-		print("THIS2")
 		return false
 	}
 	for i := range hi.sanMatchers {
 		if !hi.sanMatchers[i].Equal(other.sanMatchers[i]) {
-			print("THIS3")
 			return false
 		}
 	}
 	return true
 }
 
-// GetHandshakeInfo returns a pointer to the HandshakeInfo stored in attr.
-func GetHandshakeInfo(attr *attributes.Attributes) *HandshakeInfo {
-	v := attr.Value(handshakeAttrKey{})
-	hi, _ := v.(*HandshakeInfo)
-	return hi
-}
-
-// Is my heap memory thing related? I think so if you atomically write to
-// This needs to be dynamic over time wrt the heap memory
-// Do I want this to be *unsafe.Pointer
-// or just unsafe.Pointer
-func SetHandshakeInfoPtr(addr resolver.Address, hiPtr *unsafe.Pointer) resolver.Address {
-	addr.Attributes = addr.Attributes.WithValue(handshakeAttrKey{}, hiPtr) // he mentioned just stick this pointer in it
+func SetHandshakeInfo(addr resolver.Address, hiPtr *unsafe.Pointer) resolver.Address {
+	addr.Attributes = addr.Attributes.WithValue(handshakeAttrKey{}, hiPtr)
 	return addr
 }
 
-// This returns a pointer to what is more dynamic over time...
-func GetHandshakeInfoPtr(attr *attributes.Attributes) *unsafe.Pointer {
+func GetHandshakeInfo(attr *attributes.Attributes) *unsafe.Pointer {
 	v := attr.Value(handshakeAttrKey{})
 	hi, _ := v.(*unsafe.Pointer)
 	return hi
@@ -97,7 +82,8 @@ func GetHandshakeInfoPtr(attr *attributes.Attributes) *unsafe.Pointer {
 //
 // Safe for concurrent access.
 type HandshakeInfo struct {
-	// All fields written at init time and read only after that, so no synchronization needed.
+	// All fields written at init time and read only after that, so no
+	// synchronization needed.
 	rootProvider      certprovider.Provider
 	identityProvider  certprovider.Provider
 	sanMatchers       []matcher.StringMatcher // Only on the client side.
@@ -105,8 +91,7 @@ type HandshakeInfo struct {
 }
 
 func NewHandshakeInfo(rootProvider certprovider.Provider, identityProvider certprovider.Provider, sanMatchers []matcher.StringMatcher, requireClientCert bool) *HandshakeInfo {
-	return &HandshakeInfo{ // allocates new heap memory
-		// How does this work, does this copy heap?
+	return &HandshakeInfo{
 		rootProvider:      rootProvider,
 		identityProvider:  identityProvider,
 		sanMatchers:       sanMatchers,
@@ -152,7 +137,7 @@ func (hi *HandshakeInfo) ClientSideTLSConfig(ctx context.Context) (*tls.Config, 
 	}
 
 	km, err := rootProv.KeyMaterial(ctx)
-	if err != nil { // errors here...
+	if err != nil {
 		return nil, fmt.Errorf("xds: fetching trusted roots from CertificateProvider failed: %v", err)
 	}
 	cfg.RootCAs = km.Roots
