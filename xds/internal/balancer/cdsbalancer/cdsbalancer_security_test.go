@@ -76,7 +76,7 @@ func (tcc *testCCWrapper) NewSubConn(addrs []resolver.Address, opts balancer.New
 	if len(addrs) != 1 {
 		return nil, fmt.Errorf("NewSubConn got %d addresses, want 1", len(addrs))
 	}
-	getHI := internal.GetXDSHandshakeInfoForTesting.(func(attr *attributes.Attributes) unsafe.Pointer)
+	getHI := internal.GetXDSHandshakeInfoForTesting.(func(attr *attributes.Attributes) *unsafe.Pointer)
 	hi := getHI(addrs[0].Attributes)
 	if hi == nil {
 		return nil, fmt.Errorf("NewSubConn got address without xDS handshake info")
@@ -84,7 +84,7 @@ func (tcc *testCCWrapper) NewSubConn(addrs []resolver.Address, opts balancer.New
 
 	sc, err := tcc.ClientConn.NewSubConn(addrs, opts)
 	select {
-	case tcc.handshakeInfoCh <- (*xdscredsinternal.HandshakeInfo)(hi):
+	case tcc.handshakeInfoCh <- (*xdscredsinternal.HandshakeInfo)(*hi):
 	default:
 	}
 	return sc, err
@@ -295,8 +295,9 @@ func (s) TestSecurityConfigWithoutXDSCreds(t *testing.T) {
 		t.Fatal("Timeout when waiting to read handshake info passed to NewSubConn")
 	}
 	wantHI := xdscredsinternal.NewHandshakeInfo(nil, nil, nil, false)
-	if !cmp.Equal(gotHI, wantHI) {
-		t.Fatalf("NewSubConn got handshake info %+v, want %+v", gotHI, wantHI)
+	if !cmp.Equal(gotHI, wantHI) { // Equal() defined on handshake info
+		t.Fatalf("FAILLOL")
+		// t.Fatalf("NewSubConn got handshake info %+v, want %+v", gotHI, wantHI)
 	}
 }
 

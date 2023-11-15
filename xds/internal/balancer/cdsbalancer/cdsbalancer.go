@@ -93,21 +93,22 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 	ctx, cancel := context.WithCancel(context.Background())
 	// Create handshake info pointer here...
 	hi := xdsinternal.NewHandshakeInfo(nil, nil, nil, false) // Do I need to do this initially?
-	xdsHIPtr := unsafe.Pointer(&hi)
+	xdsHIPtr := unsafe.Pointer(hi)
+	ptrPtr := &xdsHIPtr
 	b := &cdsBalancer{
 		bOpts:             opts,
 		childConfigParser: parser,
 		serializer:        grpcsync.NewCallbackSerializer(ctx),
 		serializerCancel:  cancel,
 		// xdsHI:             xdsinternal.NewHandshakeInfo(nil, nil),
-		xdsHIPtr: xdsHIPtr, // Do I need to do this initially?
+		xdsHIPtr: ptrPtr, // Do I need to do this initially?
 		watchers: make(map[string]*watcherState),
 	}
 	b.ccw = &ccWrapper{
 		ClientConn: cc,
-		xdsHIPtr:   b.xdsHIPtr,
+		xdsHIPtr:   b.xdsHIPtr, // ptr ptr
 	}
-	b.logger = prefixLogger((b))
+	b.logger = prefixLogger(b)
 	b.logger.Infof("Created")
 
 	var creds credentials.TransportCredentials
@@ -159,17 +160,9 @@ type cdsBalancer struct {
 	bOpts             balancer.BuildOptions // BuildOptions passed to child LB.
 	childConfigParser balancer.ConfigParser // Config parser for cluster_resolver LB policy.
 
-	// Still persisted in attributes and read out of attributes, just
-	// as a pointer now for atomic updates
-	// atomic.Pointer // doug doesn't know how to use this
-	// unsafe.Pointer
-	// Construct a new hi and write it to this pointer
-
-	xdsHI *xdsinternal.HandshakeInfo // Handshake info from security configuration.
-	// state unsafe.Pointer // *balancer.State
-	xdsHIPtr unsafe.Pointer //
-
 	logger *grpclog.PrefixLogger // Prefix logger for all logging.
+
+	xdsHIPtr *unsafe.Pointer
 
 	// The serializer and its cancel func are initialized at build time, and the
 	// rest of the fields here are only accessed from serializer callbacks (or
@@ -222,7 +215,7 @@ func (b *cdsBalancer) handleSecurityConfig(config *xdsresource.SecurityConfig) e
 		// b.xdsHI.SetRootCertProvider(nil)
 		// b.xdsHI.SetIdentityCertProvider(nil)
 		// b.xdsHI.SetSANMatchers(nil)
-		atomic.StorePointer(&b.xdsHIPtr, unsafe.Pointer(xdsHI))
+		atomic.StorePointer(b.xdsHIPtr, unsafe.Pointer(xdsHI))
 
 		return nil
 
@@ -266,7 +259,7 @@ func (b *cdsBalancer) handleSecurityConfig(config *xdsresource.SecurityConfig) e
 	b.cachedRoot = rootProvider // this is synced because operations don't happen atomically
 	b.cachedIdentity = identityProvider
 	// End codeblock I think you can keep.
-
+	print("writing newXDSHI")
 	xdsHI = xdsinternal.NewHandshakeInfo(rootProvider, identityProvider, config.SubjectAltNameMatchers, false)
 	// try unsafe.Pointer unless he doesn't like it
 
@@ -274,7 +267,7 @@ func (b *cdsBalancer) handleSecurityConfig(config *xdsresource.SecurityConfig) e
 	// atomic.StorePointer(&cpw.state, unsafe.Pointer(&newState))
 	// &valueStruct
 	// address of this pointer, so you atomically store pointer
-	atomic.StorePointer(&b.xdsHIPtr, unsafe.Pointer(xdsHI)) // loading and storing a x bit pointer atomically
+	atomic.StorePointer(b.xdsHIPtr, unsafe.Pointer(xdsHI)) // loading and storing a x bit pointer atomically
 	// b.xdsHI = unsafe.Pointer(xdsHI)
 	// wrap in a pointer type, write to field
 	// We set all fields here, even if some of them are nil, since they
@@ -706,7 +699,9 @@ type ccWrapper struct {
 	// received security configuration in the Cluster resource.
 	xdsHI *xdsinternal.HandshakeInfo
 
-	xdsHIPtr unsafe.Pointer
+	// This might need to be a pointer to a pointer, as the pointer can be atomically stored and loaded
+
+	xdsHIPtr *unsafe.Pointer
 }
 
 // NewSubConn intercepts NewSubConn() calls from the child policy and adds an
