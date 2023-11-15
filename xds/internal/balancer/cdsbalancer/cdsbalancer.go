@@ -21,6 +21,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
+	"unsafe"
 
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
@@ -89,17 +91,21 @@ func (bb) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Bal
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// Create handshake info pointer here...
+	hi := xdsinternal.NewHandshakeInfo(nil, nil, nil, false) // Do I need to do this initially?
+	xdsHIPtr := unsafe.Pointer(&hi)
 	b := &cdsBalancer{
 		bOpts:             opts,
 		childConfigParser: parser,
 		serializer:        grpcsync.NewCallbackSerializer(ctx),
 		serializerCancel:  cancel,
-		xdsHI:             xdsinternal.NewHandshakeInfo(nil, nil),
-		watchers:          make(map[string]*watcherState),
+		// xdsHI:             xdsinternal.NewHandshakeInfo(nil, nil),
+		xdsHIPtr: xdsHIPtr, // Do I need to do this initially?
+		watchers: make(map[string]*watcherState),
 	}
 	b.ccw = &ccWrapper{
 		ClientConn: cc,
-		xdsHI:      b.xdsHI,
+		xdsHIPtr:   b.xdsHIPtr,
 	}
 	b.logger = prefixLogger((b))
 	b.logger.Infof("Created")
@@ -149,11 +155,21 @@ type cdsBalancer struct {
 	// The following fields are initialized at build time and are either
 	// read-only after that or provide their own synchronization, and therefore
 	// do not need to be guarded by a mutex.
-	ccw               *ccWrapper                 // ClientConn interface passed to child LB.
-	bOpts             balancer.BuildOptions      // BuildOptions passed to child LB.
-	childConfigParser balancer.ConfigParser      // Config parser for cluster_resolver LB policy.
-	xdsHI             *xdsinternal.HandshakeInfo // Handshake info from security configuration.
-	logger            *grpclog.PrefixLogger      // Prefix logger for all logging.
+	ccw               *ccWrapper            // ClientConn interface passed to child LB.
+	bOpts             balancer.BuildOptions // BuildOptions passed to child LB.
+	childConfigParser balancer.ConfigParser // Config parser for cluster_resolver LB policy.
+
+	// Still persisted in attributes and read out of attributes, just
+	// as a pointer now for atomic updates
+	// atomic.Pointer // doug doesn't know how to use this
+	// unsafe.Pointer
+	// Construct a new hi and write it to this pointer
+
+	xdsHI *xdsinternal.HandshakeInfo // Handshake info from security configuration.
+	// state unsafe.Pointer // *balancer.State
+	xdsHIPtr unsafe.Pointer //
+
+	logger *grpclog.PrefixLogger // Prefix logger for all logging.
 
 	// The serializer and its cancel func are initialized at build time, and the
 	// rest of the fields here are only accessed from serializer callbacks (or
@@ -186,6 +202,12 @@ func (b *cdsBalancer) handleSecurityConfig(config *xdsresource.SecurityConfig) e
 	if !b.xdsCredsInUse {
 		return nil
 	}
+	// new(field1, field2, field3)
+
+	// Backward compatibility, can "freeze" api vvv
+	// new(buildOptions{}) (set once read only, set at init time, constructor pattern and private fields)
+	// vs. fields which will be used over time
+	var xdsHI *xdsinternal.HandshakeInfo
 
 	// Security config being nil is a valid case where the management server has
 	// not sent any security configuration. The xdsCredentials implementation
@@ -194,10 +216,18 @@ func (b *cdsBalancer) handleSecurityConfig(config *xdsresource.SecurityConfig) e
 		// We need to explicitly set the fields to nil here since this might be
 		// a case of switching from a good security configuration to an empty
 		// one where fallback credentials are to be used.
-		b.xdsHI.SetRootCertProvider(nil)
-		b.xdsHI.SetIdentityCertProvider(nil)
-		b.xdsHI.SetSANMatchers(nil)
+		xdsHI = xdsinternal.NewHandshakeInfo(nil, nil, nil, false)
+		// wrap in a pointer type, write to field
+
+		// b.xdsHI.SetRootCertProvider(nil)
+		// b.xdsHI.SetIdentityCertProvider(nil)
+		// b.xdsHI.SetSANMatchers(nil)
+		atomic.StorePointer(&b.xdsHIPtr, unsafe.Pointer(xdsHI))
+
 		return nil
+
+		// atomic.Pointer to
+
 	}
 
 	bc := b.xdsClient.BootstrapConfig()
@@ -225,6 +255,7 @@ func (b *cdsBalancer) handleSecurityConfig(config *xdsresource.SecurityConfig) e
 		}
 	}
 
+	// I think can keep this codeblock because not synced.
 	// Close the old providers and cache the new ones.
 	if b.cachedRoot != nil {
 		b.cachedRoot.Close()
@@ -232,14 +263,25 @@ func (b *cdsBalancer) handleSecurityConfig(config *xdsresource.SecurityConfig) e
 	if b.cachedIdentity != nil {
 		b.cachedIdentity.Close()
 	}
-	b.cachedRoot = rootProvider
+	b.cachedRoot = rootProvider // this is synced because operations don't happen atomically
 	b.cachedIdentity = identityProvider
+	// End codeblock I think you can keep.
 
+	xdsHI = xdsinternal.NewHandshakeInfo(rootProvider, identityProvider, config.SubjectAltNameMatchers, false)
+	// try unsafe.Pointer unless he doesn't like it
+
+	// var vs := valueStruct{}
+	// atomic.StorePointer(&cpw.state, unsafe.Pointer(&newState))
+	// &valueStruct
+	// address of this pointer, so you atomically store pointer
+	atomic.StorePointer(&b.xdsHIPtr, unsafe.Pointer(xdsHI)) // loading and storing a x bit pointer atomically
+	// b.xdsHI = unsafe.Pointer(xdsHI)
+	// wrap in a pointer type, write to field
 	// We set all fields here, even if some of them are nil, since they
 	// could have been non-nil earlier.
-	b.xdsHI.SetRootCertProvider(rootProvider)
-	b.xdsHI.SetIdentityCertProvider(identityProvider)
-	b.xdsHI.SetSANMatchers(config.SubjectAltNameMatchers)
+	// b.xdsHI.SetRootCertProvider(rootProvider)
+	// b.xdsHI.SetIdentityCertProvider(identityProvider)
+	// b.xdsHI.SetSANMatchers(config.SubjectAltNameMatchers)
 	return nil
 }
 
@@ -663,6 +705,8 @@ type ccWrapper struct {
 	// The certificate providers in this HandshakeInfo are updated based on the
 	// received security configuration in the Cluster resource.
 	xdsHI *xdsinternal.HandshakeInfo
+
+	xdsHIPtr unsafe.Pointer
 }
 
 // NewSubConn intercepts NewSubConn() calls from the child policy and adds an
@@ -670,9 +714,14 @@ type ccWrapper struct {
 // handshaker to perform the TLS handshake.
 func (ccw *ccWrapper) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
 	newAddrs := make([]resolver.Address, len(addrs))
+
+	// What do you stick on here?
+	// unsafe.Pointer or &unsafe.Pointer
 	for i, addr := range addrs {
-		newAddrs[i] = xdsinternal.SetHandshakeInfo(addr, ccw.xdsHI)
+		// newAddrs[i] = xdsinternal.SetHandshakeInfo(addr, ccw.xdsHI) // Does it for each address created for SubConn...
+		newAddrs[i] = xdsinternal.SetHandshakeInfoPtr(addr, ccw.xdsHIPtr) // is this the right thing to do? Does this link correctly?
 	}
+
 	// No need to override opts.StateListener; just forward all calls to the
 	// child that created the SubConn.
 	return ccw.ClientConn.NewSubConn(newAddrs, opts)
@@ -681,7 +730,8 @@ func (ccw *ccWrapper) NewSubConn(addrs []resolver.Address, opts balancer.NewSubC
 func (ccw *ccWrapper) UpdateAddresses(sc balancer.SubConn, addrs []resolver.Address) {
 	newAddrs := make([]resolver.Address, len(addrs))
 	for i, addr := range addrs {
-		newAddrs[i] = xdsinternal.SetHandshakeInfo(addr, ccw.xdsHI)
+		// newAddrs[i] = xdsinternal.SetHandshakeInfo(addr, ccw.xdsHI)
+		newAddrs[i] = xdsinternal.SetHandshakeInfoPtr(addr, ccw.xdsHIPtr)
 	}
 	ccw.ClientConn.UpdateAddresses(sc, newAddrs)
 }

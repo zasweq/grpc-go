@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/credentials"
@@ -114,7 +115,20 @@ func (c *credsImpl) ClientHandshake(ctx context.Context, authority string, rawCo
 	if chi.Attributes == nil {
 		return c.fallback.ClientHandshake(ctx, authority, rawConn)
 	}
-	hi := xdsinternal.GetHandshakeInfo(chi.Attributes)
+
+	// hi := xdsinternal.GetHandshakeInfo(chi.Attributes)
+	// Read the *new* pointer, will either get before or after lifetime
+	hiPtr := xdsinternal.GetHandshakeInfoPtr(chi.Attributes)
+	/*
+		addrInfo := (*addressInfo)(atomic.LoadPointer(&scw.addressInfo))
+			if addrInfo == nil {
+				return
+			}
+			ab := (*bucket)(atomic.LoadPointer(&addrInfo.callCounter.activeBucket))
+	*/
+	// pointer to a pointer
+	// atomically loading and storing a pointer to an unsafe.Pointer
+	hi := (*xdsinternal.HandshakeInfo)(atomic.LoadPointer(&hiPtr)) // stick this in the attributes
 	if hi.UseFallbackCreds() {
 		return c.fallback.ClientHandshake(ctx, authority, rawConn)
 	}
