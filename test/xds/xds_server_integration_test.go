@@ -21,6 +21,7 @@ package xds_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"testing"
@@ -48,6 +49,15 @@ func (*testService) EmptyCall(context.Context, *testpb.Empty) (*testpb.Empty, er
 
 func (*testService) UnaryCall(context.Context, *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
 	return &testpb.SimpleResponse{}, nil
+}
+
+func (*testService) FullDuplexCall(stream testgrpc.TestService_FullDuplexCallServer) error {
+	for {
+		_, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+	}
 }
 
 func testModeChangeServerOption(t *testing.T) grpc.ServerOption {
@@ -373,3 +383,37 @@ func (s) TestServerSideXDS_SecurityConfigChange(t *testing.T) {
 		t.Fatalf("rpc EmptyCall() failed: %v", err)
 	}
 }
+
+// Unit tests different: (Fix a lot of tests, I changed layering)
+
+// 1. rds handler has different layering
+
+// Behavioral changes:
+// Doesn't spawn two goroutines anymore
+
+// e2e tests:
+
+// inline route config should function exact same time (block on server going
+// ready changes, will Accept() and Close() perhaps need sync to it going READY),
+// will test swap() logic
+
+// partial inline route config, partial rds
+// full rds
+// wait for it to go READY, before this should be immediately closed
+
+// Not Serving, Serving, Not Serving, Serving transitions (last one should gracefully drain Conn)
+
+
+
+// Alongside the normal inline stuff I want configure RDS with no wait and expect RPC's to work
+
+// 1. Destination port.
+// 2. Destination IP address.
+// 3. Server name (e.g. SNI for TLS protocol),
+// 4. Transport protocol.
+// 5. Application protocols (e.g. ALPN for TLS protocol).
+// 6. Source type (e.g. any, local or external network).
+// 7. Source IP address.
+// 8. Source port.
+
+

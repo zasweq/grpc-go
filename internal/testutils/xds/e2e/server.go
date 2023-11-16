@@ -195,6 +195,25 @@ type UpdateOptions struct {
 	SkipValidation bool
 }
 
+// sends all in it's snapshot cache, but xDS Client should eat the duplicate
+// LDS resource...
+
+
+
+// I don't even know if I need these two...
+func (s *ManagementServer) UpdateOneResource(ctx context.Context, opts UpdateOptions) error {
+	// somehow only update one resource
+	return nil
+}
+
+func (s *ManagementServer) ResourceNotFound(resourceName string) {
+	// send a resource not found for a particular resource name (and type of xDS...)
+
+	// newServiceConfigForTesting (defaultWatchExpiry timeout)
+
+}
+
+
 // Update changes the resource snapshot held by the management server, which
 // updates connected clients as required.
 func (s *ManagementServer) Update(ctx context.Context, opts UpdateOptions) error {

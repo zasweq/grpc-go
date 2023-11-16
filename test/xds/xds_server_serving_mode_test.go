@@ -282,7 +282,7 @@ func (s) TestServerSideXDS_ServingModeChanges(t *testing.T) {
 
 	// Update the management server to remove the second listener resource. This
 	// should push only the second listener into "not-serving" mode.
-	if err := managementServer.Update(ctx, e2e.UpdateOptions{
+	if err := managementServer.Update(ctx, e2e.UpdateOptions{ // still specifies lis 1, so shoulldddd work...doesn't create a new lis...do I even need to ping just RDS
 		NodeID:    nodeID,
 		Listeners: []*v3listenerpb.Listener{listener1},
 	}); err != nil {
@@ -371,8 +371,8 @@ func (s) TestServerSideXDS_ServingModeChanges(t *testing.T) {
 func waitForSuccessfulRPC(ctx context.Context, t *testing.T, cc *grpc.ClientConn) {
 	t.Helper()
 
-	c := testgrpc.NewTestServiceClient(cc)
-	if _, err := c.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil {
+	c := testgrpc.NewTestServiceClient(cc) // should I change these to take the
+	if _, err := c.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil { // waits for ready, and then makes an RPC
 		t.Fatalf("rpc EmptyCall() failed: %v", err)
 	}
 }
@@ -386,16 +386,31 @@ func waitForFailedRPC(ctx context.Context, t *testing.T, cc *grpc.ClientConn) {
 		return
 	}
 
-	ticker := time.NewTimer(1 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
+	//ticker := time.NewTimer(1 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			t.Fatalf("failure when waiting for RPCs to fail: %v", ctx.Err())
 		case <-ticker.C:
-			if _, err := c.EmptyCall(ctx, &testpb.Empty{}); err != nil {
+			if _, err := c.EmptyCall(ctx, &testpb.Empty{}); err != nil { // Doesn't hit here...
 				return
 			}
 		}
 	}
+
+	// ticker2 := time.NewTicker()
+} // this gives it one try only...but shouldn't matter this also fails
+
+
+/*
+// keep trying for ten seconds? maybe after second 1 it hasn't processed yet...but it should process sync
+func waitForFailedRPCPolling(ctx context.Context, t *testing.T, cc *grpc.ClientConn) {
+	t.Helper()
+	c := testgrpc.NewTestServiceClient(cc)
+
+	// poll in a loop compared to ctx timeout, that gates it...
+
 }
+*/

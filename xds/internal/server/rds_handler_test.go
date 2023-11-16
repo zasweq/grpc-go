@@ -18,22 +18,21 @@
 
 package server
 
+/*
 import (
 	"context"
 	"fmt"
-	"strings"
+	v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 	"testing"
 	"time"
 
-	wrapperspb "github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/grpc/internal/testutils/xds/e2e"
 	"google.golang.org/grpc/xds/internal/xdsclient"
-	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 
-	v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	v3discoverypb "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 )
 
@@ -68,7 +67,7 @@ func xdsSetupFoTests(t *testing.T) (*e2e.ManagementServer, string, chan []string
 	mgmtServer, nodeID, bootstrapContents, _, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{
 		OnStreamRequest: func(_ int64, req *v3discoverypb.DiscoveryRequest) error {
 			switch req.GetTypeUrl() {
-			case version.V3ListenerURL:
+			case version.V3ListenerURL: // Waits on the listener, and route config below...
 				select {
 				case <-ldsNamesCh:
 				default:
@@ -77,7 +76,7 @@ func xdsSetupFoTests(t *testing.T) (*e2e.ManagementServer, string, chan []string
 				case ldsNamesCh <- req.GetResourceNames():
 				default:
 				}
-			case version.V3RouteConfigURL:
+			case version.V3RouteConfigURL: // waits on route config names here...
 				select {
 				case <-rdsNamesCh:
 				default:
@@ -122,6 +121,33 @@ func waitForResourceNames(ctx context.Context, t *testing.T, namesCh chan []stri
 	t.Fatalf("Timeout waiting for resource to be requested from the management server")
 }
 
+func routeConfigResourceForName(name string) *v3routepb.RouteConfiguration {
+	return e2e.RouteConfigResourceWithOptions(e2e.RouteConfigOptions{
+		RouteConfigName:      name,
+		ListenerName:         listenerName,
+		ClusterSpecifierType: e2e.RouteConfigClusterSpecifierTypeCluster,
+		ClusterName:          clusterName,
+	})
+}
+
+var defaultRouteConfigUpdate = xdsresource.RouteConfigUpdate{
+	VirtualHosts: []*xdsresource.VirtualHost{{
+		Domains: []string{listenerName},
+		Routes: []*xdsresource.Route{{
+			Prefix:           newStringP("/"), // where is this and do I even need this helper?
+			ActionType:       xdsresource.RouteActionRoute,
+			WeightedClusters: map[string]xdsresource.WeightedCluster{clusterName: {Weight: 1}},
+		}},
+	}},
+}
+ */
+
+
+
+
+
+
+/*
 // Waits for an update to be pushed on updateCh and compares it to wantUpdate.
 // Fails the test by calling t.Fatal if the context expires or if the update
 // received on the channel does not match wantUpdate.
@@ -490,3 +516,109 @@ func (s) TestErrorReceived(t *testing.T) {
 func newStringP(s string) *string {
 	return &s
 }
+*/
+
+// also make sure this code compiles
+
+// before test at the level of what is written to the update channel (including error meaning error for whole thing)
+
+
+
+// vvv my own test musings
+
+/*
+func (s) TestTestTest(t *testing.T) {
+	mgmtServer, nodeID, ldsNamesCh, rdsNamesCh, xdsC := xdsSetupFoTests(t)
+
+	rdsH := rdsHandler{} // tested at this level previous using this object
+	// What operations do I have on this?
+
+	routeResource1 := routeConfigResourceForName(route1) // also need to get to Easwar's change
+	routeResource2 := routeConfigResourceForName(route2)
+	routeResource3 := routeConfigResourceForName(route3) // are these all the route resources I need?
+
+
+	rdsH.handleRouteUpdate() // this simulates call from rds handler, although I think on normal flow this will be called anyway
+
+
+	rdsH.updateRouteNamesToWatch()
+
+	// poll on this assertion if not async (maybe add polling to lessons learned)
+
+	// update with dynamic rds, should be ready, before shouldn't
+	rdsH.determineRDSReady() // I don't know how to correctly invoke callbacks at the right time in this scenario...
+	rdsH.close()
+
+	// spawns child handlers, call back into it through a pointer passed down...
+
+}
+
+// Basic scenario route watches comes in for routeA, routeB, and routeC
+
+// management server has routeA and routeB, shouldn't be ready
+
+// update with route A, B, C, should then be ready
+
+// TestAgain tests...
+func (s) TestAgain(t *testing.T) {
+	// how does resources configured on management server make it's way...
+	mgmtServer, nodeID, ldsNamesCh, rdsNamesCh, xdsC := xdsSetupFoTests(t)
+
+	routeResource1 := routeConfigResourceForName(route1)
+	routeResource2 := routeConfigResourceForName(route2)
+	routeResource3 := routeConfigResourceForName(route3)
+	resources := e2e.UpdateOptions{
+		NodeID:         nodeID,
+		Routes:         []*v3routepb.RouteConfiguration{routeResource1, routeResource2, routeResource3},
+		SkipValidation: true,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+
+	// tests above wait for it to request, then update, same thing I want...
+
+	mgmtServer.Update(ctx, resources) // update with sceanrios below, should I just try and compile first (will let me see if changes actually build)
+	// configure with route a, route b, and route c, will that trigger?
+
+	rdsH := rdsHandler{}
+	rdsH.updateRouteNamesToWatch(map[string]bool{route1: true, route2: true, route3: true})
+	// only update 1 2
+	rdsH.determineRDSReady() // assert this is false
+
+	if got := rdsH.determineRDSReady(); got != false {
+		t.Fatalf("rdsH.determineRDSReady() got: %v, want: false", got)
+	}
+
+	// only update it here? to 1 2 3 (I guess update with all)
+
+	rdsH.handleRouteUpdate() // implicitly called - figure out how, how does it get called from rdsH
+	rdsH.determineRDSReady() // what to make assertions on should be true
+	if got := rdsH.determineRDSReady(); got != true {
+		t.Fatalf("rdsH.determineRDSReady() got: %v, want: true", got)
+	}
+}
+
+func (s) TestTestTest(t *testing.T) {
+	// RDS ABC (Gets all)
+	// RDS AB (should immedaitely be ready)
+	// RDS AD (should not be ready)
+	// update D, then should be ready
+
+}*/
+
+
+// What has changed is this component?
+
+// no updateCh to write updates to
+
+// you call into it to see if it's ready
+
+// error case for specific rds watches, doesn't
+// error out whole channel in this case
+
+
+
+
+// stayed the same:
+
+// updateRouteNamesToWatch API, but no write at the end

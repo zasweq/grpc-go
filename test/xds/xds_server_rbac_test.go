@@ -145,6 +145,12 @@ func (s) TestServerSideXDS_RouteConfiguration(t *testing.T) {
 				// Not matching route, this is be able to get invoked logically (i.e. doesn't have to match the Route configurations above).
 			}},
 	}
+
+	// configures v4 and v6, I think just oneee rpc, yeah same route config for v4 and v6
+	// I don't think this makes any kind of distinction...v4 and v6 encapsulate everything
+
+	// how to know if v4 or v6 from the client?
+
 	inboundLis := &v3listenerpb.Listener{
 		Name: fmt.Sprintf(e2e.ServerListenerResourceNameTemplate, net.JoinHostPort(host, strconv.Itoa(int(port)))),
 		Address: &v3corepb.Address{
@@ -223,7 +229,7 @@ func (s) TestServerSideXDS_RouteConfiguration(t *testing.T) {
 						ConfigType: &v3listenerpb.Filter_TypedConfig{
 							TypedConfig: testutils.MarshalAny(t, &v3httppb.HttpConnectionManager{
 								HttpFilters: []*v3httppb.HttpFilter{e2e.HTTPFilter("router", &v3routerpb.Router{})},
-								RouteSpecifier: &v3httppb.HttpConnectionManager_RouteConfig{
+								RouteSpecifier: &v3httppb.HttpConnectionManager_RouteConfig{ // inline here - overwrites so sets up rds but never actually calls it
 									RouteConfig: &v3routepb.RouteConfiguration{
 										Name:         "routeName",
 										VirtualHosts: vhs,
@@ -317,8 +323,14 @@ func serverListenerWithRBACHTTPFilters(t *testing.T, host string, port uint32, r
 		},
 	}
 	hcm.HttpFilters = nil
-	hcm.HttpFilters = append(hcm.HttpFilters, e2e.HTTPFilter("rbac", rbacCfg))
+	hcm.HttpFilters = append(hcm.HttpFilters, e2e.HTTPFilter("rbac", rbacCfg)) // adds rbac here
 	hcm.HttpFilters = append(hcm.HttpFilters, e2e.RouterHTTPFilter)
+
+	// I think this is one config with v4 and v6
+
+	//
+
+	// inline config, adds an http filter, router is in hcm which has the rds configuratiom
 
 	return &v3listenerpb.Listener{
 		Name: fmt.Sprintf(e2e.ServerListenerResourceNameTemplate, net.JoinHostPort(host, strconv.Itoa(int(port)))),
@@ -332,6 +344,13 @@ func serverListenerWithRBACHTTPFilters(t *testing.T, host string, port uint32, r
 				},
 			},
 		},
+		// encapsulates both localhost:: representations...ipv4 and ipv6 loopback on same machine yada yada...
+
+		// need another way to branch on the fc (deterministically based on
+		// client properties), maybe if it takes precedence
+
+		// or a(ipv4||ipv6) vs. b(ipv4||ipv6)
+
 		FilterChains: []*v3listenerpb.FilterChain{
 			{
 				Name: "v4-wildcard",
@@ -829,7 +848,10 @@ func (s) TestRBACToggledOn_WithBadRouteConfiguration(t *testing.T) {
 	// status code Unavailable due to not matching to a route of type Non
 	// Forwarding Action (Route Table not configured properly).
 	inboundLis := serverListenerWithBadRouteConfiguration(t, host, port)
-	resources.Listeners = append(resources.Listeners, inboundLis)
+	resources.Listeners = append(resources.Listeners, inboundLis) // this works, what is happening here?
+
+	// trying to figure out if I branched on *filter chains*
+	// overwrote inbound lis
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
