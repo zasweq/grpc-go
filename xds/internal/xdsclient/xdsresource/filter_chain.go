@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
+	"unsafe"
 
 	v3listenerpb "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	v3httppb "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -66,6 +68,11 @@ type FilterChain struct {
 	//
 	// Exactly one of RouteConfigName and InlineRouteConfig is set.
 	InlineRouteConfig *RouteConfigUpdate
+
+
+
+
+	VHS *unsafe.Pointer // what must this be initialized with?
 }
 
 // VirtualHostWithInterceptors captures information present in a VirtualHost
@@ -198,6 +205,25 @@ type FilterChainManager struct {
 	// dynamically queried for RDS Configuration for any FilterChains which
 	// specify to load RDS Configuration dynamically.
 	RouteConfigNames map[string]bool
+
+	connMu sync.Mutex // what do I really need this for?
+	// Should I move this out? it's internal so perhaps export...
+	conns []net.Conn // switch to conn wrapper
+}
+
+// or do this as part of Lookup() which gives a fc, rather than ConnParams give it a conn and derive from that
+func (fcm *FilterChainManager) AddConn(conn net.Conn) {
+	fcm.connMu.Lock()
+	defer fcm.connMu.Unlock()
+	fcm.conns = append(fcm.conns, conn) // Can append to a nil slice.
+} // switch to conn wrapper
+
+// Does a Conn get removed over the LDS lifetime?
+
+func (fcm *FilterChainManager) Conns() []net.Conn { // I think this is it.
+	fcm.connMu.Lock()
+	defer fcm.connMu.Unlock()
+	return fcm.conns
 }
 
 // destPrefixEntry is the value type of the map indexed on destination prefixes.
