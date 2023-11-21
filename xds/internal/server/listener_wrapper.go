@@ -21,7 +21,6 @@
 package server
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -107,8 +106,7 @@ func NewListenerWrapper(params ListenerWrapperParams) (net.Listener, <-chan stru
 
 		mode:        connectivity.ServingModeStarting,
 		closed:      grpcsync.NewEvent(),
-		goodUpdate:  grpcsync.NewEvent(),
-		rdsUpdateCh: make(chan rdsHandlerUpdate, 1),
+		goodUpdate:  grpcsync.NewEvent(), // is this the right thing to trigger serving, a singular good update?
 	}
 	lw.logger = internalgrpclog.NewPrefixLogger(logger, fmt.Sprintf("[xds-server-listener %p] ", lw))
 
@@ -117,13 +115,12 @@ func NewListenerWrapper(params ListenerWrapperParams) (net.Listener, <-chan stru
 	lisAddr := lw.Listener.Addr().String()
 	lw.addr, lw.port, _ = net.SplitHostPort(lisAddr)
 
-	lw.rdsHandler = newRDSHandler(lw.xdsC, lw.logger, lw.rdsUpdateCh)
+	lw.rdsHandler = newRDSHandler(lw, lw.xdsC, lw.logger)
 	lw.cancelWatch = xdsresource.WatchListener(lw.xdsC, lw.name, &ldsWatcher{
 		parent: lw,
 		logger: lw.logger,
 		name:   lw.name,
 	})
-	go lw.run()
 	return lw, lw.goodUpdate.Done()
 }
 
@@ -170,80 +167,43 @@ type listenerWrapper struct {
 	mode connectivity.ServingMode
 	// Filter chains received as part of the last good update.
 	filterChains *xdsresource.FilterChainManager // maybe active filterChains
+	// Data structure to update correct heap memory representing rds
+	// configuration. It's literally a list of filter chains, which do contain a pointer
+	tryThisSlice []xdsresource.FilterChain // honestly, could even have this be part of filter chains...call a func on it...
+
 
 	pendingFilterChains *xdsresource.FilterChainManager // switch to filter chains if ready and set
 
-	// LDS needs to look at cached filter chains...when to clean this up
-	// maybe corresponding entirely to current?
-
-	// on rds update loop through to see which filter chains correspond?
-	// flip this out when switching from pending to current (always overwrites pending)
-
-
-	// when to build pendings []vhswi
-
-	// Can't use filter chain as map type, it's like endpoint map...
-	// new rds update updates all corresponding
-
-	// Core data structure (has lds + rds name)
-	// problem: how to make this filter chain actually be a map key
-	tryThisMap map[xdsresource.FilterChain]*unsafe.Pointer // pointer to a pointer
-
-	// maps from rds name to all the usable vhswi refs
-	tryThisMap2 map[string][]*unsafe.Pointer
-
-	tryThisSlice []xdsresource.FilterChain
-
-	// atomic.StorePtr(val, new val)
-	// unsafe pointer points to *vhswi
-
-	// rds data has a store - updated immedaitely on an lds update
-	// (lds + rds) to construct, where to store this...in a map and in filter chains, I think should be a value type in map
-	// filter chain has a ref to it, need to store rds name in fc in this component
-
-	// finish rds as a store, and call back into this. This should then work
-
 	// Still a ref to rds data (already built out) if rds watcher closed
+	// updateRDS doesn't get called updating fc but rds data is still being
+	// pointed to and used by fc
 
-	// lds update updates route names to watch (requires certain logic)
-	// and also top level fcm becomes pending (I think build out route configs for all?)
-
-	// rds update updates filter chain corresponding (trigger from helper), and also caches it
 
 
 	// rdsHandler is used for any dynamic RDS resources specified in a LDS
 	// update.
-	rdsHandler *rdsHandler // pass it portion of lds that dictates dynamic rds needs...need the logic for lds/data structures
-	// rdsUpdates are the RDS resources received from the management
-	// server, keyed on the RouteName of the RDS resource.
-	rdsUpdates unsafe.Pointer // map[string]xdsclient.RouteConfigUpdate
-	// rdsUpdateCh is a channel for XDSClient RDS updates.
-	rdsUpdateCh chan rdsHandlerUpdate
+	rdsHandler *rdsHandler // accesses to map I think sync - just to build fc data but that's an atomic write to a pointer
 }
 
+// lds update updates route names to watch (requires certain logic)
+// and also top level fcm becomes pending (I think build out route configs for all?)
 func (lw *listenerWrapper) ldsFlow(update xdsresource.ListenerUpdate) {
-	// resourcenotfound switch server into non serving, drain conns
-	ilc := update.InboundListenerCfg
-	ilc.Port
-	ilc.Address // this switches mode into not serving, this is not defined by gRFC
-	ilc.FilterChains // *FilterChainManager
-	ilc.FilterChains.RouteConfigNames // [] route config names, give to rds watcher
-	ilc.FilterChains.Lookup() // what is called on a Conn Accept()
 
 	// map[FilterChain]unsafe.Ptr, where it points to vhswi, usable, how to link
 	// on an accept? Doug wants me to store this in here, maybe have helpers
 	// that get called in the LDS/RDS flow, that write to a map like that
-
+	ilc := update.InboundListenerCfg
 	// new lds and rds need to trigger
 	// if you have already pending filter chains that haven't updated (come sync) (what if an update comes after...check against cancels (persist list of all the cancels from most recent lds)?)
 	// if a pending one hasn't gone active hasn't received all it's config, update watch there so I think this uncondtional write is ok
-
+	// write unconditionally I think...
 	lw.pendingFilterChains = ilc.FilterChains // doesn't race because conn accepts() read active, but not pending (if no active, just close conn right)?
-
-
 	lw.rdsHandler.updateRouteNamesToWatch(ilc.FilterChains.RouteConfigNames) // should that call back?
+	// calls back into this to determine if ready and switch if needed...
 
-	lw.rdsHandler.determineRDSReady() // (or have this below)
+	if lw.rdsHandler.determineRDSReady() { // (or have this below)
+		lw.maybeUpdateFilterChains() // either in this or in if conditioanl check if pending is not nil. Checks in this function call (need to make sure I don't nil panic from conns to close read in test)
+	}
 	// write to pending, always even on first update once it's ready switch to current (need to switch to serving...)
 	// what happens if route names == 0, I think rds handler will take care of this
 }
@@ -254,17 +214,13 @@ func (lw *listenerWrapper) ldsFlow(update xdsresource.ListenerUpdate) {
 //            switch filter chains
 // I think is the correct flow here...
 
-func (lw *listenerWrapper) calledFromRh(rdsName string) {
-	// on an lds update - update all...what triggers build? ("") for rds name
-	//      build all? (if ready)
-	// on an rds update - all fcs that relate to it need to update
-	//      bulild filter chains that point to rds?
+func (lw *listenerWrapper) afterLDSandRDS(rdsName string) { // call unconditionally...
 
-	// Is this operation always correct? I.e. does this actually work?
+	// Is this operation always correct? I.e. does this actually work? test it
 	if lw.rdsHandler.determineRDSReady() { // // bool that determines if rds is ready.
 		// pending -> current, operation involving closing conns (fcms need to keep track of Conn's, also get sync to work)
 		// is closing conns logically "draining" conns?
-		lw.updateFilterChains()
+		lw.maybeUpdateFilterChains()
 	}
 }
 
@@ -279,83 +235,55 @@ func (lw *listenerWrapper) calledFromRh(rdsName string) {
 // build all corresponding usable route configurations
 // This requires a separate data structure ^^^
 
-func (lw *listenerWrapper) updateFilterChains() { // swap operation is correct I think, grab mu give it up, this works...
-	// or accepts a conn here with old config an immediately closes
-	// this is only part of this helper
-	l.mu.Lock() // right mutex, or use the sameeeee as RDS?
+// if rds ready (call unconditionally)...
+func (l *listenerWrapper) maybeUpdateFilterChains() { // swap operation is correct I think, grab mu give it up, this works...
+	if l.pendingFilterChains == nil {
+		// Nothing to update, return early.
+		return
+	}
+	// drain right here, since you know you will swap (this replaces connsToClose)
+
+	// conn either needs to accept and shut down or get new, can't race (related to problem I wrote in listener_wrapper Accept())
+	l.mu.Lock()
+	// "Updates to a Listener cause all older connections on that Listener to be
+	// gracefully shut down with a grace period of 10 minutes for long-lived
+	// RPC's, such that clients will reconnect and have the updated
+	// configuration apply." - A36 Note that this is not the same as moving the
+	// Server's state to ServingModeNotServing. That prevents new connections
+	// from being accepted, whereas here we simply want the clients to reconnect
+	// to get the updated configuration.
+	if l.drainCallback != nil { // graceful close trigger...
+		l.drainCallback(l.Listener.Addr())
+	} // (think about eventual consistency of serving mode state, I think process inline
 
 	// read conns to close? - this needs to persist a list of conns to close
 	// Java gives the FCM a Conn on an accept, this manages the conns and holds a list
 	// close the list from FCM of conns it manages (FCM Conn Manager or something)
-	connsToClose := lw.filterChains.Conns() // switch this to connWrapper, export perhaps. store these conns in the fcm
-	// Write new filter chains:
-	l.filterChains = lw.pendingFilterChains
+	// connsToClose := l.filterChains.Conns() // switch this to connWrapper, export perhaps. store these conns in the fcm
+	// or gracefully close?
+	// called when new lds goes ready
+
+	l.filterChains = l.pendingFilterChains
 	l.mu.Unlock()
-	// right so either gets new filter chain config on conn
 
-	// close conns (perhaps async - sometime in future?)
-	// what data do I eventually need to close?
-	// var connsToClose []connWrapper
-	for _, conn := range connsToClose { // async perhaps?
+	/*for _, conn := range connsToClose { // (perhaps async - sometime in future?)
 
-		// is this Close() a graceful close? (see Drain callback?)
+		// is this Close() a graceful close? (see Drain callback?) rework Drain
+		// callback and also communication/triggering of server states...affects mutex grab
 
 		// This handles cleaning up all the resources of the object, including all of it's state.
 		conn.Close() // you need this, since there is extra memory and things to clean up on top of the net.Conn
-		// conn.virtualHostsFromInlineRDS // cleaned up from the gc no longer pointing to this heap.
-		// conn.
-	}
+	}*/
 
 	// Now where do I store this? and if I do need some sync
 	// Accept() adds to conns to close, this gets called on a new LDS update
 	// sync access in the filter chain manager?
 }
 
-// builds route configuration for all on pending going ready (yeah, and store in pointer
-func buildRouteConfiguration() { // Individual lds + rds build
-
-	var fc xdsresource.FilterChain
-	var rcu xdsresource.RouteConfigUpdate // where do I get these two pieces of data from?
-	vhswi, err := fc.ConstructUsableRouteConfiguration(rcu)
-	if err != nil { // How does this error?
-
-	}
-	vhswi // []VirtualHostWithInterceptors
-
-	// overall map stores map[fc]* -> * (unsafe.Pointer) -> vhswi
-
-}
-
 // rdsUpdate rebuilds any routing configuration server side for any filter
 // chains that point to this RDS.
-func (l *listenerWrapper) rdsUpdate(routeName string, rcu rdsWatcherUpdate) { // The gates to this call from rds handler is what Eric explained to me
-
-	// or access a map of route updates
-	for fc, ptrToPtr := range l.tryThisMap {
-		if fc.RouteConfigName == routeName { // I think this encapsulates all the logic we need wrt inline or not inline
-			// needs to also fail l7 rpcs with err or not
-			// I think make error be nil, if it gets to serving it means that it's
-			// received a configuration at some point (Ignore errors that haven't been
-			// there)
-
-			// if update is set use that (I need to write a test for l7 failures on NACK or resource not found)
-			if rcu.err != nil && rcu.update == nil { // If it calls in will have set one...
-				// stick nil as the value atomically of the route configuration.
-				var vhswi *[]xdsresource.VirtualHostWithInterceptors
-				atomic.StorePointer(ptrToPtr, unsafe.Pointer(vhswi)) // not a nil pointer a pointer of type that points to nil
-				continue
-			}
-
-
-			vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update) // or read from map...needs to not mess with heap
-			if err != nil {
-				// what to do...also what triggers it? should this also cause an error?
-			}
-			// unsafe.Pointer(this is also a poitner) is essentially a typecast
-			atomic.StorePointer(ptrToPtr, unsafe.Pointer(&vhswi)) // unsafe pointer to a pointer, &vhswi is the address (i.e. pointer) to newly construct []vhswi (escapes to heap)
-			// unsafe.Pointer(&vhswi)
-		}
-	}
+func (l *listenerWrapper) rdsUpdate(routeName string, rcu rdsWatcherUpdate) { // Logically sort of a swap.
+	// rds update updates filter chain corresponding (trigger from helper), and also caches it
 
 	// routeName
 	// map[name]->[]xdsresource.FilterChain (this holds the ref to update), points to same vhswi that it gives conn on an accept (that's how it communicates, vh() on conn wrapper)
@@ -363,15 +291,6 @@ func (l *listenerWrapper) rdsUpdate(routeName string, rcu rdsWatcherUpdate) { //
 	// xdsresource.FilterChain already has the rds name and pointer to []vhswi so just need that instead of map (rds updates are not on fast path)
 
 
-	// my map way:
-	for rdsName, usableRouteConfigs := range l.tryThisMap2 {
-		if rdsName == routeName {
-
-			break // no need to continue
-		}
-	}
-
-	// slice way
 	for _, fc := range l.tryThisSlice { // only written to from lds being ready (need to trigger that from here too)
 		if fc.RouteConfigName == routeName { // I think this encapsulates all the logic we need wrt inline or not inline
 			// needs to also fail l7 rpcs with err or not
@@ -381,24 +300,26 @@ func (l *listenerWrapper) rdsUpdate(routeName string, rcu rdsWatcherUpdate) { //
 
 			// if update is set use that (I need to write a test for l7 failures on NACK or resource not found)
 			if rcu.err != nil && rcu.update == nil { // If it calls in will have set one...
-				// stick nil as the value atomically of the route configuration.
+				// stick nil as the value atomically of the route configuration. Will trigger L7 failure
 				var vhswi *[]xdsresource.VirtualHostWithInterceptors
 				// now has pointer
 				atomic.StorePointer(fc.VHS, unsafe.Pointer(vhswi)) // not a nil pointer a pointer of type that points to nil
 				continue
-			}
+			} // could make this helper...
 
 
 			vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update) // or read from map...needs to not mess with heap
 			if err != nil {
 				// what to do...also what triggers it? should this also cause an error?
 			}
-			// unsafe.Pointer(this is also a poitner) is essentially a typecast
 			atomic.StorePointer(fc.VHS, unsafe.Pointer(&vhswi)) // unsafe pointer to a pointer, &vhswi is the address (i.e. pointer) to newly construct []vhswi (escapes to heap)
-			// unsafe.Pointer(&vhswi)
 		}
 	}
+	// RDS Update above could finish RDS tree, and make pending go ready so always do it (at end of rds after persisting, etc.)
 
+	if l.rdsHandler.determineRDSReady() { // (or have this below)
+		l.maybeUpdateFilterChains() // either in this or in if conditioanl check if pending is not nil. Checks in this function call (need to make sure I don't nil panic from conns to close read in test)
+	}
 }
 // triggering swap is more logic I need to work on...
 
@@ -417,71 +338,30 @@ func (l *listenerWrapper) rdsUpdate(routeName string, rcu rdsWatcherUpdate) { //
 // accepted conn has *2 -> *same -> vhswi
 
 // called on a lds going fully ready (I think including the first one, if zero I think isready will determine that, cancels while clearing rds update cache seemsssss to work)
-func (l *listenerWrapper) rebuildFullMap() {
-	// clear old map
-	l.tryThisMap // wraps pointers to data, so ok to write to
 
-	// Construct this on l creation too
+// Another thing is the inverse of what Mark wrote as places it goes ready
+// trigger serving change once lds goes ready, automatically trigger all the time switch to READY?
+func (l *listenerWrapper) instantiateFilterChainRoutingConfiguration() { // instantiateFilterChainRoutingConfiguration to instantiate fcs rcu, loops through slice (either builds using inline or dynamic rds data)
 
-	// Doug can help in 1:1 next week oh he's out
-	// TODO: persist conns in this filter chain (export wrapped conn?) needs to clean up resources
-	// filterchains() []FilterChain method?
-	// could I persist in a map
-	// filter chains in fcm could be:
-	// (fc: pointer) and do it in fcm? or method on fcm
-	// No need to translate fc chosen for an accepted conn ->
-	// do it in fcm, and return an atomic Ref to rds as well
-	// would need to forward route update to fcm (it persists map)
-	// somewhere persist fc -> usable to rebuild on rds
-	// also persist tree like structure to accept a filter chain
-	// (fc, rds pointer) in both tree and map
-	// when you recreate atomic ref in fc, new rds just needs to write to the right part of this heap
-	// just needs to map by route name to same, map doesn't need to be looked in other than route name (fcs per route name perhaps)?
-
-	// return a ref to usable heap from Accept()
-	// <-rds comes in knows where to rebuild heap
-
-	// l.filterChains.
-
-	// this map is one to one with serving fcs
-	// when it Accepts a Conn I think need to point to this pointer...
-	l.tryThisMap = make(map[xdsresource.FilterChain]*unsafe.Pointer) // "throw those refs away, garbage collection"
-	// based off pending (or current lds data)
-	// reconstruct this map
-	var fcs []xdsresource.FilterChain
-	// as you build out fcm, store a []filterchain to return
-	for fc := range l.filterChains.FilterChains() { // Figure out how to get all the filter chains from this structure and also how to use as a map key.
-
-	}
-	for _, fc := range fcs {
-		fc.RouteConfigName // use this to index into a map[routeName]->rdsData
-		// only fcm needs a lock (I think is sync with others)
-		rcu := l.rdsHandler.updates[fc.RouteConfigName]
-		// rebuild
-		// lds + rds
-		// if update is set use that (I need to write a test for l7 failures on NACK or resource not found)
-		if rcu.err != nil && rcu.update == nil { // If it calls in will have set one...
-			// stick nil as the value atomically of the route configuration.
-			var vhswi *[]xdsresource.VirtualHostWithInterceptors
-			atomic.StorePointer(ptrToPtr, unsafe.Pointer(vhswi)) // not a nil pointer a pointer of type that points to nil
+	// So swap call this operation? Whenever we have a new current I think, 1:1 with tryThisSlice...
+	// this slice is one to one with serving fcs
+	// "throw those refs away, garbage collection" (give up ref in fcm too)
+	// New Full Map
+	l.tryThisSlice = nil // zero this out, only read on an rds update, which is sync (this just stores pointers to synced memory, so no issue here)
+	for _, fc := range l.filterChains.FilterChains() {
+		// could alsooooo make this is a pointer if I wanted
+		l.tryThisSlice = append(l.tryThisSlice, *fc) // can update nil...I think pointing to same fc in memory is fine, never gets updated
+		if fc.InlineRouteConfig != nil {
+			vhswi, err := fc.ConstructUsableRouteConfiguration(*fc.InlineRouteConfig)
+			if err != nil { // This really shouldn't happen, but how to handle errors in this case?
+				// error combining lds and rds, fail at l7 level? Is this right?
+			}
+			uPtr := unsafe.Pointer(&vhswi)
+			atomic.StorePointer(fc.VHS, uPtr)
 			continue
 		}
-		// does this deref cause any problems?
-		vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update) // or this a can error, need to reflect that //)
-		if err != nil {
-			// what to do in this case?
-		}
-		uPtr := unsafe.Pointer(&vhswi) // address of slice?
-		l.tryThisMap[fc] = &uPtr // this right here is when map gets built out
-	}
-
-	// New Full Map
-	l.tryThisSlice = nil // zero this out, only read on an rds update, which is sync
-	for _, fc := range fcs {
-		// fc.RouteConfigName // string
-		// fc.VHS // pointer to pointer to update
-		rcu := l.rdsHandler.updates[fc.RouteConfigName] // fcs pointer to this pointer, and also conn's local var pointing to this pointer, atomically accessed
-		if rcu.err != nil && rcu.update == nil { // If it calls in will have set one...
+		rcu := l.rdsHandler.updates[fc.RouteConfigName]
+		if rcu.err != nil && rcu.update == nil {
 			// stick nil as the value atomically of the route configuration.
 			var vhswi *[]xdsresource.VirtualHostWithInterceptors
 			atomic.StorePointer(fc.VHS, unsafe.Pointer(vhswi)) // not a nil pointer a pointer of type that points to nil
@@ -495,13 +375,17 @@ func (l *listenerWrapper) rebuildFullMap() {
 		atomic.StorePointer(fc.VHS, uPtr)
 		// build config and also construct this slice to persist for rds data (simplicity vs. pure 0(n) efficiency)
 		// I don't need to persist anything with respect to route names
-		l.tryThisSlice = append(l.tryThisSlice, fc) // can update nil...I think pointing to same fc in memory is fine, never gets updated
 	}
 }
+// try and get these 5 files done (cleanup and see if logic makes sense)
+
+// Will have to change the interface to server for mode changes for
+// a. switching to ready in certain cases (and staying ready)
+// b. logging l7 error server side
 
 // Accept blocks on an Accept() on the underlying listener, and wraps the
 // returned net.connWrapper with the configured certificate providers.
-func (l *listenerWrapper) Accept() (net.Conn, error) {
+func (l *listenerWrapper) Accept() (net.Conn, error) { // this is ran in a go func async go server.Serve
 	var retries int
 	for {
 		conn, err := l.Listener.Accept()
@@ -540,8 +424,8 @@ func (l *listenerWrapper) Accept() (net.Conn, error) {
 			// us to stop serving.
 			return nil, fmt.Errorf("received connection with non-TCP address (local: %T, remote %T)", conn.LocalAddr(), conn.RemoteAddr())
 		}
-
-		l.mu.RLock()
+		// It's when it gets persisted on server
+		l.mu.RLock() // Make sure this doesn't cause deadlock...needs to protect whole conn accept...acutally I think this is good it's just what you wrap conn with
 		if l.mode == connectivity.ServingModeNotServing {
 			// Close connections as soon as we accept them when we are in
 			// "not-serving" mode. Since we accept a net.Listener from the user
@@ -553,6 +437,12 @@ func (l *listenerWrapper) Accept() (net.Conn, error) {
 			conn.Close()
 			continue
 		}
+
+
+		// dependening on how I do mode switch..
+		// l.mu.RLock() can do this here...since mode doens't need to protected, accept and lds going ready I think
+		// can happen concurrently or is there happens before relationship here?
+
 		// after the error case, need to keep track of Conns
 		fc, err := l.filterChains.Lookup(xdsresource.FilterChainLookupParams{
 			IsUnspecifiedListener: l.isUnspecifiedAddr,
@@ -560,8 +450,8 @@ func (l *listenerWrapper) Accept() (net.Conn, error) {
 			SourceAddr:            srcAddr.IP,
 			SourcePort:            srcAddr.Port,
 		})
-		l.mu.RUnlock()
 		if err != nil {
+			l.mu.RUnlock()
 			// When a matching filter chain is not found, we close the
 			// connection right away, but do not return an error back to
 			// `grpc.Serve()` from where this Accept() was invoked. Returning an
@@ -574,41 +464,6 @@ func (l *listenerWrapper) Accept() (net.Conn, error) {
 			// therefore ends up blocking all connection attempts during that
 			// time frame, which is also not ideal for an error like this.
 			l.logger.Warningf("Connection from %s to %s failed to find any matching filter chain", conn.RemoteAddr().String(), conn.LocalAddr().String())
-			conn.Close()
-			continue
-		}
-
-
-
-
-
-		// rds is already handled
-		var rc xdsresource.RouteConfigUpdate
-		if fc.InlineRouteConfig != nil {
-			rc = *fc.InlineRouteConfig
-		} else {
-			rcPtr := atomic.LoadPointer(&l.rdsUpdates)
-			rcuPtr := (*map[string]xdsresource.RouteConfigUpdate)(rcPtr)
-			// This shouldn't happen, but this error protects against a panic.
-			if rcuPtr == nil {
-				return nil, errors.New("route configuration pointer is nil")
-			}
-			rcu := *rcuPtr
-			rc = rcu[fc.RouteConfigName]
-		}
-		// The filter chain will construct a usuable route table on each
-		// connection accept. This is done because preinstantiating every route
-		// table before it is needed for a connection would potentially lead to
-		// a lot of cpu time and memory allocated for route tables that will
-		// never be used. There was also a thought to cache this configuration,
-		// and reuse it for the next accepted connection. However, this would
-		// lead to a lot of code complexity (RDS Updates for a given route name
-		// can come it at any time), and connections aren't accepted too often,
-		// so this reinstantation of the Route Configuration is an acceptable
-		// tradeoff for simplicity.
-		vhswi, err := fc.ConstructUsableRouteConfiguration(rc)
-		if err != nil {
-			l.logger.Warningf("Failed to construct usable route configuration: %v", err)
 			conn.Close()
 			continue
 		}
@@ -630,27 +485,18 @@ func (l *listenerWrapper) Accept() (net.Conn, error) {
 		// active fcm 1:1
 		// needs to know the *ref* to update from an rds update
 
+		cw := &connWrapper{Conn: conn, filterChain: fc, parent: l, vhs: fc.VHS}
 
+		//l.filterChains.AddConn(cw)
 
-		// gets a filter chain from manager, look into map for unsafe.Pointer
-		// I don't know if this linkage will work properly...
-		uPtrPtr, ok := l.tryThisMap[fc]
-		if !ok {
-			// Shouldn't happen, already built out
-		}
-
-
-
-
-
-		cw := &connWrapper{Conn: conn, filterChain: fc, parent: l, virtualHosts: vhswi, vhs: uPtrPtr}
-
-		l.filterChains.AddConn(cw) // need to pass this a ConnWrapper, and also this should be in mutex grab with swap (protect this whole operation?)
-
-		// give this conn wrapper a *unsafe.Pointer that reads atomically on VirtualHosts()
+		// do a
+		l.mu.RUnlock()
 		return cw, nil
 	}
-}
+} // Argh...not sync with drain callback and update **write** because drain callback touches map that gets written to
+// after this accept returns, and after it wraps in server transport...
+
+// need server transport ref to gracefully close
 
 // Close closes the underlying listener. It also cancels the xDS watch
 // registered in Serve() and closes any certificate provider instances created
@@ -663,41 +509,6 @@ func (l *listenerWrapper) Close() error {
 	}
 	l.rdsHandler.close()
 	return nil
-}
-
-// run is a long running goroutine which handles all xds updates. LDS and RDS
-// push updates onto a channel which is read and acted upon from this goroutine.
-func (l *listenerWrapper) run() {
-	for {
-		select {
-		case <-l.closed.Done():
-			return
-		case u := <-l.rdsUpdateCh:
-			l.handleRDSUpdate(u)
-		}
-	}
-}
-
-// handleRDSUpdate handles a full rds update from rds handler. On a successful
-// update, the server will switch to ServingModeServing as the full
-// configuration (both LDS and RDS) has been received.
-func (l *listenerWrapper) handleRDSUpdate(update rdsHandlerUpdate) {
-	if l.closed.HasFired() {
-		l.logger.Warningf("RDS received update: %v with error: %v, after listener was closed", update.updates, update.err)
-		return
-	}
-	if update.err != nil {
-		if xdsresource.ErrType(update.err) == xdsresource.ErrorTypeResourceNotFound {
-			l.switchMode(nil, connectivity.ServingModeNotServing, update.err)
-		}
-		// For errors which are anything other than "resource-not-found", we
-		// continue to use the old configuration.
-		return
-	}
-	atomic.StorePointer(&l.rdsUpdates, unsafe.Pointer(&update.updates))
-
-	l.switchMode(l.filterChains, connectivity.ServingModeServing, nil)
-	l.goodUpdate.Fire()
 }
 
 func (l *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
@@ -761,6 +572,24 @@ func (l *listenerWrapper) switchMode(fcs *xdsresource.FilterChainManager, newMod
 	}
 }
 
+func (l *listenerWrapper) switchMode2(newMode connectivity.ServingMode, err error) {
+	// can only trigger sync with xDS, races with new conns and RPC's coming in though
+	l.mu.Lock() // don't need this I think...
+	defer l.mu.Unlock()
+
+	// It also persists the mode...does this still need to happen?
+	// the callback calls and puts on a channel
+
+	if l.modeCallbacķ != nil {
+		l.modeCallback(l.Listener.Addr(), newMode, err) // what the fuck...what behavior does this initiate...also drain server transports?
+	}
+}
+
+func (l *listenerWrapper) drain() {
+	// trigger this on a switch
+	l.drainCallback(l.Listener.Addr()) // drains server transports, persists it
+}
+
 // ldsWatcher implements the xdsresource.ListenerWatcher interface and is
 // passed to the WatchListener API.
 type ldsWatcher struct {
@@ -778,7 +607,14 @@ func (lw *ldsWatcher) OnUpdate(update *xdsresource.ListenerResourceData) {
 		lw.logger.Infof("LDS watch for resource %q received update: %#v", lw.name, update.Resource)
 	}
 	lw.parent.handleLDSUpdate(update.Resource)
+	lw.parent.ldsFlow(update.Resource) // is this guaranteed to not be nil?
 }
+
+// list out what Mark said here for resource not found...
+
+// We are in NOT_SERVING in two cases: (1) before we get the initial LDS
+// resource and its RDS dependencies, and (2) if we get a does-not-exist for the
+// LDS resource.
 
 func (lw *ldsWatcher) OnError(err error) {
 	if lw.parent.closed.HasFired() {
@@ -790,7 +626,7 @@ func (lw *ldsWatcher) OnError(err error) {
 	}
 	// For errors which are anything other than "resource-not-found", we
 	// continue to use the old configuration.
-}
+} // I think this is right
 
 func (lw *ldsWatcher) OnResourceDoesNotExist() {
 	if lw.parent.closed.HasFired() {
@@ -800,6 +636,14 @@ func (lw *ldsWatcher) OnResourceDoesNotExist() {
 	if lw.logger.V(2) {
 		lw.logger.Infof("LDS watch for resource %q reported resource-does-not-exist error: %v", lw.name)
 	}
+	// should this clear out all the lds state including active filter chains?
+
+	// and also all the rds state...update watchers to no watchers...
+
+	// what happens here? Mark listed out when to get to certain server states...
 	err := xdsresource.NewErrorf(xdsresource.ErrorTypeResourceNotFound, "resource name %q of type Listener not found in received response", lw.name)
 	lw.parent.switchMode(nil, connectivity.ServingModeNotServing, err)
-}
+} // switch mode api change? Any other behaviors need to happen?
+
+// graceful close or strong close? But is there even really a different
+// what happens when you switch mode?

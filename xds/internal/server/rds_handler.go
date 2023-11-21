@@ -19,22 +19,24 @@
 package server
 
 import (
-	"sync"
-
 	igrpclog "google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 )
 
+
 // rdsHandlerUpdate wraps the full RouteConfigUpdate that are dynamically
 // queried for a given server side listener.
-type rdsHandlerUpdate struct {
+/*type rdsHandlerUpdate struct {
 	// map from routeName to rds update/error
 	// If not written in this map, no RDS update for that route name yet.
 	// If update set, use that as valid route configuration for RDS,
 	// otherwise treat as an error case an fail at L7 level.
 	updates map[string]xdsresource.RouteConfigUpdate
 	err     error
-}
+}*/
+
+
+// Will need to rewrite any unit tests to any interface I define
 
 // rdsHandler handles any RDS queries that need to be started for a given server
 // side listeners Filter Chains (i.e. not inline).
@@ -42,28 +44,25 @@ type rdsHandler struct {
 	xdsC   XDSClient
 	logger *igrpclog.PrefixLogger
 
-	mu      sync.Mutex // I don't know you still need this now that everything is sync
-	// map from routeName to rds update
-	// If not written in this map, no RDS update for that route name yet.
-	// If update set, use that as valid route configuration for RDS,
-	// otherwise treat as an error case an fail at L7 level.
+	parent *listenerWrapper
+
+	// updates is a map from routeName to rds update, including RDS resources
+	// and any errors received. If not written in this map, no RDS update for
+	// that route name yet. If update set in value, use that as valid route
+	// configuration for RDS, otherwise treat as an error case and fail at L7
+	// level.
 	updates map[string]rdsWatcherUpdate
 	cancels map[string]func()
-
-	// For a rdsHandler update, the only update wrapped listener cares about is
-	// most recent one, so this channel will be opportunistically drained before
-	// sending any new updates.
-	updateChannel chan rdsHandlerUpdate
 }
 
 // newRDSHandler creates a new rdsHandler to watch for RDS resources.
 // listenerWrapper updates the list of route names to watch by calling
 // updateRouteNamesToWatch() upon receipt of new Listener configuration.
-func newRDSHandler(xdsC XDSClient, logger *igrpclog.PrefixLogger, ch chan rdsHandlerUpdate) *rdsHandler {
+func newRDSHandler(lw *listenerWrapper, xdsC XDSClient, logger *igrpclog.PrefixLogger) *rdsHandler {
 	return &rdsHandler{
 		xdsC:          xdsC,
 		logger:        logger,
-		updateChannel: ch,
+		parent:        lw,
 		updates:       make(map[string]rdsWatcherUpdate),
 		cancels:       make(map[string]func()),
 	}
@@ -74,8 +73,6 @@ func newRDSHandler(xdsC XDSClient, logger *igrpclog.PrefixLogger, ch chan rdsHan
 // This function handles all the logic with respect to any routes that may have
 // been added or deleted as compared to what was previously present.
 func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool) {
-	rh.mu.Lock()
-	defer rh.mu.Unlock()
 	// Add and start watches for any routes for any new routes in
 	// routeNamesToWatch.
 	for routeName := range routeNamesToWatch {
@@ -98,17 +95,14 @@ func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool)
 		}
 	}
 
-	// If the full list (determined by length) of updates are now successfully
-	// updated, the listener is ready to be updated.
-	/*if len(rh.updates) == len(rh.cancels) && len(routeNamesToWatch) != 0 {
-		drainAndPush(rh.updateChannel, rdsHandlerUpdate{updates: rh.updates})
-	}*/
-	// determineRDSReady, or maybe call into lw operation
 
-	// Do I want lw to have that pending to current operation on check if ready
-	// if pending (written at beginning of handleLDS)
-	//		checkIfReady
-	//             call helper operation I've always thought about
+	// chose to do this logic in lis wrapper
+	// (lds flow)
+	// if
+	// rh.determineRDSReady() // bool, either call at the end of this function or the end of lds processing in listener wrapper
+	// 			swap
+
+	// I don't like route names left to watch like Java, I like using length of rds cancels...
 
 
 
@@ -118,20 +112,22 @@ func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool)
 // and we cache updates from RDS (handleRouteUpdate) and determines READY or not
 // LDS ^^^, can be ready after updating (zero always triggers ready, does it need to go through this component)
 
-
-// determines if all dynamic RDS has received configuration
-func (rh *rdsHandler) determineRDSReady() bool { // I think this is right, maybe trigger swap if pending is set
+// determines if all dynamic RDS has received configuration.
+func (rh *rdsHandler) determineRDSReady() bool {
 	// master handles the edge case where length is zero, does this need to account for it as well?
-	return len(rh.updates) == len(rh.cancels) // when to call this?
+	return len(rh.updates) == len(rh.cancels)
+
 	// either return and read bool or signal or signal by calling func on listener wrapper
+	// no caller itself triggers swap() from this bool
+
 }
 
-// RDS VVV, can make a pending ready,
 func (rh *rdsHandler) handleRouteUpdate(routeName string, update rdsWatcherUpdate) {
-	rh.mu.Lock()
-	defer rh.mu.Unlock() // I don't think you need this anymore since sync...
-	// Usable route configuration from LDS + RDS is what gets atomically pointed to. In higher level
-	rwu, ok := rh.updates[routeName] // this just persists rdsWatcherUpdate which can be ok or err (need to plumb err)
+	// Usable route configuration from LDS + RDS is what gets atomically pointed
+	// to. In higher level, this just persists route watches, determines ready,
+	// and serves as a cache
+
+	rwu, ok := rh.updates[routeName] // caches it here, should it cache at lower layer?
 	if !ok {
 		// Or is this already the zero value?
 		rwu = rdsWatcherUpdate{}
@@ -146,7 +142,7 @@ func (rh *rdsHandler) handleRouteUpdate(routeName string, update rdsWatcherUpdat
 		}
 		// Write error.
 		rwu.err = update.err
-	} else { // either one or the other
+	} else {
 		rwu.update = update.update
 	}
 	rh.updates[routeName] = rwu
@@ -158,20 +154,21 @@ func (rh *rdsHandler) handleRouteUpdate(routeName string, update rdsWatcherUpdat
 	// and do that dance with locking and closing (need to persist Conns in FCM)
 	// that can race with a Conn Accept()
 
+	rh.parent.rdsUpdate(routeName, rwu) // pass it data, persist it just for new lds to rebuild...
+	// Chose to do this updating logic in listener wrapper
 	// Also check if pending is ready?
-	rh.determineRDSReady() // bool represents all dynamic RDS is ready, should this signal?
-} // send a draft pr saying this is just representing error case properly.
+	// rh.determineRDSReady() // bool represents all dynamic RDS is ready, should this signal?
+	//          swap
+	// rh.lw.swap() // I think ok to call this...lds and rds both can cause it to go ready and need to swap()
+}
 
 // needs to communicate to lw that pending is ready, is the determine rds ready by cancels ok here?
 
-// Java constructs rds names to watch and once that goes to zero signals (I think maybe only signal once)
 
 // close() is meant to be called by wrapped listener when the wrapped listener
 // is closed, and it cleans up resources by canceling all the active RDS
 // watches.
 func (rh *rdsHandler) close() {
-	rh.mu.Lock()
-	defer rh.mu.Unlock()
 	for _, cancel := range rh.cancels {
 		cancel()
 	}
@@ -194,6 +191,7 @@ func (rw *rdsWatcher) OnUpdate(update *xdsresource.RouteConfigResourceData) {
 	if rw.logger.V(2) {
 		rw.logger.Infof("RDS watch for resource %q received update: %#v", rw.routeName, update.Resource)
 	}
+	// Should it cache it at this object level? I don't thin so higher layer already persists all the possible options...
 	rw.parent.handleRouteUpdate(rw.routeName, rdsWatcherUpdate{
 		update: &update.Resource, // does this cause any problems wrt pointing to same heap memory?
 	})
@@ -207,10 +205,6 @@ func (rw *rdsWatcher) OnError(err error) {
 		err: err, // Can I send nil route update to represent error
 	})
 }
-
-// Valid update
-// Error update
-// Hasn't received (Java does this by route names to watch)
 
 func (rw *rdsWatcher) OnResourceDoesNotExist() {
 	if rw.logger.V(2) {

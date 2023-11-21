@@ -59,6 +59,12 @@ var (
 	logger                = grpclog.Component("xds")
 )
 
+// but also trigger graceful drain on transport (goaway etc.) *when a new lds goes ready*
+// Eventual consistency for serving mode...? Ready Not Ready Ready...does this give right behavior? (process drain sync...) from lds
+
+// graceful drain and drops port on not serving serving -> not serving switches
+// accept and close orthogonal to going ready is correct
+
 // grpcServer contains methods from grpc.Server which are used by the
 // GRPCServer type here. This is useful for overriding in unit tests.
 type grpcServer interface {
@@ -238,13 +244,13 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 		XDSCredsInUse:        s.xdsCredsInUse,
 		XDSClient:            s.xdsC,
 		ModeCallback: func(addr net.Addr, mode connectivity.ServingMode, err error) {
-			modeUpdateCh.Put(&modeChangeArgs{
+			modeUpdateCh.Put(&modeChangeArgs{ // change this communication
 				addr: addr,
 				mode: mode,
 				err:  err,
 			})
 		},
-		DrainCallback: func(addr net.Addr) {
+		DrainCallback: func(addr net.Addr) { // Drain's the transports, where does the conn transport is wrapped in get closed?
 			if gs, ok := s.gs.(*grpc.Server); ok {
 				drainServerTransports(gs, addr.String())
 			}
@@ -282,7 +288,7 @@ func (s *GRPCServer) handleServingModeChanges(updateCh *buffer.Unbounded) {
 		select {
 		case <-s.quit.Done():
 			return
-		case u, ok := <-updateCh.Get():
+		case u, ok := <-updateCh.Get(): // handles serving mode changes here, drainServerTransports might be what I want here...
 			if !ok {
 				return
 			}
@@ -296,9 +302,11 @@ func (s *GRPCServer) handleServingModeChanges(updateCh *buffer.Unbounded) {
 				// implementation for internal.GetServerCredentials, and allows
 				// us to use a fake gRPC server in tests.
 				if gs, ok := s.gs.(*grpc.Server); ok {
-					drainServerTransports(gs, args.addr.String())
+					drainServerTransports(gs, args.addr.String()) // keep this
 				}
 			}
+
+			// lds triggering non serving, also l7 failures...
 
 			// The XdsServer API will allow applications to register a "serving state"
 			// callback to be invoked when the server begins serving and when the
@@ -341,61 +349,14 @@ func (s *GRPCServer) GracefulStop() {
 // Filters configured.
 func routeAndProcess(ctx context.Context) error {
 	conn := transport.GetConnection(ctx)
-	// Data structure that needs to be stored/passed around * -> * -> vhswi
-	// vhs map
-	// references are route are mutable
-
-	// xDS Server wrapper is where watchers are
-	// keyed by filter chain
-	// updateRDSRoutingConfig...map[fc] -> atomic.Reference server routing config (rds info)
-	// loop through values to see if references route name
-	// map[fc] -> mutable reference
-	// updateSelector (LDS including all filter chains)
-	// 		clear out old map
-	//		not updating rds information (connections)
-	// rds update: Update the ref
-	// lds update: maybe Update -> once you get last route config (clear out old listener data on Update)
-
-	// One data structure [rdsName]->it's state (updated or not, some other data), act immeadielty on lds update
-	// 			list[rdsData] still waiting for
-	//          if empty swap immeadietly
-	//          cancel old routes
-
-	// New lds: update
-	// 			on ready: update data structures
-
-	// data structure on current:
-	//     current lds (scaled down rds)
-
-	// new listener starts watches (on data plane state)
-	//        new rds -> doesn't update any state
-	//        update the old references (in the data plane), uses old filter chain with new rds (same as no new lis update)
-	//        deleted canceled watches
-
-	// once all routes have been loaded
-	//        throw away references in data plane
-	//        rebuild map
-
-	// loops through knows rds name, builds it on rds update
-	// map[filterChain] atomic.Reference(RDS)
-	// live working RDS Data
-
-	// once you get last route waiting on
-	// swap in new listener
-	// throw away all entries, recreate map
-	// loop through listener data to create entries in map (recreate map)
-
-	// current map for most recent results for rds
-
-
 	cw, ok := conn.(interface {
-		VirtualHosts() []xdsresource.VirtualHostWithInterceptors // I have this in my other pr, this read's the atomic pointer
+		VirtualHosts() []xdsresource.VirtualHostWithInterceptors
 	})
 	if !ok {
 		return errors.New("missing virtual hosts in incoming context")
 	}
 
-	vhs := cw.VirtualHosts()
+	vhs := cw.VirtualHosts() // This needs to log an error somehow for debuggability
 	if vhs == nil { // Error out at routing l7 level, represents an nack before usable route configuration or resource not found.
 		return status.Error(codes.Unavailable, "error from xDS configuration for matched route configuration")
 	}

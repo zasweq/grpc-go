@@ -40,7 +40,7 @@ import (
 //  2. Implements the XDSHandshakeInfo() method used by the xdsCredentials to
 //     retrieve the configured certificate providers.
 //  3. xDS filter_chain matching logic to select appropriate security
-//     configuration for the incoming connection.
+//     configuration for the incoming connection. (This comment no longer makes sense...)
 type connWrapper struct {
 	net.Conn
 
@@ -63,33 +63,28 @@ type connWrapper struct {
 
 	// The virtual hosts with matchable routes and instantiated HTTP Filters per
 	// route.
-	virtualHosts []xdsresource.VirtualHostWithInterceptors
-
-	vhs *unsafe.Pointer
-}
-
-// VirtualHosts returns the virtual hosts to be used for server side routing.
-func (c *connWrapper) VirtualHosts() []xdsresource.VirtualHostWithInterceptors {
-	return c.virtualHosts
+	vhs *unsafe.Pointer // *([]xdsresource.VirtualHostWithInterceptors)
 }
 
 // VirtualHosts returns the virtual hosts to be used for server side routing. If
 // returns nil, RDS configuration is an error from xDS Client fail any RPC's at
 // L7 with status code UNAVAILABLE (where to log for server side debugging ?)
-func (c *connWrapper) VirtualHosts2() []xdsresource.VirtualHostWithInterceptors { // yesterday plumbed VirtualHosts and L7 error conditions through the stack (rdsHandler -> lisWrapper -> Accept() -> Server using this Conn)
+func (c *connWrapper) VirtualHosts() []xdsresource.VirtualHostWithInterceptors { // yesterday plumbed VirtualHosts and L7 error conditions through the stack (rdsHandler -> lisWrapper -> Accept() -> Server using this Conn)
 	// two possible states: error at l7 level
 	// or ok
 	// atomically load pointer
 	uPtr := atomic.LoadPointer(c.vhs)
-	wow := *(*[]xdsresource.VirtualHostWithInterceptors)(uPtr) // either a pointer to an array or not
+	/*wow := *(*[]xdsresource.VirtualHostWithInterceptors)(uPtr) // either a pointer to an array or not (err vs. successful)
 
 	// also needs to represent an error state...maybe if set to nil
 	// if points to nil { ? what's correct conditional here
 	//       insert something that fails rpcs with UNAVAILABLE
 	// }
-	if wow == nil {
+	if wow == nil { // can this communicate an error somehow? scale nil to an error somehow
 		return wow
-	}
+	}*/
+
+	// return unconditionally - will be nil or something usable...
 
 	// * deref, either nil or an actual slice
 	return *(*[]xdsresource.VirtualHostWithInterceptors)(uPtr) // or wow
@@ -160,7 +155,7 @@ func (c *connWrapper) XDSHandshakeInfo() (*xdsinternal.HandshakeInfo, error) {
 }
 
 // Close closes the providers and the underlying connection.
-func (c *connWrapper) Close() error {
+func (c *connWrapper) Close() error { // Doesn't look graceful to me? Close the Conn but not the transport wrapping...?
 	if c.identityProvider != nil {
 		c.identityProvider.Close()
 	}

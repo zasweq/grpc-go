@@ -21,17 +21,17 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"sync"
 	"unsafe"
+
+	"google.golang.org/grpc/internal/resolver"
+	"google.golang.org/grpc/xds/internal/httpfilter"
+	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 
 	v3listenerpb "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	v3httppb "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	v3tlspb "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
-	"google.golang.org/grpc/internal/resolver"
-	"google.golang.org/grpc/xds/internal/httpfilter"
-	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 )
 
 const (
@@ -70,9 +70,9 @@ type FilterChain struct {
 	InlineRouteConfig *RouteConfigUpdate
 
 
+	// when to build with inline...just do this once you build out map (slice is fine, Java map uses ref count)
 
-
-	VHS *unsafe.Pointer // what must this be initialized with?
+	VHS *unsafe.Pointer // *([]VirtualHostWithInterceptors)
 }
 
 // VirtualHostWithInterceptors captures information present in a VirtualHost
@@ -201,30 +201,24 @@ type FilterChainManager struct {
 
 	def *FilterChain // Default filter chain, if specified.
 
+	// ordering doesn't matter here...
+	fcs []*FilterChain
+
 	// RouteConfigNames are the route configuration names which need to be
 	// dynamically queried for RDS Configuration for any FilterChains which
 	// specify to load RDS Configuration dynamically.
 	RouteConfigNames map[string]bool
-
-	connMu sync.Mutex // what do I really need this for?
-	// Should I move this out? it's internal so perhaps export...
-	conns []net.Conn // switch to conn wrapper
+	// THe conns
+	conns []net.Conn
 }
-
-// or do this as part of Lookup() which gives a fc, rather than ConnParams give it a conn and derive from that
+/*
 func (fcm *FilterChainManager) AddConn(conn net.Conn) {
-	fcm.connMu.Lock()
-	defer fcm.connMu.Unlock()
-	fcm.conns = append(fcm.conns, conn) // Can append to a nil slice.
-} // switch to conn wrapper
-
-// Does a Conn get removed over the LDS lifetime?
-
-func (fcm *FilterChainManager) Conns() []net.Conn { // I think this is it.
-	fcm.connMu.Lock()
-	defer fcm.connMu.Unlock()
-	return fcm.conns
+	fcm.conns = append(fcm.conns, conn)
 }
+
+func (fcm *FilterChainManager) Conns() []net.Conn {
+	return fcm.conns
+}*/
 
 // destPrefixEntry is the value type of the map indexed on destination prefixes.
 type destPrefixEntry struct {
@@ -271,7 +265,7 @@ type sourcePrefixEntry struct {
 //
 // This function is only exported so that tests outside of this package can
 // create a FilterChainManager.
-func NewFilterChainManager(lis *v3listenerpb.Listener) (*FilterChainManager, error) {
+func NewFilterChainManager(lis *v3listenerpb.Listener) (*FilterChainManager, error) { // Constructed from lis...I already scaled up the fc object in both sceanrios...[]fcs add a ref to usable route config for pointer, to write to same heap, messes with tree and also slice built out from this stored in lw
 	// Parse all the filter chains and build the internal data structures.
 	fci := &FilterChainManager{
 		dstPrefixMap:     make(map[string]*destPrefixEntry),
@@ -310,6 +304,7 @@ func NewFilterChainManager(lis *v3listenerpb.Listener) (*FilterChainManager, err
 		}
 	}
 	fci.def = def
+	fci.fcs = append(fci.fcs, def)
 
 	// If there are no supported filter chains and no default filter chain, we
 	// fail here. This will call the Listener resource to be NACK'ed.
@@ -500,6 +495,7 @@ func (fci *FilterChainManager) addFilterChainsForSourcePorts(srcEntry *sourcePre
 			return errors.New("multiple filter chains with overlapping matching rules are defined")
 		}
 		srcEntry.srcPortMap[0] = fc
+		fci.fcs = append(fci.fcs, fc)
 		return nil
 	}
 	for _, port := range srcPorts {
@@ -508,7 +504,12 @@ func (fci *FilterChainManager) addFilterChainsForSourcePorts(srcEntry *sourcePre
 		}
 		srcEntry.srcPortMap[port] = fc
 	}
+	fci.fcs = append(fci.fcs, fc)
 	return nil
+}
+
+func (fci *FilterChainManager) FilterChains() []*FilterChain {
+	return fci.fcs
 }
 
 // filterChainFromProto extracts the relevant information from the FilterChain
@@ -595,7 +596,11 @@ func (fci *FilterChainManager) Validate(f func(fc *FilterChain) error) error {
 }
 
 func processNetworkFilters(filters []*v3listenerpb.Filter) (*FilterChain, error) {
-	filterChain := &FilterChain{}
+	var vhswi *[]VirtualHostWithInterceptors
+	uPtr := unsafe.Pointer(vhswi)
+	filterChain := &FilterChain{
+		VHS: &uPtr,
+	}
 	seenNames := make(map[string]bool, len(filters))
 	seenHCM := false
 	for _, filter := range filters {

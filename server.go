@@ -940,7 +940,7 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 
 func (s *Server) drainServerTransports(addr string) {
 	s.mu.Lock()
-	conns := s.conns[addr]
+	conns := s.conns[addr] // does it for an addr...If this happens sync I honestly think this works, since the addr will change later...
 	for st := range conns {
 		st.Drain("")
 	}
