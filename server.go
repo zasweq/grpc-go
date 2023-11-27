@@ -929,7 +929,7 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 		return
 	}
 
-	if cc, ok := rawConn.(CallbackConn); !ok {
+	if cc, ok := rawConn.(transport.CallbackConn); !ok {
 		cc.Callback(st)
 	}
 
@@ -942,10 +942,6 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 	}()
 }
 
-// move this type to internal or somehting
-type CallbackConn interface {
-	Callback(transport.ServerTransport)
-}
 
 // get rid of this...don't need this anymore
 func (s *Server) drainServerTransports(addr string) {

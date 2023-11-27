@@ -208,10 +208,6 @@ func (c *connWrapper) drain() {
 	}
 }
 
-// in fcm on close:
-// grab conns
-//       conn.(connWrapper).drain()
-
 
 
 // Close closes the providers and the underlying connection.

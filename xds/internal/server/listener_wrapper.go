@@ -212,16 +212,6 @@ func (lw *listenerWrapper) ldsFlow(update xdsresource.ListenerUpdate) {
 }
 
 
-func (lw *listenerWrapper) afterLDSandRDS() {
-	// Is this operation always correct? I.e. does this actually work? test it
-	if lw.rdsHandler.determineRDSReady() {
-		// pending -> current, operation involving closing conns (fcms need to keep track of Conn's, also get sync to work)
-		// is closing conns logically "draining" conns?
-		lw.maybeUpdateFilterChains()
-	}
-}
-
-
 // map[filter chain] blob representing (lds (fc) + rds) and built on a new lds and rds update, need to pull the rds data in somehow
 // how to link filter chain to pointer, easy just write it at fc instantiation time
 // need to update the pointers whenever lds or rds changes
@@ -277,29 +267,19 @@ func (l *listenerWrapper) maybeUpdateFilterChains() { // swap operation is corre
 	l.instantiateFilterChainRoutingConfigurations()
 	l.mu.Unlock() // happens atomically within this mu, I think this doesn't race, any new RPC's will now get configuration because needs this mu in Accept() for new full configuration...
 
-
-	// perhaps wrap this in a go func(), blocking on each conn is fine to drain transport
+	// I could also do this inline, or make non serving also do this? I don't think it matters but keep consistent
 	for _, conn := range connsToClose { // (perhaps async - sometime in future?)
+		// callback and also communication/triggering of server states...affects mutex grab yup I wrote this
 
-		// is this Close() a graceful close? (see Drain callback?) rework Drain
-		// callback and also communication/triggering of server states...affects mutex grab
-
-		// This handles cleaning up all the resources of the object, including all of it's state.
-
-		// need to typecast this and maybe handle ok
+		// need to typecast this and maybe handle ok (panic ok will never hit?)
 		conn.(*connWrapper).drain() // you need this, since there is extra memory and things to clean up on top of the net.Conn
 	}
-	// ()
-
-
-	// Now where do I store this? and if I do need some sync
-	// Accept() adds to conns to close, this gets called on a new LDS update races with sync
-	// sync access in the filter chain manager?
 }
 
 // rdsUpdate rebuilds any routing configuration server side for any filter
-// chains that point to this RDS.
-func (l *listenerWrapper) rdsUpdate(routeName string, rcu rdsWatcherUpdate) { // Logically sort of a swap.
+// chains that point to this RDS, and potentially makes new lds configuration to
+// start being used.
+func (l *listenerWrapper) rdsUpdate(routeName string, rcu rdsWatcherUpdate) {
 	// rds update updates filter chain corresponding (trigger from helper), and also caches it
 	// Update any corresponding filter chains active routing configuration
 	for _, fc := range l.activeFilterChains { // only written to from lds being ready (need to trigger that from here too)
@@ -349,7 +329,7 @@ func (l *listenerWrapper) rdsUpdate(routeName string, rcu rdsWatcherUpdate) { //
 // instantiateFilterChainRoutingConfigurations instantiates all of the routing
 // configuration for the newly active filter chains. For any inline route
 // configurations, uses that, otherwise uses cached rdsHandler updates.
-func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() { // instantiateFilterChainRoutingConfigurations to instantiate fcs rcu, loops through slice (either builds using inline or dynamic rds data)
+func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 
 	// So swap call this operation? Whenever we have a new current I think, 1:1 with tryThisSlice...
 	// this slice is one to one with serving fcs
@@ -440,7 +420,6 @@ func (l *listenerWrapper) Accept() (net.Conn, error) { // this is ran in a go fu
 			// us to stop serving.
 			return nil, fmt.Errorf("received connection with non-TCP address (local: %T, remote %T)", conn.LocalAddr(), conn.RemoteAddr())
 		}
-		// It's when it gets persisted on server
 		l.mu.RLock() // Make sure this doesn't cause deadlock...needs to protect whole conn accept...acutally I think this is good it's just what you wrap conn with
 		if l.mode == connectivity.ServingModeNotServing {
 			// Close connections as soon as we accept them when we are in

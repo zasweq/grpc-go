@@ -1288,6 +1288,11 @@ func (t *http2Server) closeStream(s *Stream, rst bool, rstCode http2.ErrCode, eo
 	})
 }
 
+// move this type to internal or somethhing
+type CallbackConn interface {
+	Callback(ServerTransport)
+}
+
 func (t *http2Server) Drain(debugData string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
