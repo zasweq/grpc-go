@@ -929,6 +929,10 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 		return
 	}
 
+	if cc, ok := rawConn.(CallbackConn); !ok {
+		cc.Callback(st)
+	}
+
 	if !s.addConn(lisAddr, st) {
 		return
 	}
@@ -938,6 +942,12 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 	}()
 }
 
+// move this type to internal or somehting
+type CallbackConn interface {
+	Callback(transport.ServerTransport)
+}
+
+// get rid of this...don't need this anymore
 func (s *Server) drainServerTransports(addr string) {
 	s.mu.Lock()
 	conns := s.conns[addr] // does it for an addr...If this happens sync I honestly think this works, since the addr will change later...

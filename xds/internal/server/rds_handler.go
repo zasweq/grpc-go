@@ -96,12 +96,6 @@ func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool)
 	}
 
 
-	// chose to do this logic in lis wrapper
-	// (lds flow)
-	// if
-	// rh.determineRDSReady() // bool, either call at the end of this function or the end of lds processing in listener wrapper
-	// 			swap
-
 	// I don't like route names left to watch like Java, I like using length of rds cancels...
 
 
@@ -110,16 +104,11 @@ func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool)
 
 // Stupid, LDS just gives this route names (checks readyness based off route names)
 // and we cache updates from RDS (handleRouteUpdate) and determines READY or not
-// LDS ^^^, can be ready after updating (zero always triggers ready, does it need to go through this component)
 
-// determines if all dynamic RDS has received configuration.
+// determines if all dynamic RDS needed has received configuration.
 func (rh *rdsHandler) determineRDSReady() bool {
 	// master handles the edge case where length is zero, does this need to account for it as well?
 	return len(rh.updates) == len(rh.cancels)
-
-	// either return and read bool or signal or signal by calling func on listener wrapper
-	// no caller itself triggers swap() from this bool
-
 }
 
 func (rh *rdsHandler) handleRouteUpdate(routeName string, update rdsWatcherUpdate) {
@@ -149,17 +138,12 @@ func (rh *rdsHandler) handleRouteUpdate(routeName string, update rdsWatcherUpdat
 	// Signal for filter chains held in lw to rebuild, happen sync after write so no sync problems.
 	// pending filter chains...routeNames (always switch, same or seperate operation as below)
 
-	// Signal to lw to rebuild filter chains,
+	// Signal to lw to rebuild active filter chains that point to this,
 	// in that function can determineRDSReady(), and if so pending -> current,
 	// and do that dance with locking and closing (need to persist Conns in FCM)
 	// that can race with a Conn Accept()
 
 	rh.parent.rdsUpdate(routeName, rwu) // pass it data, persist it just for new lds to rebuild...
-	// Chose to do this updating logic in listener wrapper
-	// Also check if pending is ready?
-	// rh.determineRDSReady() // bool represents all dynamic RDS is ready, should this signal?
-	//          swap
-	// rh.lw.swap() // I think ok to call this...lds and rds both can cause it to go ready and need to swap()
 }
 
 // needs to communicate to lw that pending is ready, is the determine rds ready by cancels ok here?
@@ -191,7 +175,6 @@ func (rw *rdsWatcher) OnUpdate(update *xdsresource.RouteConfigResourceData) {
 	if rw.logger.V(2) {
 		rw.logger.Infof("RDS watch for resource %q received update: %#v", rw.routeName, update.Resource)
 	}
-	// Should it cache it at this object level? I don't thin so higher layer already persists all the possible options...
 	rw.parent.handleRouteUpdate(rw.routeName, rdsWatcherUpdate{
 		update: &update.Resource, // does this cause any problems wrt pointing to same heap memory?
 	})
@@ -202,7 +185,7 @@ func (rw *rdsWatcher) OnError(err error) {
 		rw.logger.Infof("RDS watch for resource %q reported error: %v", rw.routeName, err)
 	}
 	rw.parent.handleRouteUpdate(rw.routeName, rdsWatcherUpdate{
-		err: err, // Can I send nil route update to represent error
+		err: err,
 	})
 }
 

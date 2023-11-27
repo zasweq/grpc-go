@@ -278,12 +278,65 @@ type modeChangeArgs struct {
 	err  error
 }
 
+// call sync from lds and rds...
+func (s *GRPCServer) handleServingStateTransitions(mode connectivity.ServingMode) { // log error
+	// It's just serivng and not serving
+
+	// good update triggers serve?
+
+	// all of this happens sync within an lds or rds update...
+	// serving (all rds)
+	// not serving (process sync)
+	//
+
+	// transitions:
+	// serving -> not serving...
+	//      gracefully stop all transports (again, needs to be sync) (why does it give address, lw per address?)
+	// if do inline, no race conditions right?
+
+
+	// not serving -> serving...
+	// persisting mode, triggers certain logic on an accept.
+
+	// uncondtionally drain - no race condtions with a pending...how does this sync with swap...triggered by lds
+	// resource not found so I think doesn't race and can do unconditionally...
+	if mode == connectivity.ServingModeNotServing {
+		if gs, ok := s.gs.(*grpc.Server); ok {
+			drainServerTransports(gs, args.addr.String()) // keep this...why does this put address...switch to drain all server transports...
+		}
+	}
+
+	// determines most recent mode from logic from Mark:
+
+	// list out what Mark said here for resource not found...
+
+	// We are in NOT_SERVING in two cases: (1) before we get the initial LDS
+	// resource and its RDS dependencies, and (2) if we get a does-not-exist for the
+	// LDS resource.
+
+	connectivity.ServingModeStarting // anything special here...
+	if mode == connectivity.ServingModeServing {
+
+	}
+
+}
+
+// Within the context of an xDS update response...all sync, handle inline
+// a. determine mode and persist for logic in Accept()
+// b. if goes to not serving, gracefully drain all server transports
+
+// Determine it - any swap causes it to go serving
+// not serving only from lis not found
+// seems like only thing not serving does is Accept() + Close()
+
+// middle helper to drain *all* server transports, now lis address works correctly with respect to this behavior...
+
 // handleServingModeChanges runs as a separate goroutine, spawned from Serve().
 // It reads a channel on to which mode change arguments are pushed, and in turn
 // invokes the user registered callback. It also calls an internal method on the
 // underlying grpc.Server to gracefully close existing connections, if the
 // listener moved to a "not-serving" mode.
-func (s *GRPCServer) handleServingModeChanges(updateCh *buffer.Unbounded) {
+func (s *GRPCServer) handleServingModeChanges(updateCh *buffer.Unbounded) { // Get rid of this, and the spawning of this goroutine.
 	for {
 		select {
 		case <-s.quit.Done():
@@ -302,7 +355,7 @@ func (s *GRPCServer) handleServingModeChanges(updateCh *buffer.Unbounded) {
 				// implementation for internal.GetServerCredentials, and allows
 				// us to use a fake gRPC server in tests.
 				if gs, ok := s.gs.(*grpc.Server); ok {
-					drainServerTransports(gs, args.addr.String()) // keep this
+					drainServerTransports(gs, args.addr.String()) // keep this...why does this put address
 				}
 			}
 

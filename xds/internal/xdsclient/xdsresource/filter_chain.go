@@ -211,14 +211,14 @@ type FilterChainManager struct {
 	// THe conns
 	conns []net.Conn
 }
-/*
+
 func (fcm *FilterChainManager) AddConn(conn net.Conn) {
 	fcm.conns = append(fcm.conns, conn)
 }
 
 func (fcm *FilterChainManager) Conns() []net.Conn {
 	return fcm.conns
-}*/
+}
 
 // destPrefixEntry is the value type of the map indexed on destination prefixes.
 type destPrefixEntry struct {

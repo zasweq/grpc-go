@@ -21,6 +21,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/internal/transport"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -60,6 +61,10 @@ type connWrapper struct {
 	// completing the HTTP2 handshake.
 	deadlineMu sync.Mutex
 	deadline   time.Time
+
+	st transport.ServerTransport
+	stMu sync.Mutex
+	draining bool
 
 	// The virtual hosts with matchable routes and instantiated HTTP Filters per
 	// route.
@@ -153,6 +158,61 @@ func (c *connWrapper) XDSHandshakeInfo() (*xdsinternal.HandshakeInfo, error) {
 	xdsHI.SetRequireClientCert(secCfg.RequireClientCert)
 	return xdsHI, nil
 }
+
+/*
+// rather than drain server transports continue to persist this in FCM
+func (c *connWrapper) Callback(st transport.ServerTransport) {
+	c.st = st // st.Drain
+	c.stReady.Fire()
+}
+
+func (c *connWrapper) drain() {
+	<-c.stReady.Done()
+	if c.st != nil {
+		c.st.Drain("draining")
+	}
+}*/
+
+/* Doesn't block forever
+func (c *cw) cb(st) {
+  c.mu.Lock(); defer c.mu.Unlock()
+  if c.draining { st.Drain() } else { c.st = st }
+}
+
+func (c *cw) drain() {
+  c.mu.Lock(); defer c.mu.Unlock()
+  if c.st == nil { c.draining = true } else { c.st.Drain() }
+}
+*/
+// Goal: draft pr with diffs
+
+
+
+func (c *connWrapper) Callback(st transport.ServerTransport) {
+	c.stMu.Lock()
+	defer c.stMu.Unlock()
+	if c.draining {
+		st.Drain("draining")
+	} else {
+		c.st = st
+	}
+}
+
+func (c *connWrapper) drain() {
+	c.stMu.Lock()
+	defer c.stMu.Unlock()
+	if c.st == nil {
+		c.draining = true
+	} else {
+		c.st.Drain("draining")
+	}
+}
+
+// in fcm on close:
+// grab conns
+//       conn.(connWrapper).drain()
+
+
 
 // Close closes the providers and the underlying connection.
 func (c *connWrapper) Close() error { // Doesn't look graceful to me? Close the Conn but not the transport wrapping...?
