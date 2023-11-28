@@ -143,7 +143,7 @@ func (rh *rdsHandler) handleRouteUpdate(routeName string, update rdsWatcherUpdat
 	// and do that dance with locking and closing (need to persist Conns in FCM)
 	// that can race with a Conn Accept()
 
-	rh.parent.rdsUpdate(routeName, rwu) // pass it data, persist it just for new lds to rebuild...
+	rh.parent.handleRDSUpdate(routeName, rwu) // pass it data, persist it just for new lds to rebuild...
 }
 
 // needs to communicate to lw that pending is ready, is the determine rds ready by cancels ok here?

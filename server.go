@@ -74,9 +74,6 @@ func init() {
 		return srv.isRegisteredMethod(method)
 	}
 	internal.ServerFromContext = serverFromContext
-	internal.DrainServerTransports = func(srv *Server, addr string) {
-		srv.drainServerTransports(addr)
-	}
 	internal.AddGlobalServerOptions = func(opt ...ServerOption) {
 		globalServerOptions = append(globalServerOptions, opt...)
 	}
@@ -940,17 +937,6 @@ func (s *Server) handleRawConn(lisAddr string, rawConn net.Conn) {
 		s.serveStreams(context.Background(), st, rawConn)
 		s.removeConn(lisAddr, st)
 	}()
-}
-
-
-// get rid of this...don't need this anymore
-func (s *Server) drainServerTransports(addr string) {
-	s.mu.Lock()
-	conns := s.conns[addr] // does it for an addr...If this happens sync I honestly think this works, since the addr will change later...
-	for st := range conns {
-		st.Drain("")
-	}
-	s.mu.Unlock()
 }
 
 // newHTTP2Transport sets up a http/2 transport (using the

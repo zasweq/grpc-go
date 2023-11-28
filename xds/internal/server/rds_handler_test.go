@@ -490,3 +490,8 @@ func (s) TestErrorReceived(t *testing.T) {
 func newStringP(s string) *string {
 	return &s
 }
+
+// is the rds conditional for it being ready correct? *** Unit test? in RDS Handler test?
+// how to even unit test/what's the point of unit test?
+
+// I wrote this test lol

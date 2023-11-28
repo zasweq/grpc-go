@@ -265,7 +265,7 @@ type sourcePrefixEntry struct {
 //
 // This function is only exported so that tests outside of this package can
 // create a FilterChainManager.
-func NewFilterChainManager(lis *v3listenerpb.Listener) (*FilterChainManager, error) { // Constructed from lis...I already scaled up the fc object in both sceanrios...[]fcs add a ref to usable route config for pointer, to write to same heap, messes with tree and also slice built out from this stored in lw
+func NewFilterChainManager(lis *v3listenerpb.Listener) (*FilterChainManager, error) { // Constructed from lis...I already scaled up the fc object in both sceanrios...[]fcs add a ref to usable route config for pointer, to write to same heap, messes with tree and also slice built out from this stored in lw. What happens if you get diff lds over time?
 	// Parse all the filter chains and build the internal data structures.
 	fci := &FilterChainManager{
 		dstPrefixMap:     make(map[string]*destPrefixEntry),

@@ -1288,7 +1288,7 @@ func (t *http2Server) closeStream(s *Stream, rst bool, rstCode http2.ErrCode, eo
 	})
 }
 
-// move this type to internal or somethhing
+// CallbackConn is a conn with a callback function.
 type CallbackConn interface {
 	Callback(ServerTransport)
 }

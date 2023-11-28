@@ -21,7 +21,6 @@ package server
 import (
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/internal/transport"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -30,6 +29,7 @@ import (
 
 	"google.golang.org/grpc/credentials/tls/certprovider"
 	xdsinternal "google.golang.org/grpc/internal/credentials/xds"
+	"google.golang.org/grpc/internal/transport"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 )
 
@@ -62,10 +62,11 @@ type connWrapper struct {
 	deadlineMu sync.Mutex
 	deadline   time.Time
 
-	st transport.ServerTransport
-	stMu sync.Mutex
+	mu       sync.Mutex // different mu seems fine here...
+	st       transport.ServerTransport
 	draining bool
 
+	// pointer toa pointer, can this just use filter Chains? I think this is fine...
 	// The virtual hosts with matchable routes and instantiated HTTP Filters per
 	// route.
 	vhs *unsafe.Pointer // *([]xdsresource.VirtualHostWithInterceptors)
@@ -77,7 +78,7 @@ type connWrapper struct {
 func (c *connWrapper) VirtualHosts() []xdsresource.VirtualHostWithInterceptors { // yesterday plumbed VirtualHosts and L7 error conditions through the stack (rdsHandler -> lisWrapper -> Accept() -> Server using this Conn)
 	// two possible states: error at l7 level
 	// or ok
-	// atomically load pointer
+	// atomically load pointer whenever you read
 	uPtr := atomic.LoadPointer(c.vhs)
 	/*wow := *(*[]xdsresource.VirtualHostWithInterceptors)(uPtr) // either a pointer to an array or not (err vs. successful)
 
@@ -127,7 +128,7 @@ func (c *connWrapper) XDSHandshakeInfo() (*xdsinternal.HandshakeInfo, error) {
 		return nil, errors.New("user has not configured xDS credentials")
 	}
 
-	if c.filterChain.SecurityCfg == nil {
+	if c.filterChain.SecurityCfg == nil { // Gets security info
 		// If the security config is empty, this means that the control plane
 		// did not provide any security configuration and therefore we should
 		// return an empty HandshakeInfo here so that the xdsCreds can use the
@@ -159,38 +160,11 @@ func (c *connWrapper) XDSHandshakeInfo() (*xdsinternal.HandshakeInfo, error) {
 	return xdsHI, nil
 }
 
-/*
-// rather than drain server transports continue to persist this in FCM
-func (c *connWrapper) Callback(st transport.ServerTransport) {
-	c.st = st // st.Drain
-	c.stReady.Fire()
-}
-
-func (c *connWrapper) drain() {
-	<-c.stReady.Done()
-	if c.st != nil {
-		c.st.Drain("draining")
-	}
-}*/
-
-/* Doesn't block forever
-func (c *cw) cb(st) {
-  c.mu.Lock(); defer c.mu.Unlock()
-  if c.draining { st.Drain() } else { c.st = st }
-}
-
-func (c *cw) drain() {
-  c.mu.Lock(); defer c.mu.Unlock()
-  if c.st == nil { c.draining = true } else { c.st.Drain() }
-}
-*/
 // Goal: draft pr with diffs
 
-
-
 func (c *connWrapper) Callback(st transport.ServerTransport) {
-	c.stMu.Lock()
-	defer c.stMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.draining {
 		st.Drain("draining")
 	} else {
@@ -199,19 +173,17 @@ func (c *connWrapper) Callback(st transport.ServerTransport) {
 }
 
 func (c *connWrapper) drain() {
-	c.stMu.Lock()
-	defer c.stMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.st == nil {
 		c.draining = true
 	} else {
-		c.st.Drain("draining")
+		c.st.Drain("draining") // "gracefully closed from xDS"?
 	}
 }
 
-
-
 // Close closes the providers and the underlying connection.
-func (c *connWrapper) Close() error { // Doesn't look graceful to me? Close the Conn but not the transport wrapping...?
+func (c *connWrapper) Close() error {
 	if c.identityProvider != nil {
 		c.identityProvider.Close()
 	}

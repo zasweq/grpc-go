@@ -30,7 +30,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal"
-	"google.golang.org/grpc/internal/buffer"
 	internalgrpclog "google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/internal/grpcsync"
 	iresolver "google.golang.org/grpc/internal/resolver"
@@ -55,7 +54,6 @@ var (
 	}
 
 	grpcGetServerCreds    = internal.GetServerCredentials.(func(*grpc.Server) credentials.TransportCredentials)
-	drainServerTransports = internal.DrainServerTransports.(func(*grpc.Server, string))
 	logger                = grpclog.Component("xds")
 )
 
@@ -231,11 +229,6 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 	cfg := s.xdsC.BootstrapConfig()
 	name := bootstrap.PopulateResourceTemplate(cfg.ServerListenerResourceNameTemplate, lis.Addr().String())
 
-	modeUpdateCh := buffer.NewUnbounded()
-	go func() {
-		s.handleServingModeChanges(modeUpdateCh)
-	}()
-
 	// Create a listenerWrapper which handles all functionality required by
 	// this particular instance of Serve().
 	lw, goodUpdateCh := server.NewListenerWrapper(server.ListenerWrapperParams{
@@ -243,18 +236,6 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 		ListenerResourceName: name,
 		XDSCredsInUse:        s.xdsCredsInUse,
 		XDSClient:            s.xdsC,
-		ModeCallback: func(addr net.Addr, mode connectivity.ServingMode, err error) {
-			modeUpdateCh.Put(&modeChangeArgs{ // change this communication
-				addr: addr,
-				mode: mode,
-				err:  err,
-			})
-		},
-		DrainCallback: func(addr net.Addr) { // Drain's the transports, where does the conn transport is wrapped in get closed?
-			if gs, ok := s.gs.(*grpc.Server); ok {
-				drainServerTransports(gs, addr.String())
-			}
-		},
 	})
 
 	// Block until a good LDS response is received or the server is stopped.
@@ -264,62 +245,13 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 		// need to explicitly close the listener. Cancellation of the xDS watch
 		// is handled by the listenerWrapper.
 		lw.Close()
-		modeUpdateCh.Close()
 		return nil
 	case <-goodUpdateCh:
 	}
-	return s.gs.Serve(lw)
+	// it says to not listen() on the port...
+	return s.gs.Serve(lw) // should this block on good update (i.e. all xDS resources being received)?
 }
 
-// modeChangeArgs wraps argument required for invoking mode change callback.
-type modeChangeArgs struct {
-	addr net.Addr
-	mode connectivity.ServingMode
-	err  error
-}
-
-// call sync from lds and rds...
-func (s *GRPCServer) handleServingStateTransitions(mode connectivity.ServingMode) { // log error
-	// It's just serivng and not serving
-
-	// good update triggers serve?
-
-	// all of this happens sync within an lds or rds update...
-	// serving (all rds)
-	// not serving (process sync)
-	//
-
-	// transitions:
-	// serving -> not serving...
-	//      gracefully stop all transports (again, needs to be sync) (why does it give address, lw per address?)
-	// if do inline, no race conditions right?
-
-
-	// not serving -> serving...
-	// persisting mode, triggers certain logic on an accept.
-
-	// uncondtionally drain - no race condtions with a pending...how does this sync with swap...triggered by lds
-	// resource not found so I think doesn't race and can do unconditionally...
-	if mode == connectivity.ServingModeNotServing {
-		if gs, ok := s.gs.(*grpc.Server); ok {
-			drainServerTransports(gs, args.addr.String()) // keep this...why does this put address...switch to drain all server transports...
-		}
-	}
-
-	// determines most recent mode from logic from Mark:
-
-	// list out what Mark said here for resource not found...
-
-	// We are in NOT_SERVING in two cases: (1) before we get the initial LDS
-	// resource and its RDS dependencies, and (2) if we get a does-not-exist for the
-	// LDS resource.
-
-	connectivity.ServingModeStarting // anything special here...
-	if mode == connectivity.ServingModeServing {
-
-	}
-
-}
 
 // Within the context of an xDS update response...all sync, handle inline
 // a. determine mode and persist for logic in Accept()
@@ -330,49 +262,6 @@ func (s *GRPCServer) handleServingStateTransitions(mode connectivity.ServingMode
 // seems like only thing not serving does is Accept() + Close()
 
 // middle helper to drain *all* server transports, now lis address works correctly with respect to this behavior...
-
-// handleServingModeChanges runs as a separate goroutine, spawned from Serve().
-// It reads a channel on to which mode change arguments are pushed, and in turn
-// invokes the user registered callback. It also calls an internal method on the
-// underlying grpc.Server to gracefully close existing connections, if the
-// listener moved to a "not-serving" mode.
-func (s *GRPCServer) handleServingModeChanges(updateCh *buffer.Unbounded) { // Get rid of this, and the spawning of this goroutine.
-	for {
-		select {
-		case <-s.quit.Done():
-			return
-		case u, ok := <-updateCh.Get(): // handles serving mode changes here, drainServerTransports might be what I want here...
-			if !ok {
-				return
-			}
-			updateCh.Load()
-			args := u.(*modeChangeArgs)
-			if args.mode == connectivity.ServingModeNotServing {
-				// We type assert our underlying gRPC server to the real
-				// grpc.Server here before trying to initiate the drain
-				// operation. This approach avoids performing the same type
-				// assertion in the grpc package which provides the
-				// implementation for internal.GetServerCredentials, and allows
-				// us to use a fake gRPC server in tests.
-				if gs, ok := s.gs.(*grpc.Server); ok {
-					drainServerTransports(gs, args.addr.String()) // keep this...why does this put address
-				}
-			}
-
-			// lds triggering non serving, also l7 failures...
-
-			// The XdsServer API will allow applications to register a "serving state"
-			// callback to be invoked when the server begins serving and when the
-			// server encounters errors that force it to be "not serving". If "not
-			// serving", the callback must be provided error information, for
-			// debugging use by developers - A36.
-			s.opts.modeCallback(args.addr, ServingModeChangeArgs{
-				Mode: args.mode,
-				Err:  args.err,
-			})
-		}
-	}
-}
 
 // Stop stops the underlying gRPC server. It immediately closes all open
 // connections. It cancels all active RPCs on the server side and the
@@ -436,6 +325,7 @@ func routeAndProcess(ctx context.Context) error {
 		Context: ctx,
 		Method:  mn,
 	}
+	// Plumb err here to log at l7 level
 	for _, r := range vh.Routes {
 		if r.M.Match(rpcInfo) {
 			// "NonForwardingAction is expected for all Routes used on server-side; a route with an inappropriate action causes
