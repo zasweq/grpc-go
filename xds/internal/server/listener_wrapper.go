@@ -172,9 +172,20 @@ type listenerWrapper struct {
 
 func (lw *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
 	ilc := update.InboundListenerCfg
+	// Make sure that the socket address on the received Listener resource
+	// matches the address of the net.Listener passed to us by the user. This
+	// check is done here instead of at the XDSClient layer because of the
+	// following couple of reasons:
+	// - XDSClient cannot know the listening address of every listener in the
+	//   system, and hence cannot perform this check.
+	// - this is a very context-dependent check and only the server has the
+	//   appropriate context to perform this check.
+	//
+	// What this means is that the XDSClient has ACKed a resource which can push
+	// the server into a "not serving" mode. This is not ideal, but this is
+	// what we have decided to do.
 	if ilc.Address != lw.addr || ilc.Port != lw.port {
 		lw.mu.Lock()
-		// pull comment from old...
 		lw.switchModeLocked(connectivity.ServingModeNotServing, fmt.Errorf("address (%s:%s) in Listener update does not match listening address: (%s:%s)", ilc.Address, ilc.Port, lw.addr, lw.port)) // not serving
 		lw.mu.Unlock()
 		return // It's like resource not found...just returns, and drains transports, I think makes sense (or can eat error if working), I think this is fine though.
@@ -246,26 +257,17 @@ func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate
 	// Update any corresponding filter chains active routing configuration
 	for _, fc := range l.activeFilterChains {
 		if fc.RouteConfigName == routeName {
-			// needs to also fail l7 rpcs with err or not
-			// I think make error be nil, if it gets to serving it means that it's
-			// received a configuration at some point (Ignore errors that haven't been
-			// there)
-
-			// if update is set use that (I need to write a test for l7 failures on NACK or resource not found)
-			if rcu.err != nil && rcu.update == nil { // If it calls in will have set one...
-				// stick nil as the value atomically of the route configuration. Will trigger L7 failure
-				// var vhswi *[]xdsresource.VirtualHostWithInterceptors
-				// now has pointer
+			if rcu.err != nil && rcu.update == nil { // Either NACK before update, or resource not found triggers this conditional.
 				atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
 					Err: rcu.err,
-				})) // not a nil pointer a pointer of type that points to nil
+				}))
 				continue
 			}
-			vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update) // error returns nil, which will fail l7 level which is fine, should never hit...
+			vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
 			atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
 				VHS: vhswi,
-				Err: err,
-			})) // unsafe pointer to a pointer, &vhswi is the address (i.e. pointer) to newly construct []vhswi (escapes to heap)
+				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
+			}))
 		}
 	}
 
@@ -273,10 +275,6 @@ func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate
 		l.maybeUpdateFilterChains()
 	}
 }
-
-// yesterday plumbed VirtualHosts and L7 error conditions through the stack (rdsHandler -> lisWrapper -> Accept() -> Server using this Conn)
-// yesterday I did nil update and vhswi (l7 level)
-
 
 // called on a lds going fully ready (I think including the first one, if zero I
 // think isready will determine that, cancels while clearing rds update cache
@@ -296,36 +294,27 @@ func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 		// could alsooooo make this is a pointer if I wanted, would avoid copy...
 		l.activeFilterChains = append(l.activeFilterChains, *fc) // can update nil...I think pointing to same fc in memory is fine, never gets updated
 		if fc.InlineRouteConfig != nil {
-			// Returns nil in the error case (which shouldn't happen from lds +
-			// rds, since validated by xDS Client), this will be treated as an
-			// l7 error though.
-			vhswi, _ := fc.ConstructUsableRouteConfiguration(*fc.InlineRouteConfig)
-			uPtr := unsafe.Pointer(&vhswi)
-			atomic.StorePointer(fc.VHS, uPtr) // this can't happen with accept so don't even need this atomic honestly...
+			vhswi, err := fc.ConstructUsableRouteConfiguration(*fc.InlineRouteConfig)
+			atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
+				VHS: vhswi,
+				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
+			})) // this can't happen with accept so don't even need this atomic honestly...
 			continue
 		} // Inline configuration constructed once here, will remain for lifetime of filter chain.
 		rcu := l.rdsHandler.updates[fc.RouteConfigName]
 		if rcu.err != nil && rcu.update == nil {
-			// stick nil as the value atomically of the route configuration.
-			var vhswi *[]xdsresource.VirtualHostWithInterceptors
-			atomic.StorePointer(fc.VHS, unsafe.Pointer(vhswi)) // not a nil pointer a pointer of type that points to nil
+			atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
+				Err: rcu.err,
+			}))
 			continue
 		}
 		vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-		if err != nil {
-			// errors from combining look like they really shouldn't happen if
-			// lds and rds passed xDS Client validation. but just fail at l7
-			// level in this case.
-			uPtr := unsafe.Pointer(&vhswi)
-			atomic.StorePointer(fc.VHS, uPtr)
-			continue
-		}
-		uPtr := unsafe.Pointer(&vhswi)
-		atomic.StorePointer(fc.VHS, uPtr)
+		atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
+			VHS: vhswi,
+			Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
+		}))
 	}
 }
-
-// b. logging l7 error server side (read error out of the atomic pointer, fail it at server with err message from VirtualHosts() in routing in gRPC Server
 
 // Accept blocks on an Accept() on the underlying listener, and wraps the
 // returned net.connWrapper with the configured certificate providers.
@@ -424,6 +413,7 @@ func (l *listenerWrapper) Close() error {
 	return nil
 }
 
+
 // server creates lw, blocks on good update
 // for it to Serve()
 // fire a good update to serve...falls within language and write a comment explaining
@@ -441,8 +431,12 @@ but it must also accept() and immediately close() connections, making sure to
 not send any data to the client.
 */ // does it trigger serve right? i.e. correct gate?
 
+// Does not having called Serve == not serving?
+
 // before good update fires first part of language,
 // after fires second part of language...
+
+
 
 // switchModeLocked switches the current mode of the listener wrapper. It also
 // gracefully closes any connections if the listener wrapper transitions into
@@ -516,9 +510,9 @@ func (lw *ldsWatcher) OnResourceDoesNotExist() {
 	err := xdsresource.NewErrorf(xdsresource.ErrorTypeResourceNotFound, "resource name %q of type Listener not found in received response", lw.name)
 	lw.parent.mu.Lock()
 	defer lw.parent.mu.Unlock()
-	lw.parent.pendingFilterChainManager = nil
+	lw.parent.switchModeLocked(connectivity.ServingModeNotServing, err)
 	lw.parent.activeFilterChainManager = nil
+	lw.parent.pendingFilterChainManager = nil
 	lw.parent.activeFilterChains = nil
 	lw.parent.rdsHandler.updateRouteNamesToWatch(make(map[string]bool))
-	lw.parent.switchModeLocked(connectivity.ServingModeNotServing, err)
 }

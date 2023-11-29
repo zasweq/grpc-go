@@ -72,28 +72,12 @@ type connWrapper struct {
 	vhs *unsafe.Pointer // *([]xdsresource.VirtualHostWithInterceptors)
 }
 
-// VirtualHosts returns the virtual hosts to be used for server side routing. If
-// returns nil, RDS configuration is an error from xDS Client fail any RPC's at
-// L7 with status code UNAVAILABLE (where to log for server side debugging ?)
-func (c *connWrapper) VirtualHosts() []xdsresource.VirtualHostWithInterceptors { // yesterday plumbed VirtualHosts and L7 error conditions through the stack (rdsHandler -> lisWrapper -> Accept() -> Server using this Conn)
-	// two possible states: error at l7 level
-	// or ok
-	// atomically load pointer whenever you read
+// RoutingConfiguration returns the RoutingConfiguration to be used for server
+// side routing. If RoutingConfiguration contains error, fail any RPCs on this
+// Conn with status code UNAVAILABLE.
+func (c *connWrapper) RoutingConfiguration() RoutingConfiguration {
 	uPtr := atomic.LoadPointer(c.vhs)
-	/*wow := *(*[]xdsresource.VirtualHostWithInterceptors)(uPtr) // either a pointer to an array or not (err vs. successful)
-
-	// also needs to represent an error state...maybe if set to nil
-	// if points to nil { ? what's correct conditional here
-	//       insert something that fails rpcs with UNAVAILABLE
-	// }
-	if wow == nil { // can this communicate an error somehow? scale nil to an error somehow
-		return wow
-	}*/
-
-	// return unconditionally - will be nil or something usable...
-
-	// * deref, either nil or an actual slice
-	return *(*[]xdsresource.VirtualHostWithInterceptors)(uPtr) // or wow
+	return *(*RoutingConfiguration)(uPtr)
 }
 
 // SetDeadline makes a copy of the passed in deadline and forwards the call to

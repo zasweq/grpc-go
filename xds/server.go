@@ -248,20 +248,10 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 		return nil
 	case <-goodUpdateCh:
 	}
+	// Ping thread, maybe link the pr line
 	// it says to not listen() on the port...
 	return s.gs.Serve(lw) // should this block on good update (i.e. all xDS resources being received)?
 }
-
-
-// Within the context of an xDS update response...all sync, handle inline
-// a. determine mode and persist for logic in Accept()
-// b. if goes to not serving, gracefully drain all server transports
-
-// Determine it - any swap causes it to go serving
-// not serving only from lis not found
-// seems like only thing not serving does is Accept() + Close()
-
-// middle helper to drain *all* server transports, now lis address works correctly with respect to this behavior...
 
 // Stop stops the underlying gRPC server. It immediately closes all open
 // connections. It cancels all active RPCs on the server side and the
@@ -290,16 +280,17 @@ func (s *GRPCServer) GracefulStop() {
 // table and also processes the RPC by running the incoming RPC through any HTTP
 // Filters configured.
 func routeAndProcess(ctx context.Context) error {
-	conn := transport.GetConnection(ctx)
-	cw, ok := conn.(interface {
-		VirtualHosts() []xdsresource.VirtualHostWithInterceptors
+	conn := transport.GetConnection(ctx) // plumbs through context
+	cw, ok := conn.(interface { // another way you could typecast in gRPC layer...
+		RoutingConfiguration() server.RoutingConfiguration
 	})
 	if !ok {
 		return errors.New("missing virtual hosts in incoming context")
 	}
 
-	vhs := cw.VirtualHosts() // This needs to log an error somehow for debuggability
-	if vhs == nil { // Error out at routing l7 level, represents an nack before usable route configuration or resource not found.
+	rc := cw.RoutingConfiguration() // This needs to log an error somehow for debuggability
+	if rc.Err != nil { // Error out at routing l7 level, represents an nack before usable route configuration or resource not found or error combining LDS + RDS (Shouldn't happen).
+		// log vhs.Err
 		return status.Error(codes.Unavailable, "error from xDS configuration for matched route configuration")
 	}
 
@@ -315,7 +306,7 @@ func routeAndProcess(ctx context.Context) error {
 	// the RPC gets to this point, there will be a single, unambiguous authority
 	// present in the header map.
 	authority := md.Get(":authority")
-	vh := xdsresource.FindBestMatchingVirtualHostServer(authority[0], cw.VirtualHosts())
+	vh := xdsresource.FindBestMatchingVirtualHostServer(authority[0], rc.VHS)
 	if vh == nil {
 		return status.Error(codes.Unavailable, "the incoming RPC did not match a configured Virtual Host")
 	}
