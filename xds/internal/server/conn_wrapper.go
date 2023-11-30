@@ -40,8 +40,9 @@ import (
 //     key material from the certificate providers.
 //  2. Implements the XDSHandshakeInfo() method used by the xdsCredentials to
 //     retrieve the configured certificate providers.
-//  3. xDS filter_chain matching logic to select appropriate security
-//     configuration for the incoming connection. (This comment no longer makes sense...)
+//  3. xDS filter_chain configuration determines security configuration.
+//  4. Dynamically reads routing configuration in RoutingConfiguration(), called
+//     to process incoming RPC's. (LDS + RDS configuration).
 type connWrapper struct {
 	net.Conn
 
@@ -62,21 +63,20 @@ type connWrapper struct {
 	deadlineMu sync.Mutex
 	deadline   time.Time
 
-	mu       sync.Mutex // different mu seems fine here...
+	mu       sync.Mutex
 	st       transport.ServerTransport
 	draining bool
 
-	// pointer toa pointer, can this just use filter Chains? I think this is fine...
 	// The virtual hosts with matchable routes and instantiated HTTP Filters per
-	// route.
-	vhs *unsafe.Pointer // *([]xdsresource.VirtualHostWithInterceptors)
+	// route, or an error.
+	rc *unsafe.Pointer // *RoutingConfiguration
 }
 
 // RoutingConfiguration returns the RoutingConfiguration to be used for server
 // side routing. If RoutingConfiguration contains error, fail any RPCs on this
 // Conn with status code UNAVAILABLE.
 func (c *connWrapper) RoutingConfiguration() RoutingConfiguration {
-	uPtr := atomic.LoadPointer(c.vhs)
+	uPtr := atomic.LoadPointer(c.rc)
 	return *(*RoutingConfiguration)(uPtr)
 }
 
@@ -112,7 +112,7 @@ func (c *connWrapper) XDSHandshakeInfo() (*xdsinternal.HandshakeInfo, error) {
 		return nil, errors.New("user has not configured xDS credentials")
 	}
 
-	if c.filterChain.SecurityCfg == nil { // Gets security info
+	if c.filterChain.SecurityCfg == nil {
 		// If the security config is empty, this means that the control plane
 		// did not provide any security configuration and therefore we should
 		// return an empty HandshakeInfo here so that the xdsCreds can use the
@@ -144,8 +144,6 @@ func (c *connWrapper) XDSHandshakeInfo() (*xdsinternal.HandshakeInfo, error) {
 	return xdsHI, nil
 }
 
-// Goal: draft pr with diffs
-
 func (c *connWrapper) Callback(st transport.ServerTransport) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -162,7 +160,7 @@ func (c *connWrapper) drain() {
 	if c.st == nil {
 		c.draining = true
 	} else {
-		c.st.Drain("draining") // "gracefully closed from xDS"?
+		c.st.Drain("draining")
 	}
 }
 

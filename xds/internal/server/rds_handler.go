@@ -23,7 +23,6 @@ import (
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 )
 
-
 // rdsHandler handles any RDS queries that need to be started for a given server
 // side listeners Filter Chains (i.e. not inline). It persists RDS updates for
 // later use and also determines whether all the RDS updates needed have been
@@ -48,11 +47,11 @@ type rdsHandler struct {
 // updateRouteNamesToWatch() upon receipt of new Listener configuration.
 func newRDSHandler(lw *listenerWrapper, xdsC XDSClient, logger *igrpclog.PrefixLogger) *rdsHandler {
 	return &rdsHandler{
-		xdsC:          xdsC,
-		logger:        logger,
-		parent:        lw,
-		updates:       make(map[string]rdsWatcherUpdate),
-		cancels:       make(map[string]func()),
+		xdsC:    xdsC,
+		logger:  logger,
+		parent:  lw,
+		updates: make(map[string]rdsWatcherUpdate),
+		cancels: make(map[string]func()),
 	}
 }
 
@@ -84,7 +83,7 @@ func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool)
 	}
 }
 
-// determines if all dynamic RDS needed has received configuration.
+// determines if all dynamic RDS needed has received configuration or update.
 func (rh *rdsHandler) determineRDSReady() bool {
 	return len(rh.updates) == len(rh.cancels)
 }
@@ -97,9 +96,8 @@ func (rh *rdsHandler) handleRouteUpdate(routeName string, update rdsWatcherUpdat
 
 	if update.err != nil {
 		if xdsresource.ErrType(update.err) == xdsresource.ErrorTypeResourceNotFound {
-			// Clear update (write a top level comment on the map that explains
-			// this logic). This will cause future RPCs that match to this route
-			// to fail with UNAVAILABLE.
+			// Clear update. This will cause future RPCs on connections which
+			// use this route configuration to fail with UNAVAILABLE.
 			rwu.update = nil
 		}
 		// Write error.
@@ -110,7 +108,6 @@ func (rh *rdsHandler) handleRouteUpdate(routeName string, update rdsWatcherUpdat
 	rh.updates[routeName] = rwu
 	rh.parent.handleRDSUpdate(routeName, rwu)
 }
-
 
 // close() is meant to be called by wrapped listener when the wrapped listener
 // is closed, and it cleans up resources by canceling all the active RDS

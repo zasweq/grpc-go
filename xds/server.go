@@ -53,15 +53,9 @@ var (
 		return grpc.NewServer(opts...)
 	}
 
-	grpcGetServerCreds    = internal.GetServerCredentials.(func(*grpc.Server) credentials.TransportCredentials)
-	logger                = grpclog.Component("xds")
+	grpcGetServerCreds = internal.GetServerCredentials.(func(*grpc.Server) credentials.TransportCredentials)
+	logger             = grpclog.Component("xds")
 )
-
-// but also trigger graceful drain on transport (goaway etc.) *when a new lds goes ready*
-// Eventual consistency for serving mode...? Ready Not Ready Ready...does this give right behavior? (process drain sync...) from lds
-
-// graceful drain and drops port on not serving serving -> not serving switches
-// accept and close orthogonal to going ready is correct
 
 // grpcServer contains methods from grpc.Server which are used by the
 // GRPCServer type here. This is useful for overriding in unit tests.
@@ -231,26 +225,13 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 
 	// Create a listenerWrapper which handles all functionality required by
 	// this particular instance of Serve().
-	lw, goodUpdateCh := server.NewListenerWrapper(server.ListenerWrapperParams{
+	lw := server.NewListenerWrapper(server.ListenerWrapperParams{
 		Listener:             lis,
 		ListenerResourceName: name,
 		XDSCredsInUse:        s.xdsCredsInUse,
 		XDSClient:            s.xdsC,
 	})
-
-	// Block until a good LDS response is received or the server is stopped.
-	select {
-	case <-s.quit.Done():
-		// Since the listener has not yet been handed over to gs.Serve(), we
-		// need to explicitly close the listener. Cancellation of the xDS watch
-		// is handled by the listenerWrapper.
-		lw.Close()
-		return nil
-	case <-goodUpdateCh:
-	}
-	// Ping thread, maybe link the pr line
-	// it says to not listen() on the port...
-	return s.gs.Serve(lw) // should this block on good update (i.e. all xDS resources being received)?
+	return s.gs.Serve(lw)
 }
 
 // Stop stops the underlying gRPC server. It immediately closes all open
@@ -280,17 +261,17 @@ func (s *GRPCServer) GracefulStop() {
 // table and also processes the RPC by running the incoming RPC through any HTTP
 // Filters configured.
 func routeAndProcess(ctx context.Context) error {
-	conn := transport.GetConnection(ctx) // plumbs through context
-	cw, ok := conn.(interface { // another way you could typecast in gRPC layer...
+	conn := transport.GetConnection(ctx)
+	cw, ok := conn.(interface {
 		RoutingConfiguration() server.RoutingConfiguration
 	})
 	if !ok {
 		return errors.New("missing virtual hosts in incoming context")
 	}
 
-	rc := cw.RoutingConfiguration() // This needs to log an error somehow for debuggability
-	if rc.Err != nil { // Error out at routing l7 level, represents an nack before usable route configuration or resource not found or error combining LDS + RDS (Shouldn't happen).
-		// log vhs.Err
+	rc := cw.RoutingConfiguration()
+	if rc.Err != nil { // Error out at routing l7 level, represents an nack before usable route configuration or resource not found for RDS or error combining LDS + RDS (Shouldn't happen).
+		logger.Errorf("RPC on connection with xDS Configuration error: %v", rc.Err)
 		return status.Error(codes.Unavailable, "error from xDS configuration for matched route configuration")
 	}
 
@@ -316,7 +297,6 @@ func routeAndProcess(ctx context.Context) error {
 		Context: ctx,
 		Method:  mn,
 	}
-	// Plumb err here to log at l7 level
 	for _, r := range vh.Routes {
 		if r.M.Match(rpcInfo) {
 			// "NonForwardingAction is expected for all Routes used on server-side; a route with an inappropriate action causes

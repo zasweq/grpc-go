@@ -68,11 +68,8 @@ type FilterChain struct {
 	//
 	// Exactly one of RouteConfigName and InlineRouteConfig is set.
 	InlineRouteConfig *RouteConfigUpdate
-
-
-	// when to build with inline...just do this once you build out map (slice is fine, Java map uses ref count)
-
-	VHS *unsafe.Pointer // *([]VirtualHostWithInterceptors)
+	// RC is the routing configuration for this filter chain (LDS + RDS).
+	RC *unsafe.Pointer // *(RoutingConfiguration)
 }
 
 // VirtualHostWithInterceptors captures information present in a VirtualHost
@@ -201,14 +198,15 @@ type FilterChainManager struct {
 
 	def *FilterChain // Default filter chain, if specified.
 
-	// ordering doesn't matter here...
+	// Slice of filter chains managed by this filter chain manager.
 	fcs []*FilterChain
 
 	// RouteConfigNames are the route configuration names which need to be
 	// dynamically queried for RDS Configuration for any FilterChains which
 	// specify to load RDS Configuration dynamically.
 	RouteConfigNames map[string]bool
-	// THe conns
+
+	// Persisted to gracefully close once filter chain manager no longer active.
 	conns []net.Conn
 }
 
@@ -265,7 +263,7 @@ type sourcePrefixEntry struct {
 //
 // This function is only exported so that tests outside of this package can
 // create a FilterChainManager.
-func NewFilterChainManager(lis *v3listenerpb.Listener) (*FilterChainManager, error) { // Constructed from lis...I already scaled up the fc object in both sceanrios...[]fcs add a ref to usable route config for pointer, to write to same heap, messes with tree and also slice built out from this stored in lw. What happens if you get diff lds over time?
+func NewFilterChainManager(lis *v3listenerpb.Listener) (*FilterChainManager, error) {
 	// Parse all the filter chains and build the internal data structures.
 	fci := &FilterChainManager{
 		dstPrefixMap:     make(map[string]*destPrefixEntry),
@@ -596,11 +594,7 @@ func (fci *FilterChainManager) Validate(f func(fc *FilterChain) error) error {
 }
 
 func processNetworkFilters(filters []*v3listenerpb.Filter) (*FilterChain, error) {
-	var vhswi *[]VirtualHostWithInterceptors
-	uPtr := unsafe.Pointer(vhswi)
-	filterChain := &FilterChain{
-		VHS: &uPtr,
-	}
+	filterChain := &FilterChain{}
 	seenNames := make(map[string]bool, len(filters))
 	seenHCM := false
 	for _, filter := range filters {

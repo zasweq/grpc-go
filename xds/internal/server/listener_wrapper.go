@@ -89,7 +89,7 @@ type ListenerWrapperParams struct {
 // ready to be passed to grpc.Serve().
 //
 // Only TCP listeners are supported.
-func NewListenerWrapper(params ListenerWrapperParams) (net.Listener, <-chan struct{}) {
+func NewListenerWrapper(params ListenerWrapperParams) net.Listener {
 	lw := &listenerWrapper{
 		Listener:          params.Listener,
 		name:              params.ListenerResourceName,
@@ -97,9 +97,8 @@ func NewListenerWrapper(params ListenerWrapperParams) (net.Listener, <-chan stru
 		xdsC:              params.XDSClient,
 		isUnspecifiedAddr: params.Listener.Addr().(*net.TCPAddr).IP.IsUnspecified(),
 
-		mode:        connectivity.ServingModeStarting,
-		closed:      grpcsync.NewEvent(),
-		goodUpdate:  grpcsync.NewEvent(),
+		mode:   connectivity.ServingModeNotServing, // triggers Accept() + Close() on any incoming connections.
+		closed: grpcsync.NewEvent(),
 	}
 	lw.logger = internalgrpclog.NewPrefixLogger(logger, fmt.Sprintf("[xds-server-listener %p] ", lw))
 
@@ -114,7 +113,7 @@ func NewListenerWrapper(params ListenerWrapperParams) (net.Listener, <-chan stru
 		logger: lw.logger,
 		name:   lw.name,
 	})
-	return lw, lw.goodUpdate.Done()
+	return lw
 }
 
 // listenerWrapper wraps the net.Listener associated with the listening address
@@ -137,11 +136,6 @@ type listenerWrapper struct {
 	// Listener resource received from the control plane.
 	addr, port string
 
-	// This is used to notify that a good update has been received and that
-	// Serve() can be invoked on the underlying gRPC server. Using an event
-	// instead of a vanilla channel simplifies the update handler as it need not
-	// keep track of whether the received update is the first one or not.
-	goodUpdate *grpcsync.Event
 	// A small race exists in the XDSClient code between the receipt of an xDS
 	// response and the user cancelling the associated watch. In this window,
 	// the registered callback may be invoked after the watch is canceled, and
@@ -150,21 +144,23 @@ type listenerWrapper struct {
 	// updates received in the callback if this event has fired.
 	closed *grpcsync.Event
 
-	// mu guards access to the current serving mode and the filter chains. The
-	// reason for using an rw lock here is that these fields are read in
-	// Accept() for all incoming connections, but writes happen rarely (when we
-	// get a Listener resource update).
+	// mu guards access to the current serving mode and the active filter chain
+	// manager.
 	mu sync.RWMutex
 	// Current serving mode.
 	mode connectivity.ServingMode
-	// Filter chains received as part of the last good update.
-	// switch name to activeFilterChainManager
-	activeFilterChainManager *xdsresource.FilterChainManager // maybe activeFilterChainManager
-	// Data structure to update correct heap memory representing rds
-	// configuration. It's literally a list of filter chains, which do contain a pointer
-	// switch name to activeFilterChainManager
+	// Filter chain manager currently serving.
+	activeFilterChainManager *xdsresource.FilterChainManager
+
+	// These fields are read/written to in the context of xDS updates, which are
+	// guaranteed to be emitted synchrously from the xDS Client. Thus, they do
+	// not need further synchronization. Active filter chains serving, used to
+	// update routing configuration for any RDS updates.
 	activeFilterChains []xdsresource.FilterChain
+	// Pending filter chain manager. Will go active once rdsHandler has received
+	// all the RDS resources this filter chain manager needs.
 	pendingFilterChainManager *xdsresource.FilterChainManager
+
 	// rdsHandler is used for any dynamic RDS resources specified in a LDS
 	// update.
 	rdsHandler *rdsHandler
@@ -186,60 +182,41 @@ func (lw *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
 	// what we have decided to do.
 	if ilc.Address != lw.addr || ilc.Port != lw.port {
 		lw.mu.Lock()
-		lw.switchModeLocked(connectivity.ServingModeNotServing, fmt.Errorf("address (%s:%s) in Listener update does not match listening address: (%s:%s)", ilc.Address, ilc.Port, lw.addr, lw.port)) // not serving
+		lw.switchModeLocked(connectivity.ServingModeNotServing, fmt.Errorf("address (%s:%s) in Listener update does not match listening address: (%s:%s)", ilc.Address, ilc.Port, lw.addr, lw.port))
 		lw.mu.Unlock()
-		return // It's like resource not found...just returns, and drains transports, I think makes sense (or can eat error if working), I think this is fine though.
+		return
 	}
 
-	// if a pending one hasn't gone active hasn't received all it's config,
-	// update watch there so I think this unconditional write to
-	// pendingFilterChains is ok
-
-	// *** Data structures which are orthogonal to active filter chain manager and heap memory of vhswi so doesn't race
 	lw.pendingFilterChainManager = ilc.FilterChains
 	lw.rdsHandler.updateRouteNamesToWatch(ilc.FilterChains.RouteConfigNames)
-	// ***
 
 	if lw.rdsHandler.determineRDSReady() {
 		lw.maybeUpdateFilterChains()
 	}
-
-	// write to pending, always even on first update once it's ready switch to
-	// current (need to switch to serving...) what happens if route names == 0
-	// should immediately go ready, I think rds handler will take care of this
-	// (will be tested by unit test of inline and it immediately works)
-
 }
 
 // maybeUpdateFilterChains swaps in the pending filter chain manager to the
-// active one. It also Drains (gracefully stops) any Connections that were
-// accepted on the old one. It also puts the server in state SERVING.
+// active one if the pending filter chain manager is present. It also Drains
+// (gracefully stops) any Connections that were accepted on the old one. It also
+// puts the server in state SERVING.
 func (l *listenerWrapper) maybeUpdateFilterChains() {
 	if l.pendingFilterChainManager == nil {
 		// Nothing to update, return early.
 		return
 	}
 
-	// unconditionally write serving (log serving -> serving transitions I think so) Don't need...swaps
-	// swap requires log?
-
-	// just writes it for accept
 	l.mu.Lock()
-	l.goodUpdate.Fire()                                      // keep same flow of only serving on this good update, makes sense with respect to language for both cases
-	l.switchModeLocked(connectivity.ServingModeServing, nil) // either drains it from resource not found, or here, won't trigger since switches to serving mode not serving
-
+	l.switchModeLocked(connectivity.ServingModeServing, nil)
 	// "Updates to a Listener cause all older connections on that Listener to be
 	// gracefully shut down with a grace period of 10 minutes for long-lived
 	// RPC's, such that clients will reconnect and have the updated
 	// configuration apply." - A36
 	connsToClose := l.activeFilterChainManager.Conns()
 	l.activeFilterChainManager = l.pendingFilterChainManager
+	l.pendingFilterChainManager = nil
 	l.instantiateFilterChainRoutingConfigurations()
-	l.mu.Unlock() // unblocks accept()
-	// I could also do this inside the mutex, or make non serving also do this? I don't think it matters but keep consistent. eh this is fine
+	l.mu.Unlock()
 	for _, conn := range connsToClose {
-
-		// need to typecast this and maybe handle ok (panic ok will never hit?)
 		conn.(*connWrapper).drain()
 	}
 }
@@ -250,21 +227,20 @@ type RoutingConfiguration struct {
 }
 
 // handleRDSUpdate rebuilds any routing configuration server side for any filter
-// chains that point to this RDS, and potentially makes new lds configuration to
-// start being used.
+// chains that point to this RDS, and potentially makes pending lds
+// configuration to swap to be active.
 func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate) {
-	// rds update updates filter chain corresponding (trigger from helper), and also caches it
-	// Update any corresponding filter chains active routing configuration
+	// Update any filter chains that point to this route configuration.
 	for _, fc := range l.activeFilterChains {
 		if fc.RouteConfigName == routeName {
 			if rcu.err != nil && rcu.update == nil { // Either NACK before update, or resource not found triggers this conditional.
-				atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
+				atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
 					Err: rcu.err,
 				}))
 				continue
 			}
 			vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-			atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
 				VHS: vhswi,
 				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
 			}))
@@ -276,43 +252,33 @@ func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate
 	}
 }
 
-// called on a lds going fully ready (I think including the first one, if zero I
-// think isready will determine that, cancels while clearing rds update cache
-// seemsssss to work) unit test basic scenario...
-
-
-// trigger serving change once lds goes ready, automatically trigger all the time switch to READY? only when you swap that's when you need to build out all
-// I think this swap logic works on first update, but test
-// also test with inline route config, I also think that will go through swap logic
-
 // instantiateFilterChainRoutingConfigurations instantiates all of the routing
 // configuration for the newly active filter chains. For any inline route
 // configurations, uses that, otherwise uses cached rdsHandler updates.
 func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 	l.activeFilterChains = nil
 	for _, fc := range l.activeFilterChainManager.FilterChains() {
-		// could alsooooo make this is a pointer if I wanted, would avoid copy...
-		l.activeFilterChains = append(l.activeFilterChains, *fc) // can update nil...I think pointing to same fc in memory is fine, never gets updated
+		l.activeFilterChains = append(l.activeFilterChains, *fc)
 		if fc.InlineRouteConfig != nil {
 			vhswi, err := fc.ConstructUsableRouteConfiguration(*fc.InlineRouteConfig)
-			atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
 				VHS: vhswi,
 				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
-			})) // this can't happen with accept so don't even need this atomic honestly...
+			})) // Can't race with an RPC coming in but no harm making atomic.
 			continue
 		} // Inline configuration constructed once here, will remain for lifetime of filter chain.
 		rcu := l.rdsHandler.updates[fc.RouteConfigName]
 		if rcu.err != nil && rcu.update == nil {
-			atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
 				Err: rcu.err,
 			}))
 			continue
 		}
 		vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-		atomic.StorePointer(fc.VHS, unsafe.Pointer(&RoutingConfiguration{
+		atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
 			VHS: vhswi,
 			Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
-		}))
+		})) // Can't race with an RPC coming in but no harm making atomic.
 	}
 }
 
@@ -393,7 +359,7 @@ func (l *listenerWrapper) Accept() (net.Conn, error) {
 			conn.Close()
 			continue
 		}
-		cw := &connWrapper{Conn: conn, filterChain: fc, parent: l, vhs: fc.VHS}
+		cw := &connWrapper{Conn: conn, filterChain: fc, parent: l, rc: fc.RC}
 		l.activeFilterChainManager.AddConn(cw)
 		l.mu.RUnlock()
 		return cw, nil
@@ -413,34 +379,9 @@ func (l *listenerWrapper) Close() error {
 	return nil
 }
 
-
-// server creates lw, blocks on good update
-// for it to Serve()
-// fire a good update to serve...falls within language and write a comment explaining
-/*
-// I honestly think can fire good update and keep flow, aligns with language,
-// Doesn't serve until first good update, which aligns with language below.
-// If goes not serving after, Accept() then Close().
-
-To serve RPCs, the XdsServer must have its xDS configuration, provided via a
-Listener resource and potentialy other related resources. When its xDS
-configuration does not exist or has not yet been received the server must be in
-a "not serving" mode. This is ideally implemented by not listen()ing on the
-port. If that is impractical an implementation may be listen()ing on the port,
-but it must also accept() and immediately close() connections, making sure to
-not send any data to the client.
-*/ // does it trigger serve right? i.e. correct gate?
-
-// Does not having called Serve == not serving?
-
-// before good update fires first part of language,
-// after fires second part of language...
-
-
-
 // switchModeLocked switches the current mode of the listener wrapper. It also
 // gracefully closes any connections if the listener wrapper transitions into
-// non serving. If the serving mode has changed, it invokes the registered mode
+// not serving. If the serving mode has changed, it invokes the registered mode
 // change callback.
 func (l *listenerWrapper) switchModeLocked(newMode connectivity.ServingMode, err error) {
 	if l.mode == newMode && l.mode == connectivity.ServingModeServing {
