@@ -221,7 +221,7 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 	// string, it will be replaced with the server's listening "IP:port" (e.g.,
 	// "0.0.0.0:8080", "[::]:8080").
 	cfg := s.xdsC.BootstrapConfig()
-	name := bootstrap.PopulateResourceTemplate(cfg.ServerListenerResourceNameTemplate, lis.Addr().String())
+	name := bootstrap.PopulateResourceTemplate(cfg.ServerListenerResourceNameTemplate, lis.Addr().String()) // wraps all accepted listeners with the same xDS resources, two lis wrappers, so state applies to all wrapped lis, so I think makes sense
 
 	// Create a listenerWrapper which handles all functionality required by
 	// this particular instance of Serve().
@@ -230,8 +230,14 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 		ListenerResourceName: name,
 		XDSCredsInUse:        s.xdsCredsInUse,
 		XDSClient:            s.xdsC,
+		ModeCallback:         func(addr net.Addr, mode connectivity.ServingMode, err error) {
+			s.opts.modeCallback(addr, ServingModeChangeArgs{
+				Mode: mode,
+				Err:  err,
+			})
+		},
 	})
-	return s.gs.Serve(lw)
+	return s.gs.Serve(lw) // two lis wrappers?
 }
 
 // Stop stops the underlying gRPC server. It immediately closes all open

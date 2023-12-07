@@ -69,14 +69,14 @@ type connWrapper struct {
 
 	// The virtual hosts with matchable routes and instantiated HTTP Filters per
 	// route, or an error.
-	rc *unsafe.Pointer // *RoutingConfiguration
+	rc unsafe.Pointer // *RoutingConfiguration
 }
 
 // RoutingConfiguration returns the RoutingConfiguration to be used for server
 // side routing. If RoutingConfiguration contains error, fail any RPCs on this
 // Conn with status code UNAVAILABLE.
 func (c *connWrapper) RoutingConfiguration() RoutingConfiguration {
-	uPtr := atomic.LoadPointer(c.rc)
+	uPtr := atomic.LoadPointer(&c.rc)
 	return *(*RoutingConfiguration)(uPtr)
 }
 

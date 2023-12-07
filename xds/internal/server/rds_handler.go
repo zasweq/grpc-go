@@ -67,8 +67,13 @@ func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool)
 			// The xDS client keeps a reference to the watcher until the cancel
 			// func is invoked. So, we don't need to keep a reference for fear
 			// of it being garbage collected.
+
+			// Wrap this cancel func to also set a bit in rdsWatcher to eat calls.
 			w := &rdsWatcher{parent: rh, routeName: routeName}
-			rh.cancels[routeName] = xdsresource.WatchRouteConfig(rh.xdsC, routeName, w)
+			rh.cancels[routeName] = xdsresource.WatchRouteConfig(rh.xdsC, routeName, w) // calls back into w here
+			// just have cancels set bit on the rdsWatcher
+
+
 		}
 	}
 

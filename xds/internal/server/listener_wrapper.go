@@ -82,6 +82,8 @@ type ListenerWrapperParams struct {
 	XDSCredsInUse bool
 	// XDSClient provides the functionality from the XDSClient required here.
 	XDSClient XDSClient
+	// ModeCallback is the callback to invoke when the serving mode changes.
+	ModeCallback ServingModeCallback
 }
 
 // NewListenerWrapper creates a new listenerWrapper with params. It returns a
@@ -95,6 +97,7 @@ func NewListenerWrapper(params ListenerWrapperParams) net.Listener {
 		name:              params.ListenerResourceName,
 		xdsCredsInUse:     params.XDSCredsInUse,
 		xdsC:              params.XDSClient,
+		modeCallback:      params.ModeCallback, // plumbs it all the way through
 		isUnspecifiedAddr: params.Listener.Addr().(*net.TCPAddr).IP.IsUnspecified(),
 
 		mode:   connectivity.ServingModeNotServing, // triggers Accept() + Close() on any incoming connections.
@@ -167,6 +170,7 @@ type listenerWrapper struct {
 }
 
 func (lw *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
+	print("handleLDSUpdate called")
 	ilc := update.InboundListenerCfg
 	// Make sure that the socket address on the received Listener resource
 	// matches the address of the net.Listener passed to us by the user. This
@@ -187,7 +191,7 @@ func (lw *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
 		return
 	}
 
-	lw.pendingFilterChainManager = ilc.FilterChains
+	lw.pendingFilterChainManager = ilc.FilterChains // this needs to write something
 	lw.rdsHandler.updateRouteNamesToWatch(ilc.FilterChains.RouteConfigNames)
 
 	if lw.rdsHandler.determineRDSReady() {
@@ -200,18 +204,23 @@ func (lw *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
 // (gracefully stops) any Connections that were accepted on the old one. It also
 // puts the server in state SERVING.
 func (l *listenerWrapper) maybeUpdateFilterChains() {
+	print("maybeUpdateFilterChains called")
 	if l.pendingFilterChainManager == nil {
 		// Nothing to update, return early.
 		return
 	}
 
 	l.mu.Lock()
+	// it has to hit here
 	l.switchModeLocked(connectivity.ServingModeServing, nil)
 	// "Updates to a Listener cause all older connections on that Listener to be
 	// gracefully shut down with a grace period of 10 minutes for long-lived
 	// RPC's, such that clients will reconnect and have the updated
 	// configuration apply." - A36
-	connsToClose := l.activeFilterChainManager.Conns()
+	var connsToClose []net.Conn
+	if l.activeFilterChainManager != nil { // If there is a filter chain manager to clean up.
+		connsToClose = l.activeFilterChainManager.Conns()
+	}
 	l.activeFilterChainManager = l.pendingFilterChainManager
 	l.pendingFilterChainManager = nil
 	l.instantiateFilterChainRoutingConfigurations()
@@ -230,17 +239,18 @@ type RoutingConfiguration struct {
 // chains that point to this RDS, and potentially makes pending lds
 // configuration to swap to be active.
 func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate) {
+	print("handleRDSUpdate called")
 	// Update any filter chains that point to this route configuration.
 	for _, fc := range l.activeFilterChains {
 		if fc.RouteConfigName == routeName {
 			if rcu.err != nil && rcu.update == nil { // Either NACK before update, or resource not found triggers this conditional.
-				atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
+				atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
 					Err: rcu.err,
 				}))
 				continue
 			}
 			vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-			atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
 				VHS: vhswi,
 				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
 			}))
@@ -261,7 +271,7 @@ func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 		l.activeFilterChains = append(l.activeFilterChains, *fc)
 		if fc.InlineRouteConfig != nil {
 			vhswi, err := fc.ConstructUsableRouteConfiguration(*fc.InlineRouteConfig)
-			atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
 				VHS: vhswi,
 				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
 			})) // Can't race with an RPC coming in but no harm making atomic.
@@ -269,13 +279,13 @@ func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 		} // Inline configuration constructed once here, will remain for lifetime of filter chain.
 		rcu := l.rdsHandler.updates[fc.RouteConfigName]
 		if rcu.err != nil && rcu.update == nil {
-			atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
 				Err: rcu.err,
 			}))
 			continue
 		}
 		vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-		atomic.StorePointer(fc.RC, unsafe.Pointer(&RoutingConfiguration{
+		atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
 			VHS: vhswi,
 			Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
 		})) // Can't race with an RPC coming in but no harm making atomic.
@@ -384,6 +394,8 @@ func (l *listenerWrapper) Close() error {
 // not serving. If the serving mode has changed, it invokes the registered mode
 // change callback.
 func (l *listenerWrapper) switchModeLocked(newMode connectivity.ServingMode, err error) {
+	// is this getting called right?
+	print("switch mode called with: ", newMode) // does this log properly?
 	if l.mode == newMode && l.mode == connectivity.ServingModeServing {
 		// Redundant updates are suppressed only when we are SERVING and the new
 		// mode is also SERVING. In the other case (where we are NOT_SERVING and the
@@ -393,7 +405,7 @@ func (l *listenerWrapper) switchModeLocked(newMode connectivity.ServingMode, err
 		return
 	}
 	l.mode = newMode
-	if l.mode == connectivity.ServingModeNotServing {
+	if l.mode == connectivity.ServingModeNotServing { // gracefully drain any conns if switching to serving
 		for _, conn := range l.activeFilterChainManager.Conns() {
 			conn.(*connWrapper).drain()
 		}

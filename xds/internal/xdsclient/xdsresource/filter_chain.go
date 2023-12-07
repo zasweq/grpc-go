@@ -69,7 +69,7 @@ type FilterChain struct {
 	// Exactly one of RouteConfigName and InlineRouteConfig is set.
 	InlineRouteConfig *RouteConfigUpdate
 	// RC is the routing configuration for this filter chain (LDS + RDS).
-	RC *unsafe.Pointer // *(RoutingConfiguration)
+	RC unsafe.Pointer // *(RoutingConfiguration)
 }
 
 // VirtualHostWithInterceptors captures information present in a VirtualHost
@@ -302,7 +302,9 @@ func NewFilterChainManager(lis *v3listenerpb.Listener) (*FilterChainManager, err
 		}
 	}
 	fci.def = def
-	fci.fcs = append(fci.fcs, def)
+	if fci.def != nil {
+		fci.fcs = append(fci.fcs, fci.def)
+	}
 
 	// If there are no supported filter chains and no default filter chain, we
 	// fail here. This will call the Listener resource to be NACK'ed.
