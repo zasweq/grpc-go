@@ -241,8 +241,9 @@ type RoutingConfiguration struct {
 func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate) {
 	print("handleRDSUpdate called")
 	// Update any filter chains that point to this route configuration.
-	for _, fc := range l.activeFilterChains {
+	for _, fc := range l.activeFilterChains { // v4 and v6 filter chains...why doesn't this update the first time?
 		if fc.RouteConfigName == routeName {
+			print("updating filter chain for route name: ", routeName)
 			if rcu.err != nil && rcu.update == nil { // Either NACK before update, or resource not found triggers this conditional.
 				atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
 					Err: rcu.err,
@@ -266,6 +267,7 @@ func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate
 // configuration for the newly active filter chains. For any inline route
 // configurations, uses that, otherwise uses cached rdsHandler updates.
 func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
+	print("instantiateFilterChainRoutingConfigurations called")
 	l.activeFilterChains = nil
 	for _, fc := range l.activeFilterChainManager.FilterChains() {
 		l.activeFilterChains = append(l.activeFilterChains, *fc)

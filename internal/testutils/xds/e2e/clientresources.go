@@ -107,7 +107,7 @@ var RouterHTTPFilter = HTTPFilter("router", &v3routerpb.Router{})
 // DefaultClientListener returns a basic xds Listener resource to be used on
 // the client side.
 func DefaultClientListener(target, routeName string) *v3listenerpb.Listener {
-	hcm := marshalAny(&v3httppb.HttpConnectionManager{
+	hcm := marshalAny(&v3httppb.HttpConnectionManager{ // here you go, inline RDS...
 		RouteSpecifier: &v3httppb.HttpConnectionManager_Rds{Rds: &v3httppb.Rds{
 			ConfigSource: &v3corepb.ConfigSource{
 				ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{Ads: &v3corepb.AggregatedConfigSource{}},
@@ -137,6 +137,135 @@ func marshalAny(m proto.Message) *anypb.Any {
 	return a
 }
 
+// Returns a xDS Listener resource to be used server side that specifies two
+// filter chains, one with a dynamic rds, one with an inline rds.
+
+/*
+func ServerListenerDynamicRDSAndInline(host string, port uint32, routeName string) *v3listenerpb.Listener {
+
+	// filter chain 1 with inline route config (below seems to be) about
+
+	// filter chain 2 with just route name
+
+	// see below, I still don't know how to branch on the two filter chains...
+
+
+	hcmInline := &v3httppb.HttpConnectionManager{
+		RouteSpecifier: &v3httppb.HttpConnectionManager_RouteConfig{
+			RouteConfig: &v3routepb.RouteConfiguration{
+				Name: routeName,
+				VirtualHosts: []*v3routepb.VirtualHost{{
+					// This "*" string matches on any incoming authority. This is to ensure any
+					// incoming RPC matches to Route_NonForwardingAction and will proceed as
+					// normal.
+					Domains: []string{"*"},
+					Routes: []*v3routepb.Route{{
+						Match: &v3routepb.RouteMatch{
+							PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: "/"},
+						},
+						Action: &v3routepb.Route_NonForwardingAction{},
+					}}}}},
+		},
+		HttpFilters: []*v3httppb.HttpFilter{RouterHTTPFilter},
+	}
+
+	hcmRDS := &v3httppb.HttpConnectionManager{
+		RouteSpecifier: &v3httppb.HttpConnectionManager_Rds{
+			Rds: &v3httppb.Rds{
+				ConfigSource: &v3corepb.ConfigSource{
+					ConfigSourceSpecifier: &v3corepb.ConfigSource_Ads{Ads: &v3corepb.AggregatedConfigSource{}},
+				},
+				RouteConfigName: routeName,
+			},
+		},
+		HttpFilters: []*v3httppb.HttpFilter{RouterHTTPFilter},
+	}
+
+	lis := &v3listenerpb.Listener{
+		Name: fmt.Sprintf(ServerListenerResourceNameTemplate, net.JoinHostPort(host, strconv.Itoa(int(port)))),
+		Address: &v3corepb.Address{
+			Address: &v3corepb.Address_SocketAddress{
+				SocketAddress: &v3corepb.SocketAddress{
+					Address: host,
+					PortSpecifier: &v3corepb.SocketAddress_PortValue{
+						PortValue: port,
+					},
+				},
+			},
+		},
+		FilterChains: []*v3listenerpb.FilterChain{
+			// Need one with dynamic, and one without dynamic
+			// how to branch, this is on ipv4 vs. ipv6...
+			{
+				Name: "v4-wildcard",
+				FilterChainMatch: &v3listenerpb.FilterChainMatch{
+					PrefixRanges: []*v3corepb.CidrRange{
+						{
+							AddressPrefix: "0.0.0.0",
+							PrefixLen: &wrapperspb.UInt32Value{
+								Value: uint32(0),
+							},
+						},
+					},
+					SourceType: v3listenerpb.FilterChainMatch_SAME_IP_OR_LOOPBACK,
+					SourcePrefixRanges: []*v3corepb.CidrRange{
+						{
+							AddressPrefix: "0.0.0.0",
+							PrefixLen: &wrapperspb.UInt32Value{
+								Value: uint32(0),
+							},
+						},
+					},
+				},
+				Filters: []*v3listenerpb.Filter{
+					{
+						Name:       "filter-1",
+						ConfigType: &v3listenerpb.Filter_TypedConfig{TypedConfig: marshalAny(hcm)}, // this function either inline or dynamic rds, sticks it in hcm here but same filter chain wrapper
+					},
+				},
+				TransportSocket: ts,
+			},
+			{
+				Name: "v6-wildcard",
+				FilterChainMatch: &v3listenerpb.FilterChainMatch{
+					PrefixRanges: []*v3corepb.CidrRange{
+						{
+							AddressPrefix: "::",
+							PrefixLen: &wrapperspb.UInt32Value{
+								Value: uint32(0),
+							},
+						},
+					},
+					SourceType: v3listenerpb.FilterChainMatch_SAME_IP_OR_LOOPBACK,
+					SourcePrefixRanges: []*v3corepb.CidrRange{
+						{
+							AddressPrefix: "::",
+							PrefixLen: &wrapperspb.UInt32Value{
+								Value: uint32(0),
+							},
+						},
+					},
+				},
+				Filters: []*v3listenerpb.Filter{
+					{
+						Name:       "filter-1",
+						ConfigType: &v3listenerpb.Filter_TypedConfig{TypedConfig: marshalAny(hcm)},
+					},
+				},
+				TransportSocket: ts, // where does this come from
+			},
+		},
+	} // bare minimum in both filter chains andddd the overall resource to have it work...
+
+	// I don't think there's any way of pulling this out into common logic
+
+	return lis
+}
+
+ */
+
+// one piece of logic that you can use is header matching...
+
 // DefaultServerListener returns a basic xds Listener resource to be used on the
 // server side. The returned Listener resource contains an inline route
 // configuration with the name of routeName.
@@ -146,7 +275,7 @@ func DefaultServerListener(host string, port uint32, secLevel SecurityLevel, rou
 
 func defaultServerListenerCommon(host string, port uint32, secLevel SecurityLevel, routeName string, inlineRouteConfig bool) *v3listenerpb.Listener {
 	var hcm *v3httppb.HttpConnectionManager
-	if inlineRouteConfig {
+	if inlineRouteConfig { // difference, need two filter chains with these two routes (need different names though)...
 		hcm = &v3httppb.HttpConnectionManager{
 			RouteSpecifier: &v3httppb.HttpConnectionManager_RouteConfig{
 				RouteConfig: &v3routepb.RouteConfiguration{
@@ -252,7 +381,7 @@ func defaultServerListenerCommon(host string, port uint32, secLevel SecurityLeve
 				Filters: []*v3listenerpb.Filter{
 					{
 						Name:       "filter-1",
-						ConfigType: &v3listenerpb.Filter_TypedConfig{TypedConfig: marshalAny(hcm)},
+						ConfigType: &v3listenerpb.Filter_TypedConfig{TypedConfig: marshalAny(hcm)}, // this function either inline or dynamic rds, sticks it in hcm here but same filter chain wrapper
 					},
 				},
 				TransportSocket: ts,
@@ -866,5 +995,25 @@ func RouteConfigNonForwardingTarget(routeName string) *v3routepb.RouteConfigurat
 					PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: "/"},
 				},
 				Action: &v3routepb.Route_NonForwardingAction{},
+			}}}}}
+}
+
+// RouteConfigNonForwardingTarget returns an xDS RouteConfig resource which
+// specifies to route to a route specifying route action. Since this is not type
+// non forwarding action, this should fail requests that match to this server
+// side.
+func RouteConfigRoute(routeName string) *v3routepb.RouteConfiguration {
+	return &v3routepb.RouteConfiguration{
+		Name: routeName,
+		VirtualHosts: []*v3routepb.VirtualHost{{
+			// This "*" string matches on any incoming authority. This is to ensure any
+			// incoming RPC matches to Route_NonForwardingAction and will proceed as
+			// normal.
+			Domains: []string{"*"},
+			Routes: []*v3routepb.Route{{
+				Match: &v3routepb.RouteMatch{
+					PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: "/"},
+				},
+				Action: &v3routepb.Route_Route{},
 			}}}}}
 }

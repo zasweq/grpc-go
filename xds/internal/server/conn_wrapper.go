@@ -76,7 +76,13 @@ type connWrapper struct {
 // side routing. If RoutingConfiguration contains error, fail any RPCs on this
 // Conn with status code UNAVAILABLE.
 func (c *connWrapper) RoutingConfiguration() RoutingConfiguration {
-	uPtr := atomic.LoadPointer(&c.rc)
+	// works in the case one 1 (try second to see if it calls twice)
+
+	// Doesn't update properly
+
+	// local var so I don't think updates properly
+	print("RoutingConfiguration() called in connWrapper")
+	uPtr := atomic.LoadPointer(&c.rc) // is this actually getting updated correctly? Go playground to find out
 	return *(*RoutingConfiguration)(uPtr)
 }
 

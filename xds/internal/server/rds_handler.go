@@ -70,7 +70,11 @@ func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool)
 
 			// Wrap this cancel func to also set a bit in rdsWatcher to eat calls.
 			w := &rdsWatcher{parent: rh, routeName: routeName}
-			rh.cancels[routeName] = xdsresource.WatchRouteConfig(rh.xdsC, routeName, w) // calls back into w here
+			xdsCCancel := xdsresource.WatchRouteConfig(rh.xdsC, routeName, w) // calls back into w here
+			rh.cancels[routeName] = func() {
+				w.cancelled = true // doesn't race, all of this is sync
+				xdsCCancel()
+			} // calls back into w here
 			// just have cancels set bit on the rdsWatcher
 
 
@@ -134,9 +138,14 @@ type rdsWatcher struct {
 	parent    *rdsHandler
 	logger    *igrpclog.PrefixLogger
 	routeName string
+
+	cancelled bool // eats calls if true, gate future callbacks here...
 }
 
 func (rw *rdsWatcher) OnUpdate(update *xdsresource.RouteConfigResourceData) {
+	if rw.cancelled { // eat any calls coming from cancelled watchers
+		return
+	}
 	if rw.logger.V(2) {
 		rw.logger.Infof("RDS watch for resource %q received update: %#v", rw.routeName, update.Resource)
 	}
@@ -146,6 +155,9 @@ func (rw *rdsWatcher) OnUpdate(update *xdsresource.RouteConfigResourceData) {
 }
 
 func (rw *rdsWatcher) OnError(err error) {
+	if rw.cancelled { // eat any calls coming from cancelled watchers
+		return
+	}
 	if rw.logger.V(2) {
 		rw.logger.Infof("RDS watch for resource %q reported error: %v", rw.routeName, err)
 	}
@@ -155,6 +167,9 @@ func (rw *rdsWatcher) OnError(err error) {
 }
 
 func (rw *rdsWatcher) OnResourceDoesNotExist() {
+	if rw.cancelled { // eat any calls coming from cancelled watchers
+		return
+	}
 	if rw.logger.V(2) {
 		rw.logger.Infof("RDS watch for resource %q reported resource-does-not-exist error: %v", rw.routeName)
 	}
@@ -163,3 +178,5 @@ func (rw *rdsWatcher) OnResourceDoesNotExist() {
 		err: err,
 	})
 }
+
+// wrap cancel to set a bit, once it's called set it to true (cancel() is called sync and only once)
