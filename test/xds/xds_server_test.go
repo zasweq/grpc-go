@@ -190,7 +190,7 @@ func (s) TestServeLDSRDS(t *testing.T) {
 
 	// Does heap not propagate through?
 
-}
+} // woohoo it works! Wasn't updating pointer correctly
 
 // perhaps merge these two ^^^ vvv
 

@@ -269,7 +269,7 @@ func (s *GRPCServer) GracefulStop() {
 func routeAndProcess(ctx context.Context) error {
 	conn := transport.GetConnection(ctx)
 	cw, ok := conn.(interface {
-		RoutingConfiguration() server.RoutingConfiguration
+		RoutingConfiguration() xdsresource.RoutingConfiguration
 	})
 	if !ok {
 		return errors.New("missing virtual hosts in incoming context")

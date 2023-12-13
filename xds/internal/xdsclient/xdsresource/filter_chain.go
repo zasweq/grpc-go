@@ -69,7 +69,7 @@ type FilterChain struct {
 	// Exactly one of RouteConfigName and InlineRouteConfig is set.
 	InlineRouteConfig *RouteConfigUpdate
 	// RC is the routing configuration for this filter chain (LDS + RDS).
-	RC unsafe.Pointer // *(RoutingConfiguration)
+	RC *unsafe.Pointer // *(RoutingConfiguration)
 }
 
 // VirtualHostWithInterceptors captures information present in a VirtualHost
@@ -94,6 +94,11 @@ type RouteWithInterceptors struct {
 	// constructed from a combination of the top level configuration and any
 	// HTTP Filter overrides present in Virtual Host or Route.
 	Interceptors []resolver.ServerInterceptor
+}
+
+type RoutingConfiguration struct {
+	VHS []VirtualHostWithInterceptors
+	Err error
 }
 
 // ConstructUsableRouteConfiguration takes Route Configuration and converts it
@@ -596,7 +601,11 @@ func (fci *FilterChainManager) Validate(f func(fc *FilterChain) error) error {
 }
 
 func processNetworkFilters(filters []*v3listenerpb.Filter) (*FilterChain, error) {
-	filterChain := &FilterChain{}
+	// rc := unsafe.Pointer(&RoutingCo)
+	rc := unsafe.Pointer(&RoutingConfiguration{})
+	filterChain := &FilterChain{
+		RC: &rc,
+	}
 	seenNames := make(map[string]bool, len(filters))
 	seenHCM := false
 	for _, filter := range filters {

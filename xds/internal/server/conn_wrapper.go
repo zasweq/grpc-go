@@ -69,21 +69,32 @@ type connWrapper struct {
 
 	// The virtual hosts with matchable routes and instantiated HTTP Filters per
 	// route, or an error.
-	rc unsafe.Pointer // *RoutingConfiguration
+	rc *unsafe.Pointer // *RoutingConfiguration
 }
 
 // RoutingConfiguration returns the RoutingConfiguration to be used for server
 // side routing. If RoutingConfiguration contains error, fail any RPCs on this
 // Conn with status code UNAVAILABLE.
-func (c *connWrapper) RoutingConfiguration() RoutingConfiguration {
+func (c *connWrapper) RoutingConfiguration() xdsresource.RoutingConfiguration {
 	// works in the case one 1 (try second to see if it calls twice)
 
 	// Doesn't update properly
 
 	// local var so I don't think updates properly
+
+	/* pointer to pointer GetHandshakeInfo is a *unsafe.Pointer
+	uPtr := xdsinternal.GetHandshakeInfo(chi.Attributes)
+	hi := (*xdsinternal.HandshakeInfo)(atomic.LoadPointer(uPtr))
+	*/
+
+	// load is a deref
+
+	// this is wrong because it persists a local var - I think works for the first but not subsequent
+	// atomically derefs local var
+
 	print("RoutingConfiguration() called in connWrapper")
-	uPtr := atomic.LoadPointer(&c.rc) // is this actually getting updated correctly? Go playground to find out
-	return *(*RoutingConfiguration)(uPtr)
+	uPtr := atomic.LoadPointer(c.rc) // is this actually getting updated correctly? Go playground to find out
+	return *(*xdsresource.RoutingConfiguration)(uPtr)
 }
 
 // SetDeadline makes a copy of the passed in deadline and forwards the call to

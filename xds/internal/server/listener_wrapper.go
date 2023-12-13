@@ -230,10 +230,12 @@ func (l *listenerWrapper) maybeUpdateFilterChains() {
 	}
 }
 
+/*
 type RoutingConfiguration struct {
 	VHS []xdsresource.VirtualHostWithInterceptors
 	Err error
 }
+ */
 
 // handleRDSUpdate rebuilds any routing configuration server side for any filter
 // chains that point to this RDS, and potentially makes pending lds
@@ -245,13 +247,13 @@ func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate
 		if fc.RouteConfigName == routeName {
 			print("updating filter chain for route name: ", routeName)
 			if rcu.err != nil && rcu.update == nil { // Either NACK before update, or resource not found triggers this conditional.
-				atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
+				atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 					Err: rcu.err,
 				}))
 				continue
 			}
 			vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-			atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 				VHS: vhswi,
 				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
 			}))
@@ -273,7 +275,7 @@ func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 		l.activeFilterChains = append(l.activeFilterChains, *fc)
 		if fc.InlineRouteConfig != nil {
 			vhswi, err := fc.ConstructUsableRouteConfiguration(*fc.InlineRouteConfig)
-			atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 				VHS: vhswi,
 				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
 			})) // Can't race with an RPC coming in but no harm making atomic.
@@ -281,13 +283,13 @@ func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 		} // Inline configuration constructed once here, will remain for lifetime of filter chain.
 		rcu := l.rdsHandler.updates[fc.RouteConfigName]
 		if rcu.err != nil && rcu.update == nil {
-			atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
+			atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 				Err: rcu.err,
 			}))
 			continue
 		}
 		vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-		atomic.StorePointer(&fc.RC, unsafe.Pointer(&RoutingConfiguration{
+		atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 			VHS: vhswi,
 			Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
 		})) // Can't race with an RPC coming in but no harm making atomic.
