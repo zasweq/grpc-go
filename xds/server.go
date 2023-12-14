@@ -303,7 +303,7 @@ func routeAndProcess(ctx context.Context) error {
 		Context: ctx,
 		Method:  mn,
 	}
-	for _, r := range vh.Routes {
+	for _, r := range vh.Routes { // this is where you can branch on header matcher - by rds...which two filter chains can point to two, I think one authority so plumb a header that branches the rds
 		if r.M.Match(rpcInfo) {
 			// "NonForwardingAction is expected for all Routes used on server-side; a route with an inappropriate action causes
 			// RPCs matching that route to fail with UNAVAILABLE." - A36

@@ -852,6 +852,31 @@ func EndpointResourceWithOptions(opts EndpointOptions) *v3endpointpb.ClusterLoad
 	return cla
 }
 
+// one inline one dynamic
+
+// two dynamic
+
+// can I pull out the resources into helper and append to the filter chains?
+func ServerListenerWithRdsAndInline(host string, port uint32, secLevel SecurityLevel, routeName string) {
+	// hcm is the one that branches...already thought about this
+
+	// but filter chains need a differentiator between (ipv4 || ipv6) vs. (ipv4 || ipv6)
+
+	// header matcher branch Easwar mentioned is on rds, lds is properties of incoming connection
+
+	// other client conn? Eric mentioned multiple LDS is handled by multiples *channels*
+}
+
+// same filter chain branch as above just have it also be dynamic, and make assertions based off those (ohh two rds resources you cannnn induce different header matchers)
+// so assert on that perhaps (still need to figure out how to branch Conn properties
+
+func ServerListenerWithTwoRds(host string, port uint32, secLevel SecurityLevel, routeName string) {
+
+}
+
+
+
+
 // DefaultServerListenerWithRouteConfigName returns a basic xds Listener
 // resource to be used on the server side. The returned Listener resource
 // contains a RouteCongiguration resource name that needs to be resolved.
