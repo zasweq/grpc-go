@@ -20,6 +20,7 @@ package xds_test
 
 import (
 	"context"
+	"github.com/golang/groupcache/testpb"
 	"net"
 	"testing"
 
@@ -102,47 +103,10 @@ func (s) TestServeLDSRDS(t *testing.T) {
 
 	waitForSuccessfulRPC(ctx, t, cc) // Eventually, the LDS and dynamic RDS get processed, work, and RPC's should work as usual
 
-	// on the first one RDS update eats processing since not active.
-	// gets handled once it goes ready...then handleRDS update called
-
-
-	// either unavailable or another header matcher?
-
-	// server needs full resources as diff
-
-
-	// (conn has already been established)
-	// I think just setting this should propagate all the way down dynamically (write a comment about this)
+	// Set the route config to be of type route action route, which the rpc will
+	// match to. This should eventually reflect in the Conn's routing
+	// configuration and fail the rpc with a status code UNAVAILABLE.
 	routeConfig = e2e.RouteConfigRoute("routeName")
-
-	// this is the proto resource, it still needs to get processed...
-	// maybe have the proto resource be non forwarding, should fail RPCs (will break in future right)
-
-	//	it responded to all xDS responses in cache
-
-
-
-
-	// this makes it continue to call lds update, I only want lds update to be called ^^^
-
-	// Does this plumb in a whole new listener, or does it just do route
-	// does it need to do diff
-
-	// only calls handleLDS once correctly, client eats it. but it's cached so need all resources
-
-	// calls handleRDS twice, weird it calls maybeUpdteaFilterChains correctly
-
-	// moves to serving correctly on first one,
-	// second one hits, but it doesn't trigger failure
-
-	// the first one works but doesn't seem to be calling handleRouteUpdate
-	// correctly...is it wai...
-
-
-	// second one updates both filter chains correctly...
-
-
-
 	resources = e2e.UpdateOptions{
 		NodeID:    nodeID,
 		Listeners: []*v3listenerpb.Listener{listener}, // Same lis, so will get eaten by the xDS Client.
@@ -150,41 +114,18 @@ func (s) TestServeLDSRDS(t *testing.T) {
 		Routes:    []*v3routepb.RouteConfiguration{routeConfig},
 
 	}
-
 	if err := managementServer.Update(ctx, resources); err != nil {
 		t.Fatal(err)
-	} // eventually consistent - how to plumb a happens before all the way wrt to this configuration being applied?
-
-	// how to differentiate? plumb a !non forwarding action through proto
-
+	}
 	// "NonForwardingAction is expected for all Routes used on server-side; a
 	// route with an inappropriate action causes RPCs matching that route to
 	// fail with UNAVAILABLE." - A36
-
-	// sync point - eventual consistency at some point in the future
-
-	// maybe it doesn't do the pointer stuff correctly...
-
-	// I don't know why the signal doesn't plumb, but RPC's don't error (also make sure UNAVAILABLE), not just a failure,
-	// make a knob?
-
 	waitForFailedRPC(ctx, t, cc)
 
+	// make it go ready again - if a different error message can just use below...
+
+	// inject a resource not found - it should fail - invoke using Easwar's change
 }
-
-// perhaps merge these two ^^^ vvv
-
-// wow this works, try others
-
-// maybe send out with just test above
-
-// Dynamic RDS case switching: LDS + RDS + Accept() + RPC, new RDS, new RPC
-// reflects that new RDS (how to test it actually reflects new RDS)? error RDS?
-func (s) TestDynamicRDSReflected(t *testing.T) {
-	// routeconfiguration is the knob - reflect it in xDS Server, do you have to wait for it to be reflected in the conn somehow?
-	// or maybe poll until the eventual consitency is reflected in the system
-}
-
 
 // knob on headers maybe - can attach headers to RPC's on returned client conn
 
@@ -261,110 +202,38 @@ func setup(t *testing.T, resources e2e.UpdateOptions) (*e2e.ManagementServer, *x
 	}
 }
 
-// anyways, what areeee the resources you need?
+
+// *** New musings
+// all this requires resource not found - clean this test up, and then rebase onto Easwar's
+
+// If not spoofed addresses:
+// one rds - either works, fails, or resource not found
 
 
-// maybe try below and see if it works
 
-// have to split up incoming RPC's into two routes for tests below...
-
-/*
-LDS + (Inline RDS/Dynamic RDS) should only start working once dynamic RDS comes in
-RPCs matching to inline should work, RPCs matching to dynamic should also work
-*/
-
-/*
-func (s) TestBothInlineAndDynamic(t *testing.T) {
-
-	// make management server point to rds and inline in one lis resource
-
-	// setup - pull out into helper?
-	managementServer, nodeID, bootstrapContents, _, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
-	defer cleanup()
-	lis, err := testutils.LocalTCPListener() // is this the type of listener I want? Also, can I generalize this?
-	if err != nil {
-		t.Fatalf("testutils.LocalTCPListener() failed: %v", err)
-	}
-	// Setup the management server to respond with a listener resource that
-	// specifies a route name to watch, and a RDS resource corresponding to this
-	// route name.
-	host, port, err := hostPortFromListener(lis)
-	if err != nil {
-		t.Fatalf("failed to retrieve host and port of server: %v", err)
-	}
-
-	// two route configs...how to differentiate ipv4 vs. ipv6 is how it does it currently, does it need two branches...
-	// listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
-	var listener *v3listenerpb.Listener
-	listener.FilterChains // needs two of these, one specifying inline, one specifying dynamic, and also needs to differentiate somehow...
-	// fc holds an inline rds
-
-	// routeConfig := e2e.RouteConfigNonForwardingTarget("routeName")
-	var routeConfig *v3routepb.RouteConfiguration
-	// maybe make same one, this is dynamic portion
-
-	// See calls to NewWithConfigForTesting to make not resource not found
-
-	resources := e2e.UpdateOptions{
-		NodeID:    nodeID,
-		Listeners: []*v3listenerpb.Listener{listener},
-		Routes:    []*v3routepb.RouteConfiguration{routeConfig},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
-	defer cancel()
-	if err := managementServer.Update(ctx, resources); err != nil {
-		t.Fatal(err)
-	}
-	serving := grpcsync.NewEvent()
-
-	// how to plumb serving mode to test, can block in the test on this event as a result
-	modeChangeOpt := xds.ServingModeCallback(func(addr net.Addr, args xds.ServingModeChangeArgs) {
-		t.Logf("serving mode for listener %q changed to %q, err: %v", addr.String(), args.Mode, args.Err)
-		if args.Mode == connectivity.ServingModeServing {
-			serving.Fire()
-		}
-	})
-
-	server, err := xds.NewGRPCServer(grpc.Creds(insecure.NewCredentials()), modeChangeOpt, xds.BootstrapContentsForTesting(bootstrapContents))
-	if err != nil {
-		t.Fatalf("Failed to create an xDS enabled gRPC server: %v", err)
-	}
-	defer server.Stop()
-	testgrpc.RegisterTestServiceServer(server, &testService{})
-	go func() {
-		if err := server.Serve(lis); err != nil {
-			t.Errorf("Serve() failed: %v", err)
-		}
-	}()
-	<-serving.Done()
-
-	cc, err := grpc.Dial(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("failed to dial local test server: %v", err)
-	}
-	defer cc.Close()
-	// setup
+// graceful close of that rds (test case written below)
 
 
-	// assert rpc 1 matching to dynamic works (how to match?)
+
+// switching lds to not found causing failures
+// switching lds to a failing thing causing it to not match and failures eventually (fail)
+
+// Gets rid of the multiple rdses complicating
+
+// Can test rds 1 rds 2 rds 3 (wait until all 3 rds have been received to successfully go serving).
+// rds (fc won't match) 1 (def filter chain) 2 (should immediately serve)
+// rds (fc normal) rds 1 - should go back to rds 1 immediately (is there a way to immediately check or should it poll and that's good enough?)
+// should it leave stuff around in cache? nah too much effort
+
+// *** End new musings
 
 
-	// assert rpc 2 matching to inline works (how to match?)
-
-}
-*/
-
-// I could trigger resource not found on the first test and switch that to error condition
+// I could trigger resource not found on the first test and switch that to error condition yes :)
 
 // error with unavailable - make sure status code is correct for failure
+// assert fail with unavailable? or whatever the expected error status is...
 
-// Orrr maybe LDS + Two Dynamic RDS that are ok, then one resource not found flips one of the routes, but not both.
-// regardless, still need the xDS resources
-
-// assert fail with unavailable?
-
-// figuring out filter chain branch and also resource not found invocation are next steps
+// figuring out resource not found invocation are next steps
 
 /*
 LDS + (Two Dynamic RDS) with one specifying ok, one specifying error,
@@ -450,24 +319,220 @@ func (s) TestDynamicWithOkAndError(t *testing.T) {
 	// RPC which match to second route fail
 	// Can you even distinguish these in the helpers ^^^?
 
-}
+} // this could go inline inline
 
 /*
 Serving State changes: Not Serving (before RDS comes in) (Accept() + Close), ->
 Serving -> Not Serving (on specific lis) (triggers a graceful close for
 connections accepted on that lis) -> serving (Test LDS resource not found)
 */
+
+// not serving test and serving can be done before this
+// trigger not serving with lds resoruce not found, Accept and Close()
+
+// graceful close checked by - "Also verify that a streaming RPC (or a very long
+// running unary) on the old configuration is able to complete gracefully."
+
 func (s) TestServingModeChanges(t *testing.T) { // already have serving mode changes, can maybe rewrite that/merge this with that...
+	managementServer, nodeID, bootstrapContents, _, cleanup := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
+	defer cleanup()
+	lis, err := testutils.LocalTCPListener()
+	if err != nil {
+		t.Fatalf("testutils.LocalTCPListener() failed: %v", err)
+	}
+	// Setup the management server to respond with a listener resource that
+	// specifies a route name to watch, and a RDS resource corresponding to this
+	// route name.
+	host, port, err := hostPortFromListener(lis)
+	if err != nil {
+		t.Fatalf("failed to retrieve host and port of server: %v", err)
+	}
+
+	listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
+	// routeConfig := e2e.RouteConfigNonForwardingTarget("routeName")
+
+	resources := e2e.UpdateOptions{
+		NodeID:    nodeID,
+		Listeners: []*v3listenerpb.Listener{listener},
+		// Routes:    []*v3routepb.RouteConfiguration{routeConfig}, (will this trigger a failure?)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if err := managementServer.Update(ctx, resources); err != nil {
+		t.Fatal(err)
+	}
+
+	serving := grpcsync.NewEvent()
+	modeChangeOpt := xds.ServingModeCallback(func(addr net.Addr, args xds.ServingModeChangeArgs) {
+		t.Logf("serving mode for listener %q changed to %q, err: %v", addr.String(), args.Mode, args.Err)
+		if args.Mode == connectivity.ServingModeServing {
+			serving.Fire()
+		}
+	})
+
+	server, err := xds.NewGRPCServer(grpc.Creds(insecure.NewCredentials()), modeChangeOpt, xds.BootstrapContentsForTesting(bootstrapContents))
+	if err != nil {
+		t.Fatalf("Failed to create an xDS enabled gRPC server: %v", err)
+	}
+	defer server.Stop()
+	testgrpc.RegisterTestServiceServer(server, &testService{})
+	go func() {
+		if err := server.Serve(lis); err != nil {
+			t.Errorf("Serve() failed: %v", err)
+		}
+	}()
+	// <-serving.Done()
+
+	// Accept() and Close() here...
+	cc, err := grpc.Dial(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		// assert status code and error message (do error message of conn closure get eaten before hitting application layer?)
+		t.Fatalf("failed to dial local test server: %v", err) // is this going to fail on a conn failure?
+	}
+	defer cc.Close()
+
+
+	routeConfig := e2e.RouteConfigNonForwardingTarget("routeName")
+	resources = e2e.UpdateOptions{
+		NodeID:    nodeID,
+		Listeners: []*v3listenerpb.Listener{listener},
+		Routes:    []*v3routepb.RouteConfiguration{routeConfig},
+	}
+	defer cancel()
+	if err := managementServer.Update(ctx, resources); err != nil {
+		t.Fatal(err)
+	}
+
+	<-serving.Done()
+
+	// A unary RPC should work once it transitions into serving.
+	waitForSuccessfulRPC(ctx, t, cc)
+
+	// this can have more than one actual underlying connection right, what
+	// happens on a conn failure, does it get eaten by a lower layer?
+
+	// setup with just lds
+
+	// any incoming connections should accept() + close()...how to test this?
+
+	// does conn close() signal propagate to channel/app layer, or does it get eaten by gRPC and just has an error.
+	// Do Conn errors propagate to app. layer
+
+
+
+
+	// then trigger rds (through management server update) (will just lds setup fail if no corresponding rds?)
+
+	// goes serving, unary rpc should work (wait for it to work - sync to serving)
+	// ^^^ code below
+
+
+
+
+
+	// streaming RPC started too vvv
+	// wrap the cc in something
+	// create a stream...
+
+	// start operation on stream
+
+
+
+
+	// resource not found for lds (copy Easwar's code for this)
+	// plumbing for triggerResourceNotFoundForTesting...
+
+	// streaming RPC can complete (guarantees graceful close can continue)
+	// stream.Send() // operations, have arbitrary receives server side but also set it up so CloseSend() works
+	// stream.Recv() // need the corresponding server side streaming logic here
+	// stream.CloseSend() // triggers close
+
+	// Start a stream before switching the server to not serving. Due to the
+	// stream being created before graceful stop, it should be able to continue
+	// even after the server switches to not serving.
+	c := testgrpc.NewTestServiceClient(cc)
+	stream, err := c.FullDuplexCall(ctx)
+	if err != nil {
+		// fail - see o11y for syntax
+		t.Fatalf("cc.FullDuplexCall failed: %f", err)
+	}
+
+	// Invoke the lds resource not found - this should cause the server to
+	// switch to not serving. This should gracefully drain connections, and fail
+	// RPC's after. (how to assert accepted + closed) does this make it's way to
+	// application layer?
+
+	// I think this would error if server already gracefully closed
+	if err = stream.Send(&testgrpc.StreamingOutputCallRequest{}); err != nil {
+		t.Fatalf("stream.Send() failed: %v, should continue to work due to graceful stop", err)
+	}
+	if err = stream.CloseSend(); err != nil {
+		t.Fatalf("stream.CloseSend() failed: %v, should continue to work due to graceful stop", err)
+	}
+	/*if _, err := c.EmptyCall(ctx, &testpb.Empty{}); err != nil { // where is the corresponding server side streaming/full duplex call logic (stubserver?)...
+		return
+	}*/
+
+
+
+	// assert status code on failed rpc?
+	// check that RPC's on old conn eventually start failing since gracefully closed? how do I test this? (is this new connection or just not processing new streams?)
+
+	// rpcs on that connection eventually start failing...because graceful stop
+	// started streams work but not new ones
+	waitForFailedRPC(ctx, t, cc)
+
+	// any new connections Accept() + Close() (triggers an error)
+	// try and make an rpc, fail (see earlier for more logic...) (maybe it uses wait for failed RPC like earlier - wait for failed RPC is already a helper)
+
+	// not serving on a specific lis and one client conn, so state changes are scoped to this singular client conn...
+
 
 }
 
+// see expected error code - could tie it into error
+/*
+If the connection is gracefully closed (and no new connection can be made)
+you'll just get UNAVAILABLE + connection refused or no addresses or failed to
+handshake or something
+*/
+
+// assert the correct error code (from build or error plumbing to client side)
+// what would the error code be?
+
+
+// unless I want to spoof the address of the client side lis I think just do everything here
+// top level test works so just need to test graceful close
+
 // resource not found for rds either do it as part of above or whatever
+
+// Doug mentioned spoof addresses client side (only way to do it is port), take
+// port put into multiple filter chains in lis resource if I want to branch it on that...i.e. only port
 
 /*
 Basic multiple updates:
 (LDS + Inline) (xDS resources can be used that have already had)
+
+// when continuing to use above...how to verify uses old configuration?
+
+
 (LDS + Dynamic), should continue to use above before switching over to this (only when new RDS comes in)
+
+// clients should reconnect and have the new configuration apply - does this ever signal an RPC error?
+// maybe could plumb in something in LDS that would cause an RPC to fail, such as an LDS that doesn't match that client anymore
+
+// if no matching filter chain, closes the conn (how does this get reported to the application layer?)
+// polling for a failing RPC waits until it finishes gracefully closing right, sync point until it starts closing conns...or does it hit immediately because new rpc
+// that assertion might conflate with a new stream, so coulddd use mode change no but it doesn't change mode just starts failing RPC's
+
+// assert certain statuses in these RPC's
+
 */
+
+// Easwar's PR conflicts with this, but very minor
+
+
 func (s) TestMultipleUpdatesInlineToDynamic(t *testing.T) {
 
 }
@@ -501,6 +566,12 @@ func (s) TestMultipleUpdatesImmediatelySwitch(t *testing.T) {
 
 	// ok route, not non forwarding action unavailable, l7 failure
 
+	// three filter chains filter chain 1 route a
+	// filter chain 2 route b
+	// filter chain 3 route c
+
+	// how to test immediately switch...should this be e2e or unit?
+
 
 
 	// same update...lds update a b
@@ -516,9 +587,9 @@ func (s) TestMultipleUpdatesImmediatelySwitch(t *testing.T) {
 
 	// eventually just use one route (how to verify?)
 
-
-
 }
+
+// Can I merge some of these scenarios into unit tests (handleLDS and RDS update for listener_wrapper)
 
 // if you have rds a rds b and one rpc to rds a works it synces all of it,
 // because updates once received all routes
@@ -574,6 +645,8 @@ func (s) TestResourceNotFound(t *testing.T) { // technically can merge with my s
 	// branch on source port
 	// server name (ask Easwar)
 	grpc.Dial()
+
+	// also need to plumb resource not found into this...
 
 }
 
