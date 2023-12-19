@@ -371,7 +371,7 @@ func (s) TestServerSideXDS_ServingModeChanges(t *testing.T) {
 func waitForSuccessfulRPC(ctx context.Context, t *testing.T, cc *grpc.ClientConn) {
 	t.Helper()
 
-	c := testgrpc.NewTestServiceClient(cc)
+	c := testgrpc.NewTestServiceClient(cc) // should I change these to take the
 	if _, err := c.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil { // waits for ready, and then makes an RPC
 		t.Fatalf("rpc EmptyCall() failed: %v", err)
 	}

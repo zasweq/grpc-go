@@ -169,7 +169,7 @@ func (c *clientImpl) triggerResourceNotFoundForTesting(rType xdsresource.Type, r
 	}
 
 	n := xdsresource.ParseName(resourceName)
-	a, unref, err := c.findAuthority(n)
+	_, unref, err := c.findAuthority(n)
 	if err != nil {
 		return fmt.Errorf("attempt to trigger resource-not-found-error for resource %q of type %q, but authority %q is not found", rType.TypeName(), resourceName, n.Authority)
 	}

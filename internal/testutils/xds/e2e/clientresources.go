@@ -873,6 +873,7 @@ func ServerListenerWithRdsAndInline(host string, port uint32, secLevel SecurityL
 // same filter chain branch as above just have it also be dynamic, and make assertions based off those (ohh two rds resources you cannnn induce different header matchers)
 // so assert on that perhaps (still need to figure out how to branch Conn properties
 
+/*
 func ServerListenerWithTwoRds(host string, port uint32, routeName1 string, routeName2 string) *v3listenerpb.Listener { // Do I need secLevel here?
 	hcm1 := &v3httppb.HttpConnectionManager{
 		RouteSpecifier: &v3httppb.HttpConnectionManager_Rds{
@@ -1069,6 +1070,8 @@ func ServerListenerWithThreeRds(host string, port uint32, secLevel SecurityLevel
 
 }
 
+ */
+
 // route name 1 I have a resource for
 // do I want other resources with certain properties that I can actually test?
 // route name 2 (string passed in) - rds with certain properties
@@ -1249,10 +1252,9 @@ func RouteConfigNonForwardingTarget(routeName string) *v3routepb.RouteConfigurat
 			}}}}}
 }
 
-// RouteConfigNonForwardingTarget returns an xDS RouteConfig resource which
-// specifies to route to a route specifying route action. Since this is not type
-// non forwarding action, this should fail requests that match to this server
-// side.
+// RouteConfigRoute returns an xDS RouteConfig resource which specifies to route
+// to a route specifying route action. Since this is not type non forwarding
+// action, this should fail requests that match to this server side.
 func RouteConfigRoute(routeName string) *v3routepb.RouteConfiguration {
 	return &v3routepb.RouteConfiguration{
 		Name: routeName,
