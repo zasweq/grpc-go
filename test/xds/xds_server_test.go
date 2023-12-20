@@ -322,12 +322,33 @@ func setup(t *testing.T, resources e2e.UpdateOptions) (*e2e.ManagementServer, *x
 	}
 }
 
+Cleanup diff from master: (so Easwar and Doug and take a pass)
+internal/internal.go
+internal/testutils/xds/e2e/clientresources.go
+internal/testutils/xds/e2e/server.go
+internal/transport/http2_server.go
+server.go
+test/xds/xds_server_certificate_providers_test.go
+test/xds/xds_server_integration_test.go
+test/xds/xds_server_rbac_test.go
+test/xds/xds_server_serving_mode_test.go
+test/xds/xds_server_test.go
+xds/internal/server/conn_wrapper.go
+xds/internal/server/listener_wrapper.go
+xds/internal/server/listener_wrapper_test.go
+xds/internal/server/rds_handler.go
+xds/internal/server/rds_handler_test.go
+xds/internal/xdsclient/clientimpl_watchers.go
+xds/internal/xdsclient/xdsresource/filter_chain.go
+xds/internal/xdsclient/xdsresource/filter_chain_test.go
+xds/server.go
+xds/server_test.go
  */
 
 // 1. rebase (and fix tests) (cleanup and squah commits) onto server pr, fix his
 // tests with assertions I want from Accept and Close() error thingy (and his
-// tests should continue to pass) (I could send a PR right here too), and then
-// incorporate his resource not found
+// tests should continue to pass) (I could send a PR right here too - with todos
+// for resource not found), and then incorporate his resource not found
 
 // 2. finish these tests (which need resource not found)
 
