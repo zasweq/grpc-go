@@ -293,6 +293,7 @@ func routeAndProcess(ctx context.Context) error {
 	// the RPC gets to this point, there will be a single, unambiguous authority
 	// present in the header map.
 	authority := md.Get(":authority")
+	print("length of rc.VHS: ", len(rc.VHS))
 	vh := xdsresource.FindBestMatchingVirtualHostServer(authority[0], rc.VHS)
 	if vh == nil {
 		return status.Error(codes.Unavailable, "the incoming RPC did not match a configured Virtual Host")
@@ -303,7 +304,9 @@ func routeAndProcess(ctx context.Context) error {
 		Context: ctx,
 		Method:  mn,
 	}
+	print("length of vh.Routes: ", len(vh.Routes))
 	for _, r := range vh.Routes { // this is where you can branch on header matcher - by rds...which two filter chains can point to two, I think one authority so plumb a header that branches the rds
+		print("looping through route")
 		if r.M.Match(rpcInfo) {
 			// "NonForwardingAction is expected for all Routes used on server-side; a route with an inappropriate action causes
 			// RPCs matching that route to fail with UNAVAILABLE." - A36

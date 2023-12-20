@@ -115,7 +115,7 @@ func (s) TestServeLDSRDS(t *testing.T) {
 	// Set the route config to be of type route action route, which the rpc will
 	// match to. This should eventually reflect in the Conn's routing
 	// configuration and fail the rpc with a status code UNAVAILABLE.
-	routeConfig = e2e.RouteConfigRoute("routeName")
+	routeConfig = e2e.RouteConfigFilterAction("routeName")
 	resources = e2e.UpdateOptions{
 		NodeID:    nodeID,
 		Listeners: []*v3listenerpb.Listener{listener}, // Same lis, so will get eaten by the xDS Client.
@@ -133,6 +133,8 @@ func (s) TestServeLDSRDS(t *testing.T) {
 	// "NonForwardingAction is expected for all Routes used on server-side; a
 	// route with an inappropriate action causes RPCs matching that route to
 	// fail with UNAVAILABLE." - A36
+
+	// it fails with doesn't match to any route, old test ate up the error...
 	waitForFailedRPCWithStatusCode(ctx, t, cc, status.New(codes.Unavailable, "the incoming RPC matched to a route that was not of action type non forwarding")) // get this and below working - need resource not found
 } // this and serving mode changes fail...
 
@@ -186,12 +188,13 @@ func (s) TestResourceNotFoundRDS(t *testing.T) {
 	}
 
 	listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
-	routeConfig := e2e.RouteConfigNonForwardingTarget("routeName")
+	// routeConfig := e2e.RouteConfigNonForwardingTarget("routeName")
 
 	resources := e2e.UpdateOptions{
 		NodeID:    nodeID,
 		Listeners: []*v3listenerpb.Listener{listener},
-		Routes:    []*v3routepb.RouteConfiguration{routeConfig},
+		// Routes:    []*v3routepb.RouteConfiguration{routeConfig},
+		SkipValidation: true,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -389,6 +392,7 @@ func (s) TestServingModeChanges(t *testing.T) { // already have serving mode cha
 		NodeID:    nodeID,
 		Listeners: []*v3listenerpb.Listener{listener},
 		// Routes:    []*v3routepb.RouteConfiguration{routeConfig}, (will this trigger a failure?)
+		SkipValidation: true,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -431,10 +435,10 @@ func (s) TestServingModeChanges(t *testing.T) { // already have serving mode cha
 	// it will do an RPC but it will fail...is there a way for timeout?
 	// cc.WaitForStateChange() // ? api on underlying client conn
 	// cc.Invoke()
-	c := testgrpc.NewTestServiceClient(cc) // should I change these to take the
+	/*c := testgrpc.NewTestServiceClient(cc) // should I change these to take the
 	if _, err := c.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil { // waits for ready, and then makes an RPC
 		t.Fatalf("rpc EmptyCall() failed: %v", err)
-	} // get rid of wait for ready, should it fail immediately? Not with a context timeout, but another error that's more apprioritate to Accept() and Close()
+	}*/ // get rid of wait for ready, should it fail immediately? Not with a context timeout, but another error that's more apprioritate to Accept() and Close()
 	// If not context timeout, does Accept and Close() show an error here? (See Easwar's PR also for a bubbling up error)
 	waitForFailedRPCWithStatusCode(ctx, t, cc, errAcceptAndClose/*status.New(codes.Unavailable, "" /*are these codes correct?*/) // pass a wrapped cc here?
 	// I think once I add accept() + close() I can wait for a certain error:
@@ -514,6 +518,7 @@ func (s) TestServingModeChanges(t *testing.T) { // already have serving mode cha
 	// stream being created before graceful stop, it should be able to continue
 	// even after the server switches to not serving.
 	// c = testgrpc.NewTestServiceClient(cc)
+	c := testgrpc.NewTestServiceClient(cc)
 	stream, err := c.FullDuplexCall(ctx)
 	if err != nil {
 		// fail - see o11y for syntax

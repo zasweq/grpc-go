@@ -1252,10 +1252,11 @@ func RouteConfigNonForwardingTarget(routeName string) *v3routepb.RouteConfigurat
 			}}}}}
 }
 
-// RouteConfigRoute returns an xDS RouteConfig resource which specifies to route
-// to a route specifying route action. Since this is not type non forwarding
-// action, this should fail requests that match to this server side.
-func RouteConfigRoute(routeName string) *v3routepb.RouteConfiguration {
+// RouteConfigFilterAction returns an xDS RouteConfig resource which specifies
+// to route to a route specifying route filter action. Since this is not type
+// non forwarding action, this should fail requests that match to this server
+// side.
+func RouteConfigFilterAction(routeName string) *v3routepb.RouteConfiguration {
 	return &v3routepb.RouteConfiguration{
 		Name: routeName,
 		VirtualHosts: []*v3routepb.VirtualHost{{
@@ -1267,6 +1268,6 @@ func RouteConfigRoute(routeName string) *v3routepb.RouteConfiguration {
 				Match: &v3routepb.RouteMatch{
 					PathSpecifier: &v3routepb.RouteMatch_Prefix{Prefix: "/"},
 				},
-				Action: &v3routepb.Route_Route{},
+				Action: &v3routepb.Route_FilterAction{},
 			}}}}}
 }

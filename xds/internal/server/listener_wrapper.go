@@ -159,7 +159,7 @@ type listenerWrapper struct {
 	// guaranteed to be emitted synchrously from the xDS Client. Thus, they do
 	// not need further synchronization. Active filter chains serving, used to
 	// update routing configuration for any RDS updates.
-	activeFilterChains []xdsresource.FilterChain
+	activeFilterChains []xdsresource.FilterChain // I think it's fine to just persist this in fcm, and access this through fcm instead of building this out here...
 	// Pending filter chain manager. Will go active once rdsHandler has received
 	// all the RDS resources this filter chain manager needs.
 	pendingFilterChainManager *xdsresource.FilterChainManager
@@ -243,23 +243,28 @@ type RoutingConfiguration struct {
 func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate) {
 	print("handleRDSUpdate called")
 	// Update any filter chains that point to this route configuration.
-	for _, fc := range l.activeFilterChains { // v4 and v6 filter chains...why doesn't this update the first time?
-		if fc.RouteConfigName == routeName {
-			print("updating filter chain for route name: ", routeName)
-			if rcu.err != nil && rcu.update == nil { // Either NACK before update, or resource not found triggers this conditional.
+	// can I just loop through l.activeFilterChainManager.FilterChains()?
+	if l.activeFilterChainManager != nil {
+		for _, fc := range l.activeFilterChainManager.FilterChains() { // v4 and v6 filter chains...why doesn't this update the first time?
+			if fc.RouteConfigName == routeName {
+				print("updating filter chain for route name: ", routeName)
+				if rcu.err != nil && rcu.update == nil { // Either NACK before update, or resource not found triggers this conditional.
+					atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
+						Err: rcu.err,
+					}))
+					continue
+				}
+				print("Constructing usable route configuration with rds update")
+				vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update) // does it lose update?
+				print("length of contructed vhswi: ", len(vhswi))
 				atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
-					Err: rcu.err,
+					VHS: vhswi,
+					Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
 				}))
-				continue
 			}
-			vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-			atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
-				VHS: vhswi,
-				Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
-			}))
 		}
 	}
-
+	// it doesss update, just doesn't match a route
 	if l.rdsHandler.determineRDSReady() {
 		l.maybeUpdateFilterChains()
 	}
@@ -289,6 +294,7 @@ func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 			continue
 		}
 		vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
+		print("length of contructed vhswi: ", len(vhswi))
 		atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 			VHS: vhswi,
 			Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
