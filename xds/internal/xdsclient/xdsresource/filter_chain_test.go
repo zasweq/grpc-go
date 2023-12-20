@@ -2778,6 +2778,25 @@ func (fci *FilterChainManager) Equal(other *FilterChainManager) bool {
 	return true
 }
 
+func (fc *FilterChain) Equal(other *FilterChain) bool {
+	if (fc == nil) != (other == nil) {
+		return false
+	}
+	if fc == nil {
+		return true
+	}
+	if !cmp.Equal(fc.SecurityCfg, other.SecurityCfg, cmpopts.EquateEmpty()) {
+		return false
+	}
+	if !cmp.Equal(fc.RouteConfigName, other.RouteConfigName) {
+		return false
+	}
+	if !cmp.Equal(fc.HTTPFilters, other.HTTPFilters, cmpopts.EquateEmpty(), protocmp.Transform()) {
+		return false
+	}
+	return cmp.Equal(fc.InlineRouteConfig, other.InlineRouteConfig, cmpopts.EquateEmpty())
+}
+
 func (dpe *destPrefixEntry) Equal(other *destPrefixEntry) bool {
 	if (dpe == nil) != (other == nil) {
 		return false

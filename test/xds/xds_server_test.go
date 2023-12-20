@@ -324,24 +324,35 @@ func setup(t *testing.T, resources e2e.UpdateOptions) (*e2e.ManagementServer, *x
 
  */
 
+// 1. rebase (and fix tests) (cleanup and squah commits) onto server pr, fix his
+// tests with assertions I want from Accept and Close() error thingy (and his
+// tests should continue to pass) (I could send a PR right here too), and then
+// incorporate his resource not found
+
+// 2. finish these tests (which need resource not found)
+
+// 3. cleanup and send out for review
 
 // *** New musings
 // all this requires resource not found - clean this test up, and then rebase onto Easwar's
 
 // If not spoofed addresses:
-// one rds - either works, fails, or resource not found
+// one rds - either works, fails, or resource not found (done outside of resource not found)
 
 
 
-// graceful close of that rds (test case written below)
+// graceful close of that rds (test case written below) (rds a to rds b, streams on rds a work) graceful close from resource not
+// found or a new lds taking place of old (how to switch)
 
 
 
-// switching lds to not found causing failures
-// switching lds to a failing thing causing it to not match and failures eventually (fail)
+// switching lds to not found causing failures (needs resource not found)
+// switching lds to a failing thing causing it to not match and failures eventually (fail) - another way to trigger graceful close...
 
-// Gets rid of the multiple rdses complicating
 
+// Gets rid of the multiple rdses complicating wrt matching to them, but can still make sure it waits
+
+// before getting all 3 rpcs accept and close at that point
 // Can test rds 1 rds 2 rds 3 (wait until all 3 rds have been received to successfully go serving).
 // rds (fc won't match) 1 (def filter chain) 2 (should immediately serve)
 // rds (fc normal) rds 1 - should go back to rds 1 immediately (is there a way to immediately check or should it poll and that's good enough?)
