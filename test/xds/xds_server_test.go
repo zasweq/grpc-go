@@ -223,6 +223,7 @@ func (s) TestResourceNotFoundRDS(t *testing.T) {
 	// waitForFailedRPCWithStatusCode(ctx, t, cc, status.New(codes.Unavailable, "error from xDS configuration for matched route configuration"))
 }
 
+// Invoke graceful close:
 // graceful close of that rds (test case written below) (rds a to rds b, streams on rds a work) graceful close from resource not
 // found or a new lds taking place of old (how to switch)
 
@@ -361,7 +362,7 @@ func (s) TestServingModeChanges(t *testing.T) {
 }
 
 /*
-Basic multiple updates:
+Basic multiple updates test case:
 (LDS + Inline) (xDS resources can be used that have already had)
 
 // when continuing to use above...how to verify uses old configuration?
@@ -380,17 +381,12 @@ Basic multiple updates:
 
 */
 
-// Write a comment for this test case...
-/* (see test case above in musings)
+/*
 Multiple updates should immediately switch over
 // before getting all 3 rpcs accept and close at that point
 // Can test rds 1 rds 2 rds 3 (wait until all 3 rds have been received to successfully go serving).
 // rds (fc won't match) 1 (def filter chain) 2 (should immediately serve)
 // rds (fc normal) rds 1 - should go back to rds 1 immediately (is there a way to immediately check or should it poll and that's good enough?)
-// should it leave stuff around in cache? nah too much effort
-// (merge comment with comment below)
-
-// write comment here
 
 TestMultipleUpdatesImmediatelySwitch tests the case where you get an LDS specifying RDS A, B, and C (with A being matched to).
 The Server should be in not serving until it receives all 3 RDS Configurations,
@@ -398,74 +394,28 @@ and then transition into serving. Afterward, it receives an LDS specifying RDS A
 This configuration should eventually be represented in the Server's state and subsequent RPC's. After,
 it receives an LDS specifying RDS A (which incoming RPC's will match to). This configuration should eventually be
 represented in the Server's state.
-
 */
 func (s) TestMultipleUpdatesImmediatelySwitch(t *testing.T) {
+	// LDS with RDS A, B, C
 
-	// how to test "immediately switch", doesn't match to RDS c, then b, c, but first debug first test haha
-
-	/*
-		Doug's suggestion for how to immediately switch:
-		Make sure the client doesn't request A & B?  Or at least, don't send A&B
-		from mgmt server, but expect RPCs to keep working.
-
-		Easwar's suggestion:
-
-		Or you could have some header matchers specific to each of those RDS
-		resources, and thereby ensure which RDS resource is used for the RPC.
-
-	*/
-
-	// before all the RDS resources come, Accept() + Close() (invariant of this
-	// client side)...what error gets plumbed to the client...err after client
-	// conn creation I'm assuming
-
-	// should setup be the same with a knob on xDS Resources:
-
-	// oh yeah I can plumb in headers client side that determine
-
-	// ok route, not non forwarding action unavailable, l7 failure
-
-	// three filter chains filter chain 1 route a -- atches to unavaiable
-	// filter chain 2 route b
-	// filter chain 3 route c
-
-	// (perhaps append to filter chains and reuse e2e helpers)
-	// This listener needs to be ipv4 ipv6 to routeName1
-	// appended with second (which won't hit) to routeName2
-	// defFilterChain to routeName3
-	/*
-		listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
-
-		routeConfig := e2e.RouteConfigNonForwardingTarget("routeName")
-
-
-		resources := e2e.UpdateOptions{
-			NodeID:    nodeID,
-			Listeners: []*v3listenerpb.Listener{listener},
-			Routes:    []*v3routepb.RouteConfiguration{routeConfig},
-		}
-	*/
+	// before all the RDS resources come, Accept() + Close()
 
 	// LDS for RDS A, B, LDS pointing to RDS a doesn't get matched to, falls back to Def filter chain which specifies RDS B.
 
-	// However, RPC's on Conn's corresponding to old LDS can continue (graceful check, streaming RPC's can continue to work)
-
-	// how to test immediately switch...should this be e2e or unit? (see comments on doc)
+	// However, RPC's on Conn's corresponding to old LDS can continue (graceful
+	// check, streaming RPC's can continue to work) (graceful close check after)
+	//
 
 	// lds update filterChainWontMatch(a) filterChainDef(b)
-	// send all 3 route configs alongside in the operation?
+	// send all 3 route configs alongside in the operation
 
-	// puts it on a queue so loses sync guarantee
-
-	// Eventually just the fallback to b (how to verify?) - goes unavailable
+	// puts it on a queue so loses sync guarantee - so poll here for rds behavior
+	// Eventually just the fallback to b - goes unavailable
 
 	// another update lds update a...
 	// lds ipv4 and ipv6 without the appended
 	// send all 3 rds here too...?
 
 	// eventually just use the route a (how to verify?) - goes back ok
-
-	// tests immediately switches from above (unless polls, I thinkkkkk polling is ok here)
 
 }

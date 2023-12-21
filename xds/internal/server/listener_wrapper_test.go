@@ -19,6 +19,9 @@
 package server
 
 /*
+
+// Switch these to assert on Ready based off Accept() + Close()
+
 import (
 	"context"
 	"errors"
