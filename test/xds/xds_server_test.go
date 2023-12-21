@@ -120,8 +120,7 @@ func (s) TestServeLDSRDS(t *testing.T) {
 		NodeID:    nodeID,
 		Listeners: []*v3listenerpb.Listener{listener}, // Same lis, so will get eaten by the xDS Client.
 
-		Routes:    []*v3routepb.RouteConfiguration{routeConfig},
-
+		Routes: []*v3routepb.RouteConfiguration{routeConfig},
 	}
 	if err := managementServer.Update(ctx, resources); err != nil {
 		t.Fatal(err)
@@ -179,8 +178,8 @@ func (s) TestResourceNotFoundRDS(t *testing.T) {
 
 	listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
 	resources := e2e.UpdateOptions{
-		NodeID:    nodeID,
-		Listeners: []*v3listenerpb.Listener{listener},
+		NodeID:         nodeID,
+		Listeners:      []*v3listenerpb.Listener{listener},
 		SkipValidation: true,
 	}
 
@@ -224,21 +223,15 @@ func (s) TestResourceNotFoundRDS(t *testing.T) {
 	// waitForFailedRPCWithStatusCode(ctx, t, cc, status.New(codes.Unavailable, "error from xDS configuration for matched route configuration"))
 }
 
-
-
 // graceful close of that rds (test case written below) (rds a to rds b, streams on rds a work) graceful close from resource not
 // found or a new lds taking place of old (how to switch)
-
-
 
 // switching lds to not found causing failures (needs resource not found)
 // switching lds to a failing thing causing it to not match and failures eventually (fail) - another way to trigger graceful close...
 
-
 // Gets rid of the multiple rdses complicating wrt matching to them, but can still make sure it waits
 
 // *** End new musings
-
 
 /*
 Serving State changes: Not Serving (before RDS comes in) (Accept() + Close), ->
@@ -269,8 +262,8 @@ func (s) TestServingModeChanges(t *testing.T) {
 
 	listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
 	resources := e2e.UpdateOptions{
-		NodeID:    nodeID,
-		Listeners: []*v3listenerpb.Listener{listener},
+		NodeID:         nodeID,
+		Listeners:      []*v3listenerpb.Listener{listener},
 		SkipValidation: true,
 	}
 
@@ -338,18 +331,16 @@ func (s) TestServingModeChanges(t *testing.T) {
 	// RPC's after. (how to assert accepted + closed) does this make it's way to
 	// application layer? (should work outside of resource not found...
 
-	// I think this would error if server already gracefully closed
+	// Invoke LDS Resource not found here
+
+	// New RPCs on that connection should eventually start failing. Due to
+	// Graceful Stop any started streams continue to work.
 	if err = stream.Send(&testgrpc.StreamingOutputCallRequest{}); err != nil {
 		t.Fatalf("stream.Send() failed: %v, should continue to work due to graceful stop", err)
 	}
 	if err = stream.CloseSend(); err != nil {
 		t.Fatalf("stream.CloseSend() failed: %v, should continue to work due to graceful stop", err)
 	}
-
-	// Invoke LDS Resource not found here
-
-	// rpcs on that connection eventually start failing...because graceful stop
-	// started streams work but not new ones
 
 	// after asserting stream can continue - this is sort of the invariant...behavior of graceful close
 	// see expected error code - could tie it into error
@@ -362,12 +353,10 @@ func (s) TestServingModeChanges(t *testing.T) {
 	// waitForFailedRPC(ctx, t, cc)
 	// waitForFailedRPCWithStatusCode(ctx, t, cc, status.New(codes.Unavailable, ""/*error string here as Doug was describing - is there a way to describe this?*/))
 
-
 	// any new connections Accept() + Close() (triggers an error)
 	// try and make an rpc, fail (see earlier for more logic...) (maybe it uses wait for failed RPC like earlier - wait for failed RPC is already a helper)
 
 	// not serving on a specific lis and one client conn, so state changes are scoped to this singular client conn...
-
 
 }
 
@@ -390,7 +379,6 @@ Basic multiple updates:
 // assert certain statuses in these RPC's
 
 */
-
 
 // Write a comment for this test case...
 /* (see test case above in musings)
@@ -417,21 +405,20 @@ func (s) TestMultipleUpdatesImmediatelySwitch(t *testing.T) {
 	// how to test "immediately switch", doesn't match to RDS c, then b, c, but first debug first test haha
 
 	/*
-	Doug's suggestion for how to immediately switch:
-	Make sure the client doesn't request A & B?  Or at least, don't send A&B
-	from mgmt server, but expect RPCs to keep working.
+		Doug's suggestion for how to immediately switch:
+		Make sure the client doesn't request A & B?  Or at least, don't send A&B
+		from mgmt server, but expect RPCs to keep working.
 
-	Easwar's suggestion:
+		Easwar's suggestion:
 
-	Or you could have some header matchers specific to each of those RDS
-	resources, and thereby ensure which RDS resource is used for the RPC.
+		Or you could have some header matchers specific to each of those RDS
+		resources, and thereby ensure which RDS resource is used for the RPC.
 
 	*/
 
 	// before all the RDS resources come, Accept() + Close() (invariant of this
 	// client side)...what error gets plumbed to the client...err after client
 	// conn creation I'm assuming
-
 
 	// should setup be the same with a knob on xDS Resources:
 
@@ -448,20 +435,17 @@ func (s) TestMultipleUpdatesImmediatelySwitch(t *testing.T) {
 	// appended with second (which won't hit) to routeName2
 	// defFilterChain to routeName3
 	/*
-	listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
+		listener := e2e.DefaultServerListenerWithRouteConfigName(host, port, e2e.SecurityLevelNone, "routeName")
 
-	routeConfig := e2e.RouteConfigNonForwardingTarget("routeName")
+		routeConfig := e2e.RouteConfigNonForwardingTarget("routeName")
 
 
-	resources := e2e.UpdateOptions{
-		NodeID:    nodeID,
-		Listeners: []*v3listenerpb.Listener{listener},
-		Routes:    []*v3routepb.RouteConfiguration{routeConfig},
-	}
+		resources := e2e.UpdateOptions{
+			NodeID:    nodeID,
+			Listeners: []*v3listenerpb.Listener{listener},
+			Routes:    []*v3routepb.RouteConfiguration{routeConfig},
+		}
 	*/
-
-
-
 
 	// LDS for RDS A, B, LDS pointing to RDS a doesn't get matched to, falls back to Def filter chain which specifies RDS B.
 
@@ -469,18 +453,12 @@ func (s) TestMultipleUpdatesImmediatelySwitch(t *testing.T) {
 
 	// how to test immediately switch...should this be e2e or unit? (see comments on doc)
 
-
-
 	// lds update filterChainWontMatch(a) filterChainDef(b)
 	// send all 3 route configs alongside in the operation?
 
 	// puts it on a queue so loses sync guarantee
 
-
 	// Eventually just the fallback to b (how to verify?) - goes unavailable
-
-
-
 
 	// another update lds update a...
 	// lds ipv4 and ipv6 without the appended

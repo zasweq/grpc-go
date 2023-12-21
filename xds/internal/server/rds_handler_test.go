@@ -140,17 +140,12 @@ var defaultRouteConfigUpdate = xdsresource.RouteConfigUpdate{
 		}},
 	}},
 }
- */
-
-
-
-
-
+*/
 
 /*
-// Waits for an update to be pushed on updateCh and compares it to wantUpdate.
-// Fails the test by calling t.Fatal if the context expires or if the update
-// received on the channel does not match wantUpdate.
+
+// instead of receiving per channel, just check if ready (also has map[string]update state)
+
 func verifyUpdateFromChannel(ctx context.Context, t *testing.T, updateCh chan rdsHandlerUpdate, wantUpdate rdsHandlerUpdate) {
 	t.Helper()
 
@@ -528,8 +523,6 @@ func newStringP(s string) *string {
 
 // before test at the level of what is written to the update channel (including error meaning error for whole thing)
 
-
-
 // vvv my own test musings
 
 /*
@@ -612,7 +605,6 @@ func (s) TestTestTest(t *testing.T) {
 
 }*/
 
-
 // What has changed is this component?
 
 // no updateCh to write updates to
@@ -621,9 +613,6 @@ func (s) TestTestTest(t *testing.T) {
 
 // error case for specific rds watches, doesn't
 // error out whole channel in this case
-
-
-
 
 // stayed the same:
 

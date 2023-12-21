@@ -50,7 +50,7 @@ var (
 	newGRPCServer = func(opts ...grpc.ServerOption) grpcServer {
 		return grpc.NewServer(opts...)
 	}
-	logger             = grpclog.Component("xds")
+	logger = grpclog.Component("xds")
 )
 
 // grpcServer contains methods from grpc.Server which are used by the
@@ -201,7 +201,7 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 		Listener:             lis,
 		ListenerResourceName: name,
 		XDSClient:            s.xdsC,
-		ModeCallback:         func(addr net.Addr, mode connectivity.ServingMode, err error) {
+		ModeCallback: func(addr net.Addr, mode connectivity.ServingMode, err error) {
 			s.opts.modeCallback(addr, ServingModeChangeArgs{
 				Mode: mode,
 				Err:  err,

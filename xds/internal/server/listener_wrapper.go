@@ -122,10 +122,10 @@ type listenerWrapper struct {
 	net.Listener
 	logger *internalgrpclog.PrefixLogger
 
-	name          string
-	xdsC          XDSClient
-	cancelWatch   func()
-	modeCallback  ServingModeCallback
+	name         string
+	xdsC         XDSClient
+	cancelWatch  func()
+	modeCallback ServingModeCallback
 
 	// Set to true if the listener is bound to the IP_ANY address (which is
 	// "0.0.0.0" for IPv4 and "::" for IPv6).
