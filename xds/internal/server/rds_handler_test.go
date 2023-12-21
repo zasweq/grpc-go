@@ -22,8 +22,6 @@ package server
 import (
 	"context"
 	"fmt"
-	v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 	"testing"
 	"time"
 
@@ -31,8 +29,10 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/grpc/internal/testutils/xds/e2e"
 	"google.golang.org/grpc/xds/internal/xdsclient"
+    "google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
 
+    v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	v3discoverypb "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 )
 
@@ -289,6 +289,12 @@ func (s) TestRDSHandler_SuccessCaseTwoUpdates(t *testing.T) {
 	rh.close()
 	waitForResourceNames(ctx, t, rdsNamesCh, []string{})
 }
+
+// Rather than block on an update from channel, (which syncs eventual consistency)
+// poll until rh.determineRDSReady is true (if so, probably will fail with a mutex),
+// the rest I think is fine
+
+// Fix these two unit tests and also cleanup e2e tests
 
 // Tests the case where the rds handler receives an update with two routes, then
 // receives an update with only one route. The rds handler is expected to cancel

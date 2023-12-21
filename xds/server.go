@@ -22,14 +22,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/credentials"
 	"net"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/grpclog"
-	"google.golang.org/grpc/internal"
 	internalgrpclog "google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/internal/grpcsync"
 	iresolver "google.golang.org/grpc/internal/resolver"
@@ -52,7 +50,6 @@ var (
 	newGRPCServer = func(opts ...grpc.ServerOption) grpcServer {
 		return grpc.NewServer(opts...)
 	}
-	grpcGetServerCreds = internal.GetServerCredentials.(func(*grpc.Server) credentials.TransportCredentials)
 	logger             = grpclog.Component("xds")
 )
 
@@ -196,7 +193,7 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 	// string, it will be replaced with the server's listening "IP:port" (e.g.,
 	// "0.0.0.0:8080", "[::]:8080").
 	cfg := s.xdsC.BootstrapConfig()
-	name := bootstrap.PopulateResourceTemplate(cfg.ServerListenerResourceNameTemplate, lis.Addr().String()) // wraps all accepted listeners with the same xDS resources, two lis wrappers, so state applies to all wrapped lis, so I think makes sense
+	name := bootstrap.PopulateResourceTemplate(cfg.ServerListenerResourceNameTemplate, lis.Addr().String())
 
 	// Create a listenerWrapper which handles all functionality required by
 	// this particular instance of Serve().
@@ -211,7 +208,7 @@ func (s *GRPCServer) Serve(lis net.Listener) error {
 			})
 		},
 	})
-	return s.gs.Serve(lw) // two lis wrappers?
+	return s.gs.Serve(lw)
 }
 
 // Stop stops the underlying gRPC server. It immediately closes all open
@@ -267,7 +264,6 @@ func routeAndProcess(ctx context.Context) error {
 	// the RPC gets to this point, there will be a single, unambiguous authority
 	// present in the header map.
 	authority := md.Get(":authority")
-	print("length of rc.VHS: ", len(rc.VHS))
 	vh := xdsresource.FindBestMatchingVirtualHostServer(authority[0], rc.VHS)
 	if vh == nil {
 		return status.Error(codes.Unavailable, "the incoming RPC did not match a configured Virtual Host")
@@ -278,9 +274,7 @@ func routeAndProcess(ctx context.Context) error {
 		Context: ctx,
 		Method:  mn,
 	}
-	print("length of vh.Routes: ", len(vh.Routes))
-	for _, r := range vh.Routes { // this is where you can branch on header matcher - by rds...which two filter chains can point to two, I think one authority so plumb a header that branches the rds
-		print("looping through route")
+	for _, r := range vh.Routes {
 		if r.M.Match(rpcInfo) {
 			// "NonForwardingAction is expected for all Routes used on server-side; a route with an inappropriate action causes
 			// RPCs matching that route to fail with UNAVAILABLE." - A36

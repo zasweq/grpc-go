@@ -232,14 +232,6 @@ func (s) TestServerSideXDS_WithNoCertificateProvidersInBootstrap_Failure(t *test
 	defer cc.Close()
 
 	waitForFailedRPCWithStatusCode(ctx, t, cc, errAcceptAndClose)
-	/*
-	client := testgrpc.NewTestServiceClient(cc)
-	sCtx, sCancel := context.WithTimeout(ctx, defaultTestShortTimeout)
-	defer sCancel() // 240...switch it to my assertion
-	if _, err := client.EmptyCall(sCtx, &testpb.Empty{}); status.Code(err) != codes.DeadlineExceeded {
-		t.Fatalf("EmptyCall() failed: %v, wantCode: %s", err, codes.DeadlineExceeded)
-	}
-	*/
 }
 
 // Tests the case where the bootstrap configuration contains one certificate
@@ -486,12 +478,4 @@ func (s) TestServerSideXDS_WithValidAndInvalidSecurityConfiguration(t *testing.T
 	defer cc2.Close()
 
 	waitForFailedRPCWithStatusCode(ctx, t, cc2, errAcceptAndClose)
-	/*
-	client2 := testgrpc.NewTestServiceClient(cc2)
-	sCtx, sCancel := context.WithTimeout(ctx, defaultTestShortTimeout)
-	defer sCancel()
-	if _, err := client2.EmptyCall(sCtx, &testpb.Empty{}); status.Code(err) != codes.DeadlineExceeded {
-		t.Fatalf("EmptyCall() failed: %v, wantCode: %s", err, codes.DeadlineExceeded) // this doesn't work
-	}
-	*/
 }

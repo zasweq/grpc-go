@@ -93,7 +93,7 @@ func NewListenerWrapper(params ListenerWrapperParams) net.Listener {
 		Listener:          params.Listener,
 		name:              params.ListenerResourceName,
 		xdsC:              params.XDSClient,
-		modeCallback:      params.ModeCallback, // plumbs it all the way through
+		modeCallback:      params.ModeCallback,
 		isUnspecifiedAddr: params.Listener.Addr().(*net.TCPAddr).IP.IsUnspecified(),
 
 		mode:   connectivity.ServingModeNotServing, // triggers Accept() + Close() on any incoming connections.
@@ -151,10 +151,9 @@ type listenerWrapper struct {
 	activeFilterChainManager *xdsresource.FilterChainManager
 
 	// These fields are read/written to in the context of xDS updates, which are
-	// guaranteed to be emitted synchrously from the xDS Client. Thus, they do
-	// not need further synchronization. Active filter chains serving, used to
-	// update routing configuration for any RDS updates.
-	activeFilterChains []xdsresource.FilterChain // I think it's fine to just persist this in fcm, and access this through fcm instead of building this out here...
+	// guaranteed to be emitted synchronously from the xDS Client. Thus, they do
+	// not need further synchronization.
+
 	// Pending filter chain manager. Will go active once rdsHandler has received
 	// all the RDS resources this filter chain manager needs.
 	pendingFilterChainManager *xdsresource.FilterChainManager
@@ -165,7 +164,6 @@ type listenerWrapper struct {
 }
 
 func (lw *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
-	print("handleLDSUpdate called")
 	ilc := update.InboundListenerCfg
 	// Make sure that the socket address on the received Listener resource
 	// matches the address of the net.Listener passed to us by the user. This
@@ -186,7 +184,7 @@ func (lw *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
 		return
 	}
 
-	lw.pendingFilterChainManager = ilc.FilterChains // this needs to write something
+	lw.pendingFilterChainManager = ilc.FilterChains
 	lw.rdsHandler.updateRouteNamesToWatch(ilc.FilterChains.RouteConfigNames)
 
 	if lw.rdsHandler.determineRDSReady() {
@@ -195,18 +193,16 @@ func (lw *listenerWrapper) handleLDSUpdate(update xdsresource.ListenerUpdate) {
 }
 
 // maybeUpdateFilterChains swaps in the pending filter chain manager to the
-// active one if the pending filter chain manager is present. It also Drains
-// (gracefully stops) any Connections that were accepted on the old one. It also
-// puts the server in state SERVING.
+// active one if the pending filter chain manager is present. If a swap occurs,
+// it also  drains (gracefully stops) any connections that were accepted on the
+// old active filter chain manager, and puts this listener in state SERVING.
 func (l *listenerWrapper) maybeUpdateFilterChains() {
-	print("maybeUpdateFilterChains called")
 	if l.pendingFilterChainManager == nil {
 		// Nothing to update, return early.
 		return
 	}
 
 	l.mu.Lock()
-	// it has to hit here
 	l.switchModeLocked(connectivity.ServingModeServing, nil)
 	// "Updates to a Listener cause all older connections on that Listener to be
 	// gracefully shut down with a grace period of 10 minutes for long-lived
@@ -225,33 +221,21 @@ func (l *listenerWrapper) maybeUpdateFilterChains() {
 	}
 }
 
-/*
-type RoutingConfiguration struct {
-	VHS []xdsresource.VirtualHostWithInterceptors
-	Err error
-}
- */
-
 // handleRDSUpdate rebuilds any routing configuration server side for any filter
 // chains that point to this RDS, and potentially makes pending lds
 // configuration to swap to be active.
 func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate) {
-	print("handleRDSUpdate called")
 	// Update any filter chains that point to this route configuration.
-	// can I just loop through l.activeFilterChainManager.FilterChains()?
 	if l.activeFilterChainManager != nil {
 		for _, fc := range l.activeFilterChainManager.FilterChains() { // v4 and v6 filter chains...why doesn't this update the first time?
 			if fc.RouteConfigName == routeName {
-				print("updating filter chain for route name: ", routeName)
 				if rcu.err != nil && rcu.update == nil { // Either NACK before update, or resource not found triggers this conditional.
 					atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 						Err: rcu.err,
 					}))
 					continue
 				}
-				print("Constructing usable route configuration with rds update")
-				vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update) // does it lose update?
-				print("length of contructed vhswi: ", len(vhswi))
+				vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
 				atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 					VHS: vhswi,
 					Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
@@ -259,7 +243,6 @@ func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate
 			}
 		}
 	}
-	// it doesss update, just doesn't match a route
 	if l.rdsHandler.determineRDSReady() {
 		l.maybeUpdateFilterChains()
 	}
@@ -269,10 +252,7 @@ func (l *listenerWrapper) handleRDSUpdate(routeName string, rcu rdsWatcherUpdate
 // configuration for the newly active filter chains. For any inline route
 // configurations, uses that, otherwise uses cached rdsHandler updates.
 func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
-	print("instantiateFilterChainRoutingConfigurations called")
-	l.activeFilterChains = nil
 	for _, fc := range l.activeFilterChainManager.FilterChains() {
-		l.activeFilterChains = append(l.activeFilterChains, *fc)
 		if fc.InlineRouteConfig != nil {
 			vhswi, err := fc.ConstructUsableRouteConfiguration(*fc.InlineRouteConfig)
 			atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
@@ -289,7 +269,6 @@ func (l *listenerWrapper) instantiateFilterChainRoutingConfigurations() {
 			continue
 		}
 		vhswi, err := fc.ConstructUsableRouteConfiguration(*rcu.update)
-		print("length of contructed vhswi: ", len(vhswi))
 		atomic.StorePointer(fc.RC, unsafe.Pointer(&xdsresource.RoutingConfiguration{
 			VHS: vhswi,
 			Err: err, // Non nil if (lds + rds) fails, shouldn't happen since validated by xDS Client, treat as L7 error but shouldn't happen.
@@ -399,8 +378,6 @@ func (l *listenerWrapper) Close() error {
 // not serving. If the serving mode has changed, it invokes the registered mode
 // change callback.
 func (l *listenerWrapper) switchModeLocked(newMode connectivity.ServingMode, err error) {
-	// is this getting called right?
-	print("switch mode called with: ", newMode) // does this log properly?
 	if l.mode == newMode && l.mode == connectivity.ServingModeServing {
 		// Redundant updates are suppressed only when we are SERVING and the new
 		// mode is also SERVING. In the other case (where we are NOT_SERVING and the
@@ -410,7 +387,7 @@ func (l *listenerWrapper) switchModeLocked(newMode connectivity.ServingMode, err
 		return
 	}
 	l.mode = newMode
-	if l.mode == connectivity.ServingModeNotServing { // gracefully drain any conns if switching to serving
+	if l.mode == connectivity.ServingModeNotServing {
 		for _, conn := range l.activeFilterChainManager.Conns() {
 			conn.(*connWrapper).drain()
 		}
@@ -471,6 +448,5 @@ func (lw *ldsWatcher) OnResourceDoesNotExist() {
 	lw.parent.switchModeLocked(connectivity.ServingModeNotServing, err)
 	lw.parent.activeFilterChainManager = nil
 	lw.parent.pendingFilterChainManager = nil
-	lw.parent.activeFilterChains = nil
 	lw.parent.rdsHandler.updateRouteNamesToWatch(make(map[string]bool))
 }

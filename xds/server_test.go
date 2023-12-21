@@ -470,10 +470,6 @@ func (s) TestServeSuccess(t *testing.T) {
 	}
 }
 
-// get rid of test because it immediately serves on the server now before was
-// testing if it blocks before switching to serving, that Stop() causes it to
-// exit
-
 // TestNewServer_ClientCreationFailure tests the case where the xDS client
 // creation fails and verifies that the call to NewGRPCServer() fails.
 func (s) TestNewServer_ClientCreationFailure(t *testing.T) {

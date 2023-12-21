@@ -33,7 +33,7 @@ type rdsHandler struct {
 
 	parent *listenerWrapper
 
-	// updates is a map from routeName to rds update, including RDS resources
+	// updates is a map from routeName to RDS update, including RDS resources
 	// and any errors received. If not written in this map, no RDS update for
 	// that route name yet. If update set in value, use that as valid route
 	// configuration for RDS, otherwise treat as an error case and fail at L7
@@ -67,17 +67,14 @@ func (rh *rdsHandler) updateRouteNamesToWatch(routeNamesToWatch map[string]bool)
 			// The xDS client keeps a reference to the watcher until the cancel
 			// func is invoked. So, we don't need to keep a reference for fear
 			// of it being garbage collected.
-
-			// Wrap this cancel func to also set a bit in rdsWatcher to eat calls.
 			w := &rdsWatcher{parent: rh, routeName: routeName}
-			xdsCCancel := xdsresource.WatchRouteConfig(rh.xdsC, routeName, w) // calls back into w here
+			xdsCCancel := xdsresource.WatchRouteConfig(rh.xdsC, routeName, w)
+			// Set bit on cancel function to eat any RDS calls for this watcher
+			// after it has been cancelled.
 			rh.cancels[routeName] = func() {
-				w.cancelled = true // doesn't race, all of this is sync
+				w.cancelled = true // doesn't race, all of this is sync, accessed in xDS emissions only (LDS and RDS)
 				xdsCCancel()
-			} // calls back into w here
-			// just have cancels set bit on the rdsWatcher
-
-
+			}
 		}
 	}
 
@@ -139,11 +136,11 @@ type rdsWatcher struct {
 	logger    *igrpclog.PrefixLogger
 	routeName string
 
-	cancelled bool // eats calls if true, gate future callbacks here...
+	cancelled bool // eats callbacks if true
 }
 
 func (rw *rdsWatcher) OnUpdate(update *xdsresource.RouteConfigResourceData) {
-	if rw.cancelled { // eat any calls coming from cancelled watchers
+	if rw.cancelled {
 		return
 	}
 	if rw.logger.V(2) {
@@ -155,7 +152,7 @@ func (rw *rdsWatcher) OnUpdate(update *xdsresource.RouteConfigResourceData) {
 }
 
 func (rw *rdsWatcher) OnError(err error) {
-	if rw.cancelled { // eat any calls coming from cancelled watchers
+	if rw.cancelled {
 		return
 	}
 	if rw.logger.V(2) {
@@ -167,7 +164,7 @@ func (rw *rdsWatcher) OnError(err error) {
 }
 
 func (rw *rdsWatcher) OnResourceDoesNotExist() {
-	if rw.cancelled { // eat any calls coming from cancelled watchers
+	if rw.cancelled {
 		return
 	}
 	if rw.logger.V(2) {
@@ -178,5 +175,3 @@ func (rw *rdsWatcher) OnResourceDoesNotExist() {
 		err: err,
 	})
 }
-
-// wrap cancel to set a bit, once it's called set it to true (cancel() is called sync and only once)

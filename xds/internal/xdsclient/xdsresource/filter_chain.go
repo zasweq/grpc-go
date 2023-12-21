@@ -601,7 +601,6 @@ func (fci *FilterChainManager) Validate(f func(fc *FilterChain) error) error {
 }
 
 func processNetworkFilters(filters []*v3listenerpb.Filter) (*FilterChain, error) {
-	// rc := unsafe.Pointer(&RoutingCo)
 	rc := unsafe.Pointer(&RoutingConfiguration{})
 	filterChain := &FilterChain{
 		RC: &rc,

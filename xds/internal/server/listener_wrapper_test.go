@@ -130,6 +130,10 @@ func createListenerWrapper(t *testing.T, xdsC XDSClient) (<-chan struct{}, strin
 //     address to which our net.Listener is bound to. Also, it contains an
 //     inline Route Configuration. Test verifies that the listenerWrapper
 //     becomes ready.
+
+// write same test, but ready downstream check is if Conns accept + close
+// or if it actually tries to match filter chain logic
+
 func (s) TestListenerWrapper_InlineRouteConfig(t *testing.T) {
 	mgmtServer, nodeID, ldsResourceNamesCh, _, xdsC := xdsSetupFoTests(t)
 	readyCh, host, port, lisResourceName := createListenerWrapper(t, xdsC)
@@ -194,6 +198,10 @@ func (s) TestListenerWrapper_InlineRouteConfig(t *testing.T) {
 // resource. The test verifies that the listenerWrapper does not become ready
 // when waiting for the Route Configuration resource and becomes ready once it
 // receives the Route Configuration resource.
+
+// write same test, but ready downstream check is if Conns accept + close
+// or if it actually tries to match filter chain logic
+
 func (s) TestListenerWrapper_RouteNames(t *testing.T) {
 	mgmtServer, nodeID, ldsResourceNamesCh, rdsResourceNamesCh, xdsC := xdsSetupFoTests(t)
 	readyCh, host, port, lisResourceName := createListenerWrapper(t, xdsC)
@@ -313,6 +321,9 @@ func (fc *fakeConn) Close() error {
 //   - injects a fake net.Conn via the fake net.Listener. This Conn is expected
 //     to match the filter chains on the Listener resource. Verifies that
 //     Accept() does not return an error in this case.
+
+// Same test, but poll instead of using Accept channel to switch it to ready
+
 func (s) TestListenerWrapper_Accept(t *testing.T) {
 	boCh := testutils.NewChannel()
 	origBackoffFunc := backoffFunc
