@@ -28,6 +28,14 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
+// gets a service descriptor (at the same time as protoc runs? and generates messages? protoc gen not dependent on messages, but generated code is)
+
+// needs to build go files representing service descriptor, and also add a call option to generated methods stubs otel can read
+
+// how do I do that ^^^?
+
+// method stubs...look at a generated go file, it calls invoke, need to add a call option there
+
 const (
 	contextPackage = protogen.GoImportPath("context")
 	grpcPackage    = protogen.GoImportPath("google.golang.org/grpc")
@@ -302,6 +310,9 @@ func clientSignature(g *protogen.GeneratedFile, method *protogen.Method) string 
 }
 
 func genClientMethod(gen *protogen.Plugin, file *protogen.File, g *protogen.GeneratedFile, method *protogen.Method, index int) {
+	// append a grpc.CallOption
+	// if registered is set, read it in client sh (e2e test orthogonal to server then)
+	// opts := append(opts, grpc.CallOptionRegistered()
 	service := method.Parent
 	fmSymbol := helper.formatFullMethodSymbol(service, method)
 
@@ -309,9 +320,12 @@ func genClientMethod(gen *protogen.Plugin, file *protogen.File, g *protogen.Gene
 		g.P(deprecationComment)
 	}
 	g.P("func (c *", unexport(service.GoName), "Client) ", clientSignature(g, method), "{")
+	// How do I test this because I need to regenerate?
+	// should I make this only internal? it's a call option though
+	g.P("opts := append(opts, grpc.RegisteredMethodCallOption{} /*call option specifying bit. Keep internal?*/)") // prints a line so I'm good here...
 	if !method.Desc.IsStreamingServer() && !method.Desc.IsStreamingClient() {
 		g.P("out := new(", method.Output.GoIdent, ")")
-		g.P(`err := c.cc.Invoke(ctx, `, fmSymbol, `, in, out, opts...)`)
+		g.P(`err := c.cc.Invoke(ctx, `, fmSymbol, `, in, out, opts...)`) // literally a string representation of Invoke...so weird
 		g.P("if err != nil { return nil, err }")
 		g.P("return out, nil")
 		g.P("}")

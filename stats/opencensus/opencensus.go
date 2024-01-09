@@ -117,12 +117,43 @@ func perCallTracesAndMetrics(err error, span *trace.Span, startTime time.Time, m
 // tracing and stats by creating a top level call span and recording the latency
 // for the full RPC call.
 func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+
+	labelMethod := method
+	var registeredMethod bool
+	for _, co := range opts {
+		if _, ok := co.(grpc.RegisteredMethodCallOption); ok {
+			registeredMethod = true
+		}
+	}
+	if !registeredMethod {
+		labelMethod = "other"
+	}
+	// use label method
+
+	// for testing: redo the interop/test code gen (will this affect import?)
+	// then write an e2e test using it (and check call options)
+
+	// so mock interceptor, do stats handler callouts have it?
+	// or do I need to persist something in a call info object, like timestamp?
+
+	// I think I'll need to persist soemthing in call info yeah
+
 	startTime := time.Now()
 	ctx, span := csh.createCallSpan(ctx, method)
 	err := invoker(ctx, method, req, reply, cc, opts...)
 	perCallTracesAndMetrics(err, span, startTime, method)
 	return err
 }
+
+// so end to end test
+
+// dial with a unary and stream interceptor that makes verifications on
+// getting the correct call option type
+
+// use a recompiled grpc testing proto (does this have any implications for import)
+
+// and use this ^^^, and make an rpc (should be regsitered), and make sure call option
+// of type RegisteredMethodCallOption is present
 
 // streamInterceptor handles per RPC context management. It also handles per RPC
 // tracing and stats by creating a top level call span and recording the latency

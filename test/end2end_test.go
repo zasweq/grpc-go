@@ -6402,3 +6402,86 @@ func (s) TestRPCBlockingOnPickerStatsCall(t *testing.T) {
 		t.Fatalf("sh.pickerUpdated count: %v, want: %v", pickerUpdatedCount, 2)
 	}
 }
+
+// Ask Doug about this monday
+
+// TestRegisteredMethodCallOption tests if unary and streaming interceptors
+// receive a call option that specifies if an rpc corresponds to a registered
+// method. This call option should come from the generated gRPC Service proto,
+// created by a new protocgen go feature.
+
+// maybe make a call on unregistered and make it see if not registered (don't know if this is possible or not)
+
+// assumes part of generated code
+func (s) TestRegisteredMethodCallOption(t *testing.T) {
+	// stub interceptors?
+	// unary
+	// check it's present for a registered method
+
+	// check it isn't for an unregistered method
+
+	uiVerify := func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		var correctCallOption bool
+		for _, co := range opts {
+			if _, ok := co.(grpc.RegisteredMethodCallOption); ok {
+				correctCallOption = true
+			}
+		}
+		if !correctCallOption {
+			t.Fatalf(/*fail here...*/) // or return an error? same for streaming look at how RBAC works...
+		}
+		return nil
+	} // this will get invoked twice across two rpcs, if want to have two separate verifications for two types of RPCs need to have two separate verifications
+
+	siVerify := func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		var correctCallOption bool
+		for _, co := range opts {
+			if _, ok := co.(grpc.RegisteredMethodCallOption); ok {
+				correctCallOption = true
+			}
+		}
+		if !correctCallOption {
+			return nil, /*error specifying?*/
+		}
+		return streamer(ctx, desc, cc, method, opts...), nil
+	}
+
+
+	// essentially just needs to make sure the service code is present...
+
+
+
+	ss := &stubserver.StubServer{
+		UnaryCallF: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+			return &testpb.SimpleResponse{}, nil
+		},
+	}
+	if err := ss.StartServer(); err != nil {
+		t.Fatalf("Error starting endpoint server: %v", err)
+	}
+	defer ss.Stop()
+
+	// use manual reesolver or use the client that is attached to this stub server?
+
+	// inject mock interceptors that verify here vvv
+	cc, err := grpc.Dial(mr.Scheme()+":///", grpc.WithUnaryInterceptor(uiVerify/*mock unary interceptor that verifies here*/), grpc.WithStreamInterceptor(siVerify/*mock streaming interceptor that verifies here*/))
+	if err != nil {
+		t.Fatalf("grpc.Dial() failed: %v", err)
+	}
+	defer cc.Close()
+
+
+	// I need to rebase OTel onto master now that my two in flight PRs are done
+
+	// how to inject a non registered method call client side?
+
+
+}
+
+// one here where you manually put the call option in and test the interceptor layer...
+
+// and then one where you rerun compiler and then run it e2e - but this assumes
+// new code gen has run
+
+// I think that this should come before OTel so I can have the code there, tests there
+// and not have to change it
