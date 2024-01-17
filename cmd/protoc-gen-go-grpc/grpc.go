@@ -178,8 +178,40 @@ func generateFileContent(gen *protogen.Plugin, file *protogen.File, g *protogen.
 
 	g.P("// This is a compile-time assertion to ensure that this generated file")
 	g.P("// is compatible with the grpc package it is being compiled against.")
-	g.P("// Requires gRPC-Go v1.32.0 or later.")
+	g.P("// Requires gRPC-Go v1.32.0 or later.") // fixed...but no matter all good
 	g.P("const _ = ", grpcPackage.Ident("SupportPackageIsVersion7")) // When changing, update version number above.
+	g.P()
+	/*
+	protoc --go_out=. --go_opt=paths=source_relative \
+	    --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+	    helloworld/helloworld.proto
+
+	while in examples/helloworld
+
+	Add this to bash script - and verify call option...and that it works
+	(Write a mock stats handler...)
+	have your own proto and generate client/server code and write a mock stats handler
+	keep in its own repo? talk to Doug tmrw
+
+	cmd.Command in a test and generate it inline? and use those stubs in tests?
+
+
+
+	See unit test maybe
+	The pb gos in examples are already created...
+	how to create (README.md?)
+
+	Figure out how to test this...maybe talk to Doug about this tmrw yay in person :)
+	Figure out my own way of testing...I don't even know how to run command
+
+	We don't currently have any tests in protoc-gen-go-grpc. We should add something simple at least:
+
+	Create a .proto file with streaming / unary RPCs.
+	Generate the .pb.go file(s) from it and commit it/them.
+	Write a test that does (2) and diffs the results with the committed file(s).
+
+	*/
+	genRegisteredMethod(g) // caller handles new lines - how do I test this...need to compile and then verify with e2e...compile then work?
 	g.P()
 	for _, service := range file.Services {
 		genService(gen, file, g, service)
@@ -322,7 +354,20 @@ func genClientMethod(gen *protogen.Plugin, file *protogen.File, g *protogen.Gene
 	g.P("func (c *", unexport(service.GoName), "Client) ", clientSignature(g, method), "{")
 	// How do I test this because I need to regenerate?
 	// should I make this only internal? it's a call option though
-	g.P("opts := append(opts, grpc.RegisteredMethodCallOption{} /*call option specifying bit. Keep internal?*/)") // prints a line so I'm good here...
+	// exported symbol from grpc/, users can use this for generic method stubs
+
+	// update this protoc needs new gRPC version...how should
+
+	// target is fine to be canonicalize since experimental anyway...prepend DNS
+
+	// pr out for protoc gen go
+	// regenerate all protos
+
+	// call option merged as soon as possible...add new version to main/grpc
+	// support packages n + 1...
+	// when we add to protocgengo grpc later, will already have releases that supports
+
+	g.P("opts := append(opts, RegisteredMethodCallOption{EmptyCallOption: grpc.EmptyCallOption} /*call option specifying bit. Keep internal?*/)") // prints a line so I'm good here...
 	if !method.Desc.IsStreamingServer() && !method.Desc.IsStreamingClient() {
 		g.P("out := new(", method.Output.GoIdent, ")")
 		g.P(`err := c.cc.Invoke(ctx, `, fmSymbol, `, in, out, opts...)`) // literally a string representation of Invoke...so weird
@@ -547,3 +592,20 @@ func genLeadingComments(g *protogen.GeneratedFile, loc protoreflect.SourceLocati
 const deprecationComment = "// Deprecated: Do not use."
 
 func unexport(s string) string { return strings.ToLower(s[:1]) + s[1:] }
+
+// call this once per generated file? or is it not scoped to package?
+
+// need this once per generated gRPC Service file...
+// does each gRPC Service have it's own file?
+// might not be per service because potentially could have multiple and
+// thus multiple of the smae struct...*one struct per *package*, so the top of generation of services...
+
+// up to caller to determine when this is going to be created
+func genRegisteredMethod(g *protogen.GeneratedFile) { // always generate same thing, does it need any other args?
+	g.P("type RegisteredMethodCallOption struct {")
+	g.P("    grpc.EmptyCallOption")
+	g.P("}")
+}
+
+// How to test if this works/compiles? run protocgen go and then see? see unit
+// test Doug was mentioning?

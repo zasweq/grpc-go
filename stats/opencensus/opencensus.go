@@ -113,6 +113,12 @@ func perCallTracesAndMetrics(err error, span *trace.Span, startTime time.Time, m
 	)
 }
 
+// do this and call option (how to test call option)
+
+// and then rebase otel onto these and incorporate maybe? Should happen in e2e tests *if regenerated*
+// and fix e2e tests...
+
+
 // unaryInterceptor handles per RPC context management. It also handles per RPC
 // tracing and stats by creating a top level call span and recording the latency
 // for the full RPC call.
@@ -120,8 +126,35 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 
 	labelMethod := method
 	var registeredMethod bool
+	// do it all in generated code...add method
+
+	// typecast it to exported method...lowercase is package only...bound to package defined
+
+
+	// struct {
+	//   EmptyCallOption
+	//   OtherMethod() - global namespace any package can use this
+	// }
+	// add this method to generated code...
+	// either have it live right by generated code method or at top of file...
+
+
+	// so need to add this whole codeblock to generated code...add test (on
+	// generated code - apparently someone added tests for it)
+
+	// do this first so you can do some e2e tests on the full functionality...
+
+
+
+
+
+
+	// this calls OtherMethod() and type asserts it...to an interface that implements OtherMethod()
+
 	for _, co := range opts {
-		if _, ok := co.(grpc.RegisteredMethodCallOption); ok {
+		if _, ok := co.(interface{
+			IsRegisteredMethod()
+		}); ok { // or implement own call option in generated code...implement interface that has function...call option can work with all existing gRPC versions
 			registeredMethod = true
 		}
 	}

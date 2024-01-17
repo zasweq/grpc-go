@@ -189,6 +189,16 @@ type EmptyCallOption struct{}
 func (EmptyCallOption) before(*callInfo) error      { return nil }
 func (EmptyCallOption) after(*callInfo, *csAttempt) {}
 
+type RegisteredMethodCallOption struct { // this lives in generated package
+	EmptyCallOption // grpc.EmptyCallOption
+}
+
+func (rmco *RegisteredMethodCallOption) IsRegisteredMethod() { // could even have this return a bool
+	rmco := &RegisteredMethodCallOption{EmptyCallOption: EmptyCallOption{}} // grpc.EmptyCallOption
+	// so grpc.EmptyCallOption since it already has
+}
+
+/*
 type RegisteredMethodCallOption struct{} // doens't need to persist a bit, default to false
 
 func (RegisteredMethodCallOption) before(info *callInfo) error {
@@ -204,13 +214,13 @@ func (RegisteredMethodCallOption) before(info *callInfo) error {
 	    maxRetryRPCBufferSize int
 	    onFinish              []func(err error)
 	}
-	*/
 	return nil
 } // I think can just loop through call options and typecast it
 
 // need to encode a bit that represents that it's a registered method...
 
 func (RegisteredMethodCallOption) after(*callInfo, *csAttempt) {}
+ */
 
 // Header returns a CallOptions that retrieves the header metadata
 // for a unary RPC.
