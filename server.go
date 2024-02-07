@@ -1240,7 +1240,7 @@ func (s *Server) processUnaryRPC(ctx context.Context, t transport.ServerTranspor
 					end.Error = toRPCErr(err)
 				}
 				sh.HandleRPC(ctx, end)
-			}
+			} // I think it's these three - but this isn't async just comes after...signal from client?
 
 			if channelz.IsOn() {
 				if err != nil && err != io.EOF {
@@ -1572,7 +1572,7 @@ func (s *Server) processStreamingRPC(ctx context.Context, t transport.ServerTran
 					end.Error = toRPCErr(err)
 				}
 				for _, sh := range shs {
-					sh.HandleRPC(ctx, end)
+					sh.HandleRPC(ctx, end) // this ends it...maybe it only uploads one snapshot and isn't dynamic over time this is so weird...does it assert equal on all I want it to assert equal?
 				}
 			}
 
