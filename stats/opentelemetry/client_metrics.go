@@ -136,8 +136,15 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 // registered methods vs. not part of registered methods)
 
 func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	target := cc.CanonicalTarget()
+	if csh.mo.TargetAttributeFilter != nil {
+		if !csh.mo.TargetAttributeFilter(target) {
+			target = "other"
+		}
+	}
 	ci := &callInfo{ // I don't think we need this server side...client side concepts. Server data scoped to context is implicitly call. Maybe call it client call info?
-		target: cc.Target(),
+		target: target,
+		method: csh.determineMethod(method, opts...),
 	} // put inside top level call context, read target in non locking way write timestamp with a context held in attempt layer
 	// how does this with work with context keys (one key value pair *per context*)
 
@@ -184,8 +191,32 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 	err := invoker(ctx, method, req, reply, cc, opts...)
 
 	// 3. post processing (callback in streaming flow...)
-	csh.perCallMetrics(ctx, err, startTime, method, cc.Target())
+	// loop through call option to see if registered...need to persist this bit
+	// for the lifetime of the call...I think method passed as a result of sh
+	// callouts is the same. (doesn't block but need to finish that regen thing...)
+	csh.perCallMetrics(ctx, err, startTime, ci)
 	return err
+}
+
+// determineMethod determines the method to record attributes with. This will be
+// "other" if StaticMethod isn't specified or if filter specifies, the method
+// name as is otherwise.
+func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallOption) string { // assert this is right in e2e tests...
+	if csh.mo.MethodAttributeFilter != nil {
+		if !csh.mo.MethodAttributeFilter(method) { // method here and in interceptor above...
+			return "other"
+		}
+	}
+	// loop through it here from call options passed in, to not reuse code, maybe will have to to persist bit
+	// or persist call options per stats handler no an object scoped to call wait we do call info which is scoped to call
+	// so use that and can be inferred that it works by good tests...
+	for _, opt := range opts {
+		if _, ok := opt.(grpc.StaticMethodCallOption); ok {
+			// a bit to use it, if bit not set use "other"
+			return method
+		}
+	}
+	return "other"
 }
 
 func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
@@ -196,11 +227,17 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 	// if set at start of next attempt (inside the attempt) writes to top level call object.
 	ci := &callInfo{
 		target: cc.Target(),
+		method: csh.determineMethod(method, opts...),
 	}
 	ctx = setCallInfo(ctx, ci)
 	startTime := time.Now()
+	// pass in call option to per call metrics?
+
+	// loop through call option to see if registered...need to persist this bit
+	// for the lifetime of the call...I think method passed as a result of sh
+	// callouts is the same.
 	callback := func(err error) {
-		csh.perCallMetrics(ctx, err, startTime, method, cc.Target())
+		csh.perCallMetrics(ctx, err, startTime, ci)
 	}
 	opts = append([]grpc.CallOption{grpc.OnFinish(callback)}, opts...)
 	s, err := streamer(ctx, desc, cc, method, opts...)
@@ -210,11 +247,11 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 	return s, nil
 }
 
-func (csh *clientStatsHandler) perCallMetrics(ctx context.Context, err error, startTime time.Time, method string, target string) {
+func (csh *clientStatsHandler) perCallMetrics(ctx context.Context, err error, startTime time.Time, ci *callInfo) {
 	s := status.Convert(err)
 	callLatency := float64(time.Since(startTime)) / float64(time.Millisecond)
-	if csh.registeredMetrics.clientCallDuration != nil {
-		csh.registeredMetrics.clientCallDuration.Record(ctx, callLatency, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(method)), attribute.String("grpc.target", target), attribute.String("grpc.status", canonicalString(s.Code())))) // needs method target and status should I persist this?
+	if csh.registeredMetrics.clientCallDuration != nil { // no need for nil checks anymore...
+		csh.registeredMetrics.clientCallDuration.Record(ctx, callLatency, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(ci.method)), attribute.String("grpc.target", ci.target), attribute.String("grpc.status", canonicalString(s.Code())))) // needs method target and status should I persist this?
 	}
 }
 
@@ -230,7 +267,6 @@ func (csh *clientStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
 	mi := &metricsInfo{ // populates information about RPC start.
 		startTime: time.Now(),
-		method: info.FullMethodName,
 	}
 	ri := &rpcInfo{
 		mi: mi,
@@ -261,7 +297,7 @@ func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCS
 		}
 
 		if csh.registeredMetrics.clientAttemptStarted != nil {
-			csh.registeredMetrics.clientAttemptStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.target", ci.target))) // Add records a change to the counter...attributeset for efficiency
+			csh.registeredMetrics.clientAttemptStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(ci.method)), attribute.String("grpc.target", ci.target))) // Add records a change to the counter...attributeset for efficiency
 		}
 	case *stats.OutPayload:
 		atomic.AddInt64(&mi.sentCompressedBytes, int64(st.CompressedLength))
@@ -292,7 +328,7 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 	} else {
 		st = "OK"
 	}
-	clientAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.target", ci.target), attribute.String("grpc.status", st))
+	clientAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(ci.method)), attribute.String("grpc.target", ci.target), attribute.String("grpc.status", st))
 	if csh.registeredMetrics.clientAttemptDuration != nil { // could read into local var for readability
 		csh.registeredMetrics.clientAttemptDuration.Record(ctx, latency, clientAttributeOption)
 	}

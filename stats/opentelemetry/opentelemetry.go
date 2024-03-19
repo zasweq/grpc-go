@@ -52,14 +52,39 @@ type MetricsOptions struct {
 	// (i.e. it will create default views for unset views).
 	MeterProvider metric.MeterProvider
 
+
+	// *** Do I need these? ***
 	// Metrics are the metrics to instrument. Will turn on the corresponding
 	// metric supported by the client and server instrumentation components if
 	// applicable.
-	Metrics []string // Unconditionally register all metrics.
+	Metrics []string // Unconditionally register all metrics. (see gRFC)
 
 	// Attributes are constant attributes applied to every recorded metric.
-	Attributes []attribute.KeyValue // Do I not want this anymore? Just delete this
+	Attributes []attribute.KeyValue // Do I not want this anymore? Just delete this (see what Yash said about this...)
+	// *** Do I need these? ***
+
+
+
+	// TargetAttributeFilter is a callback that takes the target string and
+	// returns a bool representing whether to use target as a label value or use
+	// the string "other". If unset, will use the target string as is.
+	TargetAttributeFilter func(string) bool
+	// MethodAttributeFilter is a callback that takes the method string and
+	// returns a bool representing whether to use method as a label value or use
+	// the string "other". If unset, will use the method string as is. This is
+	// used only for generic methods, and not registered methods.
+	MethodAttributeFilter func(string) bool // *Done with these*
 }
+
+// use CanonicalTarget() helper on ClientConn (where does this component have access to it?)
+// to record target attribute *Done* (need to test all of these)
+
+// security...
+// read isStaticMethod call option (I already wrote code for this somewhere...)
+// client side to see if it works...
+
+// server side read the pointer to server (I think I already have this done)
+
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation
 // code for a grpc.ClientConn.
@@ -79,6 +104,7 @@ type MetricsOptions struct {
 func DialOption(mo MetricsOptions) grpc.DialOption {
 	csh := &clientStatsHandler{mo: mo}
 	// Unconditionally register all metrics now.
+	// I don't have option to disable right? so unconditionally register? Gate at meter provider layer?
 	csh.buildMetricsDataStructuresAtInitTime() // perhaps make this a constructor...that links the two together what two interceptors? Or operations?
 	return joinDialOptions(grpc.WithChainUnaryInterceptor(csh.unaryInterceptor), grpc.WithStreamInterceptor(csh.streamInterceptor), grpc.WithStatsHandler(csh))
 } // multiple components by grpc.DialOption, grpc.DialOption, need to add a unit test eh this isn't even speced out...
@@ -110,8 +136,7 @@ func ServerOption(mo MetricsOptions) grpc.ServerOption {
 type callInfo struct {
 	target string
 
-	// TODO: When implementing retry metrics, this top level call object will be
-	// mutable and record time with no RPC attempt in applicable place.
+	method string
 }
 
 type callInfoKey struct {}

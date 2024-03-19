@@ -18,6 +18,8 @@ package opentelemetry
 
 import (
 	"context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/internal"
 	"sync/atomic"
 	"time"
 
@@ -120,9 +122,26 @@ func (ssh *serverStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 
 // TagRPC implements per RPC context management.
 func (ssh *serverStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	method := info.FullMethodName
+	if ssh.mo.MethodAttributeFilter != nil {
+		if !ssh.mo.MethodAttributeFilter(method) {
+			method = "other"
+		}
+	}
+	// right here read pointer of server passed to sh...in ctx?
+	server := internal.ServerFromContext.(func(context.Context) *grpc.Server)(ctx)
+	if server == nil { // Shouldn't happen, defensive programming.
+		method = "other"
+	} else {
+		isRegisteredMethod := internal.IsRegisteredMethod.(func(*grpc.Server, string) bool)
+		if !isRegisteredMethod(server, method) {
+			method = "other"
+		}
+	}
+
 	mi := &metricsInfo{
 		startTime: time.Now(),
-		method: info.FullMethodName,
+		method: method,
 	}
 	ri := &rpcInfo{
 		mi: mi,
