@@ -589,8 +589,21 @@ type ConnectOptions struct {
 	CredsBundle credentials.Bundle
 	// KeepaliveParams stores the keepalive parameters.
 	KeepaliveParams keepalive.ClientParameters
+
+	// [] non per call metrics...is this scoped correctly now since this isn't
+	// per call but passed to balancers...
+	// or scale up object { both per call and non per call }
+	// or embed stats.Handler in non per call, but would break if stats.Handler changes...
+
+	// a [] of something will be either passed to WRR or exposed as a method on
+	// the ClientConn...
+
+	// runs global dial options and per channel options through apply()
+	// two separate slices or the same....and where to store
+	// the dial option itself can be a join of both...emitted from OTel...
+
 	// StatsHandlers stores the handler for stats.
-	StatsHandlers []stats.Handler
+	StatsHandlers []stats.Handler // three options...all under the hood to the requirement of flipping the metric between the type doesn't show up to users...
 	// InitialWindowSize sets the initial window size for a stream.
 	InitialWindowSize int32
 	// InitialConnWindowSize sets the initial window size for a connection.

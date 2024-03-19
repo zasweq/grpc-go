@@ -57,8 +57,17 @@ func GetMetricsRecordersForTarget(target string) MetricsRecorders {}
 // also plugin/optional label plugin filter goes through same thing
 // because needed for csm as well
 
+// so new thing:
+// otel extends this with this api...
+// otel still implements stats.Handler so can pass it around as that
+
+// global registry emission:
+// interface with new methods{},
+
+// s/MetricsRecorder/to non per call metrics nah metrics recorder is better
+// switch comment below to stats handler
 // MetricsRecorderOpts are the options used to configure a MetricsRecorder.
-type MetricsRecorderOpts struct {
+type MetricsRecorderOpts struct { // s to otel opts (diff or entire otel opts)
 	// MeterProvider is the MeterProvider instance that will be used for access
 	// to Named Meter instances to instrument an application. To enable metrics
 	// collection, set a meter provider. If unset, no metrics will be recorded.
@@ -81,13 +90,14 @@ type MetricsRecorderOpts struct {
 	// TargetScope is a callback that passes in the target string and returns
 	// whether a target is applicable for a MetricsRecorder. If unset,
 	// will never match to a target.
-	TargetScope func(string) bool // noop if used in open source
+	TargetScope func(string) bool // noop if used in open source, used in global instrument registry, populates otel api...?
 	// TargetAttributeFilter is a callback that takes the target string and
 	// returns a bool representing whether to use target as a label value or use
 	// the string "other". If unset, will use the target string as is.
 	TargetAttributeFilter func(string) bool
 
 
+	// global instruments + csm instruments...
 	// *** Cleanup
 	// will eventually need to persist this map from name to index want
 	// read the optional labels/instrument name from index, look into map below
@@ -101,7 +111,7 @@ type MetricsRecorderOpts struct {
 }
 
 // mention extensible and map it to structure above, want this to work in future with multiple optional labels
-func ExamplePluginOption(index int) []string {
+func ExamplePluginOption(index int) []string { // still the same even if on OTel plugin now...
 	// use index to look into global registry
 	// if name := globalregistry[index].name; name == "metricWithOptionalLabel" {
 	//       return []string{label}
@@ -117,7 +127,7 @@ func ExamplePluginOption(index int) []string {
 
 // NewGlobalMetricsRecorder returns a global metrics recorder constructed with
 // the provided options.
-func NewGlobalMetricsRecorder(opts MetricsRecorderOpts) *MetricsRecorder {}
+func NewGlobalMetricsRecorder(opts MetricsRecorderOpts) *MetricsRecorder {} // the same as otel now
 
 // MetricsRecorder in an object used to record non per call metrics. At
 // creation time, it creates instruments based off options provided alongside
@@ -126,6 +136,10 @@ func NewGlobalMetricsRecorder(opts MetricsRecorderOpts) *MetricsRecorder {}
 
 // get this out by at latest Wed so people can review and add comments...
 
+// switch to an internal?
+
+// switch to interface with all the methods below, still emit this,
+// however it's implemented by OTel...
 type MetricsRecorder struct {} // not implementable by users?
 
 // Target returns whether this global metrics recorder is applicable for the
@@ -206,4 +220,33 @@ func (wrr *wrr) recording() {
 // WRR/xDS Client talk to []MetricsRecorders
 // look into global registry at balancer creation time (other option is after Dial (where target can change)), canonical target
 // is already present in balancer, at xDS Client time when switched to per target xDS Client is when I can look at it...
+
+
+
+
+
+
+
+// how does this new decision affect this design?
+
+// configure OTel ((Per Call Metrics) and (not per call metrics))
+// Have per channel Dial Options and also global Dial Option, combine them into one list (or object as Doug wanted)
+// do per call and not per call *unconditionally*
+
+
+
+// no global stats handler registry
+// global instruments registry
+// sh created still have have properties of this global instruments registry...
+
+
+// Configure through dial options
+
+// WRR
+
+// gets the list of []nonPerMetrics stats handlers...
+// and still pass in index
+
+
+
 
