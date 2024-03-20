@@ -18,14 +18,14 @@ package opentelemetry
 
 import (
 	"context"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/internal"
 	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
@@ -128,7 +128,6 @@ func (ssh *serverStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 			method = "other"
 		}
 	}
-	// right here read pointer of server passed to sh...in ctx?
 	server := internal.ServerFromContext.(func(context.Context) *grpc.Server)(ctx)
 	if server == nil { // Shouldn't happen, defensive programming.
 		method = "other"

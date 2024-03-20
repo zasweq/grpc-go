@@ -191,9 +191,9 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 	err := invoker(ctx, method, req, reply, cc, opts...)
 
 	// 3. post processing (callback in streaming flow...)
-	// loop through call option to see if registered...need to persist this bit
-	// for the lifetime of the call...I think method passed as a result of sh
-	// callouts is the same. (doesn't block but need to finish that regen thing...)
+
+	// I think method passed as a result of sh callouts is the same. (doesn't
+	// block but need to finish that regen thing...)
 	csh.perCallMetrics(ctx, err, startTime, ci)
 	return err
 }
@@ -207,12 +207,12 @@ func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallO
 			return "other"
 		}
 	}
-	// loop through it here from call options passed in, to not reuse code, maybe will have to to persist bit
-	// or persist call options per stats handler no an object scoped to call wait we do call info which is scoped to call
-	// so use that and can be inferred that it works by good tests...
+	// loop through it here from call options passed in, to not reuse code,
+	// maybe will have to to persist bit or persist call options per stats
+	// handler no an object scoped to call wait we do call info which is scoped
+	// to call so use that and can be inferred that it works by good tests...
 	for _, opt := range opts {
 		if _, ok := opt.(grpc.StaticMethodCallOption); ok {
-			// a bit to use it, if bit not set use "other"
 			return method
 		}
 	}
@@ -220,22 +220,15 @@ func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallO
 }
 
 func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	// write top level object (for retry metrics)
-	// toplevelobject.Time (needs to be protected with a mutex)
-
-	// record timestamp at end of attempt
-	// if set at start of next attempt (inside the attempt) writes to top level call object.
 	ci := &callInfo{
 		target: cc.Target(),
 		method: csh.determineMethod(method, opts...),
 	}
 	ctx = setCallInfo(ctx, ci)
 	startTime := time.Now()
-	// pass in call option to per call metrics?
 
-	// loop through call option to see if registered...need to persist this bit
-	// for the lifetime of the call...I think method passed as a result of sh
-	// callouts is the same.
+	// I think method passed in a result of stats handler callouts is the
+	// same...write unit tests for this.
 	callback := func(err error) {
 		csh.perCallMetrics(ctx, err, startTime, ci)
 	}

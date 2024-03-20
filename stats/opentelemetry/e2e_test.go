@@ -193,6 +193,17 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		}
 	}
 
+	// lighter way of testing "other"...
+
+	// need to test:
+	// a. TargetAttribute/MethodAttribute filter in the top level
+	// b. registered method client side vs. not buckets (how to test these - see unit tests?)
+	//    registered method server side vs. not buckets (how to test this - would need to mock an unregistered method...)
+	// c. canonical target for those that don't become "other" (can test both same target (already tested below))
+	// and canonical - but that would need to still pass Dial while also getting prepended
+
+
+
 	unaryMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/UnaryCall") // could pul into var but I think this is only place you use it
 	duplexMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall")
 	// These tags are used for every single metric ^^^

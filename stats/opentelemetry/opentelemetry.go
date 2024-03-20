@@ -58,9 +58,10 @@ type MetricsOptions struct {
 	// metric supported by the client and server instrumentation components if
 	// applicable.
 	Metrics []string // Unconditionally register all metrics. (see gRFC)
+	// will wrap with way we decided with enable, disable, disable all (with certain that are default)
 
 	// Attributes are constant attributes applied to every recorded metric.
-	Attributes []attribute.KeyValue // Do I not want this anymore? Just delete this (see what Yash said about this...)
+	Attributes []attribute.KeyValue // Do I not want this anymore? Just delete this (see what Yash said about this...) could bring this in as part of a70 too
 	// *** Do I need these? ***
 
 
@@ -85,6 +86,9 @@ type MetricsOptions struct {
 
 // server side read the pointer to server (I think I already have this done)
 
+// Finished, but will need to test thee behaviors ^^^
+
+
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation
 // code for a grpc.ClientConn.
@@ -103,7 +107,7 @@ type MetricsOptions struct {
 // and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func DialOption(mo MetricsOptions) grpc.DialOption {
 	csh := &clientStatsHandler{mo: mo}
-	// Unconditionally register all metrics now.
+	// Unconditionally register all metrics now. Change the ergonomics of api later, but won't want to break people (doug will comment, it's computing before
 	// I don't have option to disable right? so unconditionally register? Gate at meter provider layer?
 	csh.buildMetricsDataStructuresAtInitTime() // perhaps make this a constructor...that links the two together what two interceptors? Or operations?
 	return joinDialOptions(grpc.WithChainUnaryInterceptor(csh.unaryInterceptor), grpc.WithStreamInterceptor(csh.streamInterceptor), grpc.WithStatsHandler(csh))
