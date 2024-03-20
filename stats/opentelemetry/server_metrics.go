@@ -30,19 +30,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-var (
-// byte distribution with boundaries
-// 0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296
-
-// second distribution (for latency) with boundaries
-// 0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100
-
-// count distribution
-// 0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536.
-
-// Set in o11y plugins ^^^
-)
-
 type serverStatsHandler struct {
 	mo MetricsOptions
 
@@ -50,7 +37,7 @@ type serverStatsHandler struct {
 }
 
 
-func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime() {
+func (ssh *serverStatsHandler) initializeMetrics() {
 	// Don't use no-op, just don't fill out any of the metrics, and if none of the
 	// metrics are set then you just don't record.
 	if ssh.mo.MeterProvider == nil {
@@ -62,10 +49,7 @@ func (ssh *serverStatsHandler) buildMetricsDataStructuresAtInitTime() {
 	if meter == nil {
 		return
 	}
-	setOfMetrics := make(map[string]struct{}) // pre allocate length?
-	for _, metric := range ssh.mo.Metrics {
-		setOfMetrics[metric] = struct{}{}
-	}
+	setOfMetrics := ssh.mo.Metrics.metrics
 
 	registeredMetrics := registeredMetrics{}
 
@@ -168,19 +152,9 @@ func (ssh *serverStatsHandler) processRPCData(ctx context.Context, s stats.RPCSt
 	case *stats.OutTrailer:
 		print("trailer received")
 	case *stats.InHeader:
-		/*authorityHeader := st.Header.Get(":authority")
-		var authority string
-		// "no eventual authority header is a valid rpc" - rare but it can happen, just log an empty string.
-		if len(authorityHeader) == 0 {
-			authority = ""
-		} else {
-			authority = authorityHeader[0]
-		}
-		mi.authority = authority // for metrics info scope it to the metrics info for efficiency purposes
-		print("checking if server call started is nil")*/
 		if ssh.registeredMetrics.serverCallStarted != nil { // could read this into a local var for readability see what they say on CLs
 			print("recording server call started")
-			ssh.registeredMetrics.serverCallStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method))/*, attribute.String("authority", authority/*persisted authority from InHeader...comes after or just move recording point to in header if in header is 1:1 for an RPC and is always called?*)*/))
+			ssh.registeredMetrics.serverCallStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method))))
 		}
 	case *stats.OutPayload:
 		atomic.AddInt64(&mi.sentCompressedBytes, int64(st.CompressedLength))
@@ -207,9 +181,7 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 	} else {
 		st = "OK"
 	}
-	// if method in []string (persisted on the ssh) removeLeadingSlash(mi.method))
-	// else generic?
-	serverAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), /*attribute.String("grpc.authority", mi.authority),*/ attribute.String("grpc.status", st))
+	serverAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.status", st))
 
 	if ssh.registeredMetrics.serverCallSentTotalCompressedMessageSize != nil {
 		print("recording server side sent compressed message size ", atomic.LoadInt64(&mi.sentCompressedBytes))
@@ -237,39 +209,3 @@ var DefaultServerMetrics = []string{
 	"grpc.server.call.rcvd_total_compressed_message_size",
 	"grpc.server.call.duration",
 }
-
-/*
-* Talk to Doug about authority thing and also []registered methods and passing it through call object in context scoped to call
-* I don't know if client conn has access to []registered methods, if not need to also figure that out.
-
-* Fix this bug of server side stats.End handling. It's being recorded on meter, but not plumbed through Collect()
-* Make non deterministic assertions (I think part of same test code would be good)
-* Cleanup PR
-* Yashes design work
-* Write design doc for this?
-
-* Observability presentation
-* Bootstrap generator testing
-* Sell stock tmrw to avoid a debacle
-
-* make sure canonical (dns) effective target on Target()...ParseTarget and find resolver default string + :// cc target. overwrite the old value
-behavior change for target
-
-method filtering i.e. registered or not
-
-server side: through context - either server -> transport -> csh.  (or server -> csh) directly
-for *server (would require callouts only in server). Because *server has access
-to the registered methods. So server should own code
-of determining it's a registered method or not.
-
-
-client side: register when you wrap? Generated new foo client? call client conn - registering now - rpc method handler
-pass dial option, interceptor pulls out of dial option (specifying RPCs came through stubs - bool stub vs. non stub (cardinality issue not issue) he likes it per call
-*/
-
-
-// Did anything change? Obv stats handler callouts,
-// security vulnerability still there? Bounds still set by user right?
-// also the labels to record changed but I think I've already taken that into account...
-
-// go get the new module so maybe just do a whole new thing...with new otel dependency...

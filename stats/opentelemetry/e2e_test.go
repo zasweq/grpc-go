@@ -46,18 +46,6 @@ func Test(t *testing.T) {
 	grpctest.RunSubTests(t, s{})
 }
 
-// Tasks
-// Cleanup
-// Go get the sdk
-
-// esp since I updated
-
-// go get at master to see if tests work (do again)
-// then they need to perform a (stable?) release...but David mentioned it's a few months from being stable.
-// so I can use it in my code
-
-// It's stable wrt emitted metrics might change some names around so I'm good wrt writing tests
-
 // waitForServerCompletedRPCs waits until the unary and streaming stats.End
 // calls are finished processing (from the want metrics passed in)
 func waitForServerCompletedRPCs(ctx context.Context, reader metric.Reader, wantMetric metricdata.Metrics, t *testing.T) (map[string]metricdata.Metrics, error) {
@@ -218,6 +206,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 
 	// I think this needs to be passed into the attributes. Yes part of data points and so are a lot of others...a lot of
 	// other things
+
+	// manually verify these attributes, setting up sceanrios under test will be hard...
 
 	// Can either declare all inline or declare as 4 variables (the four possible combinations (or append it)
 	attribute.NewSet(unaryMethodAttr, targetAttr) // Do I need to throw this in based off 6 ^^^^ or could just make 4 of these

@@ -39,9 +39,12 @@ var (
 	joinDialOptions = internal.JoinDialOptions.(func(...grpc.DialOption) grpc.DialOption)
 )
 
+// Metrics is a set of metrics to initialize. Once created, metrics is
+// immutable.
 type Metrics struct {
 	// default string
 	// map string -> bool
+	metrics map[string]bool // loop through this thing when creating...
 }
 
 // (default set), enable1, disable1, disableall (add and remove ... metrics)
@@ -52,11 +55,36 @@ type Metrics struct {
 
 // default then add or remove (represents clear all)
 
+// return a new map entirely - immutable
 
+// AddImmu adds the metrics and returns a new copy
+func (m *Metrics) Add(metrics ...string) *Metrics {
+	newMetrics := make(map[string]bool)
+	for metric := range m.metrics {
+		newMetrics[metric] = true
+	}
 
+	for _, metric := range metrics {
+		newMetrics[metric] = true
+	}
+	return &Metrics{
+		metrics: newMetrics,
+	}
+}
 
+func (m *Metrics) Remove(metrics ...string) *Metrics {
+	newMetrics := make(map[string]bool)
+	for metric := range m.metrics {
+		newMetrics[metric] = true
+	}
 
-
+	for _, metric := range metrics {
+		delete(newMetrics, metric)
+	}
+	return &Metrics{
+		metrics: newMetrics,
+	}
+}
 
 // MetricsOptions are the metrics options for OpenTelemetry instrumentation.
 type MetricsOptions struct {
@@ -73,7 +101,7 @@ type MetricsOptions struct {
 	// Metrics are the metrics to instrument. Will turn on the corresponding
 	// metric supported by the client and server instrumentation components if
 	// applicable.
-	Metrics []string // Unconditionally register all metrics. (see gRFC)
+	Metrics Metrics // Unconditionally register all metrics. (see gRFC)
 	// will wrap with way we decided with enable, disable, disable all (with certain that are default)
 
 	// *** Do I need these? ***
@@ -123,7 +151,7 @@ type MetricsOptions struct {
 // and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func DialOption(mo MetricsOptions) grpc.DialOption {
 	csh := &clientStatsHandler{mo: mo}
-	csh.buildMetricsDataStructuresAtInitTime()
+	csh.initializeMetrics()
 	return joinDialOptions(grpc.WithChainUnaryInterceptor(csh.unaryInterceptor), grpc.WithStreamInterceptor(csh.streamInterceptor), grpc.WithStatsHandler(csh))
 }
 
@@ -145,7 +173,7 @@ func DialOption(mo MetricsOptions) grpc.DialOption {
 // and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func ServerOption(mo MetricsOptions) grpc.ServerOption {
 	ssh := &serverStatsHandler{mo: mo}
-	ssh.buildMetricsDataStructuresAtInitTime() // build "fixed" "hardcoded"?
+	ssh.initializeMetrics() // build "fixed" "hardcoded"?
 	return grpc.StatsHandler(ssh)
 }
 
@@ -239,3 +267,5 @@ type registeredMetrics struct { // nil or not nil means presence
 
 
 // start pulling these into different files and cleaning up*** :)
+
+var EmptyMetrics = Metrics{}
