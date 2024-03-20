@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
 	"google.golang.org/grpc"
@@ -40,7 +39,24 @@ var (
 	joinDialOptions = internal.JoinDialOptions.(func(...grpc.DialOption) grpc.DialOption)
 )
 
-// make sure to mark as experimental, this is in flux. How to mark as experimental?
+type Metrics struct {
+	// default string
+	// map string -> bool
+}
+
+// (default set), enable1, disable1, disableall (add and remove ... metrics)
+// start an empty one if don't want, or start with defaults
+
+
+// empty then add or remove (represents clear all)
+
+// default then add or remove (represents clear all)
+
+
+
+
+
+
 
 // MetricsOptions are the metrics options for OpenTelemetry instrumentation.
 type MetricsOptions struct {
@@ -60,9 +76,9 @@ type MetricsOptions struct {
 	Metrics []string // Unconditionally register all metrics. (see gRFC)
 	// will wrap with way we decided with enable, disable, disable all (with certain that are default)
 
-	// Attributes are constant attributes applied to every recorded metric.
-	Attributes []attribute.KeyValue // Do I not want this anymore? Just delete this (see what Yash said about this...) could bring this in as part of a70 too
 	// *** Do I need these? ***
+	// could I do a disable/enable on a set helper as you construct it? default +
+	// others (try that)
 
 
 
@@ -107,11 +123,9 @@ type MetricsOptions struct {
 // and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func DialOption(mo MetricsOptions) grpc.DialOption {
 	csh := &clientStatsHandler{mo: mo}
-	// Unconditionally register all metrics now. Change the ergonomics of api later, but won't want to break people (doug will comment, it's computing before
-	// I don't have option to disable right? so unconditionally register? Gate at meter provider layer?
-	csh.buildMetricsDataStructuresAtInitTime() // perhaps make this a constructor...that links the two together what two interceptors? Or operations?
+	csh.buildMetricsDataStructuresAtInitTime()
 	return joinDialOptions(grpc.WithChainUnaryInterceptor(csh.unaryInterceptor), grpc.WithStreamInterceptor(csh.streamInterceptor), grpc.WithStatsHandler(csh))
-} // multiple components by grpc.DialOption, grpc.DialOption, need to add a unit test eh this isn't even speced out...
+}
 
 
 // ServerOption returns a server option which enables OpenTelemetry
@@ -131,8 +145,7 @@ func DialOption(mo MetricsOptions) grpc.DialOption {
 // and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func ServerOption(mo MetricsOptions) grpc.ServerOption {
 	ssh := &serverStatsHandler{mo: mo}
-	// Unconditionally register all metrics.
-	ssh.buildMetricsDataStructuresAtInitTime() // or make it as part of new?...make one constructor. Build or something like that?
+	ssh.buildMetricsDataStructuresAtInitTime() // build "fixed" "hardcoded"?
 	return grpc.StatsHandler(ssh)
 }
 

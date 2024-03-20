@@ -69,7 +69,7 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 	}
 
 	setOfMetrics := make(map[string]struct{}) // pre allocate length?
-	for _, metric := range csh.mo.Metrics {
+	for _, metric := range csh.mo.Metrics { // only difference is how you build this out
 		setOfMetrics[metric] = struct{}{}
 	}
 
@@ -94,8 +94,6 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 		}
 	}
 
-	// what kind of implementation do you use for the overwriting metric in tests? how do I make tests interesting
-
 	// histogram bounds are not part of their api yet - but caller can set document this and sdk over these api calls precedence wise somewhere in this file
 
 	if _, ok := setOfMetrics["grpc.client.attempt.sent_total_compressed_message_size"]; ok {
@@ -112,7 +110,7 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.client.rcvd.sent_total_compressed_message_size\", will not record") // error or log?
 		} else {
-			registeredMetrics.clientAttemptRcvdTotalCompressedMessageSize = car // labels injected into otel instantiation at otel build time for labels. For each label wanted.
+			registeredMetrics.clientAttemptRcvdTotalCompressedMessageSize = car
 		}
 	}
 
@@ -127,83 +125,39 @@ func (csh *clientStatsHandler) buildMetricsDataStructuresAtInitTime() {
 	}
 	csh.registeredMetrics = registeredMetrics
 }
-// "Change the generated code" - regenerate the proto files (and upgrade gRPC version). Do I need to change proto compiler?
-// bool or all registered services
-
-// when Invoke and by in large once this interceptor hits, all it gets is a method string.
-
-// however, this string passed down also needs to be bucketed into (part of
-// registered methods vs. not part of registered methods)
 
 func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	ci := &callInfo{ // clientCallInfo?
+		target: csh.determineTarget(cc),
+		method: csh.determineMethod(method, opts...),
+	}
+	ctx = setCallInfo(ctx, ci)
+
+	startTime := time.Now()
+	err := invoker(ctx, method, req, reply, cc, opts...)
+	csh.perCallMetrics(ctx, err, startTime, ci)
+	return err
+}
+
+// determineTarget determines the target to record attributes with. This will be
+// "other" if target filter is set and specifies, the target name as is
+// otherwise.
+func (csh *clientStatsHandler) determineTarget(cc *grpc.ClientConn) string {
 	target := cc.CanonicalTarget()
 	if csh.mo.TargetAttributeFilter != nil {
 		if !csh.mo.TargetAttributeFilter(target) {
 			target = "other"
 		}
 	}
-	ci := &callInfo{ // I don't think we need this server side...client side concepts. Server data scoped to context is implicitly call. Maybe call it client call info?
-		target: target,
-		method: csh.determineMethod(method, opts...),
-	} // put inside top level call context, read target in non locking way write timestamp with a context held in attempt layer
-	// how does this with work with context keys (one key value pair *per context*)
-
-	// for opts in call options
-	//   if call options contains is registered
-	//   set a bit scoped to the call that records the method name...otherwise records as other...scale up call option and use this for all metrics
-
-	// Implementations should provide the option to override this behavior to allow recording generic method names as well.
-
-	// so yeah can use that for generic method names, proxy sets this option (without generated stub...)
-
-	// "To prevent this, unregistered/generic method names should by default be
-	// reported with "other" value instead. Implementations should provide the
-	// option to override this behavior to allow recording generic method names
-	// as well."
-
-	// so yeah scoped to metrics module only...yeah scoped to metrics attribute
-	// only so this seems right
-
-
-	ctx = setCallInfo(ctx, ci)
-
-	// Specific context a packages key
-
-
-	// so each new context can have *one* value for it
-	// different attmepts will have diferent contexts so different attempt info
-	// one key (from package) value for all derived contexts
-	// so read that value with same key point to same memory, exactly what you want set target once and set top level timestamp for hedging
-	// need a lock for hedging, without hedging seems like you won't talk to Doug about it...I think he'll require a lock grab or atomic load or something
-	// I think hedging is all to the same target though. It's the race between events and RPC end not all hedging.
-
-	// so create getters and setters and I think that works due to colliding key...
-
-
-
-
-
-	// 1. create per call data needed for traces and metrics
-	// call span
-	startTime := time.Now() // these are local variables/closures...should I merge this with top level call object or are these timestamps orthogonal?
-
-	// 2. do rpc
-	err := invoker(ctx, method, req, reply, cc, opts...)
-
-	// 3. post processing (callback in streaming flow...)
-
-	// I think method passed as a result of sh callouts is the same. (doesn't
-	// block but need to finish that regen thing...)
-	csh.perCallMetrics(ctx, err, startTime, ci)
-	return err
+	return target
 }
 
 // determineMethod determines the method to record attributes with. This will be
-// "other" if StaticMethod isn't specified or if filter specifies, the method
-// name as is otherwise.
+// "other" if StaticMethod isn't specified or if method filter is set and
+// specifies, the method name as is otherwise.
 func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallOption) string { // assert this is right in e2e tests...
 	if csh.mo.MethodAttributeFilter != nil {
-		if !csh.mo.MethodAttributeFilter(method) { // method here and in interceptor above...
+		if !csh.mo.MethodAttributeFilter(method) {
 			return "other"
 		}
 	}
@@ -221,7 +175,7 @@ func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallO
 
 func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	ci := &callInfo{
-		target: cc.Target(),
+		target: csh.determineTarget(cc),
 		method: csh.determineMethod(method, opts...),
 	}
 	ctx = setCallInfo(ctx, ci)
@@ -273,10 +227,7 @@ func (csh *clientStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats)
 		// Shouldn't happen because TagRPC populates this information.
 		return
 	}
-
-	// gets metric info from tag rpc
-
-	csh.processRPCEvent(ctx, rs, ri.mi) // maybe change these method name plumbing.
+	csh.processRPCEvent(ctx, rs, ri.mi)
 }
 
 func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
@@ -334,7 +285,7 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 	if csh.registeredMetrics.clientAttemptRcvdTotalCompressedMessageSize != nil {
 		csh.registeredMetrics.clientAttemptRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), clientAttributeOption)
 	}
-} // also need extra labels configured at instantation and logic for trying to pull out of call info for non started rpc metrics on the call
+}
 
 // DefaultClientMetrics are the default? client metrics provided by this instrumentation code?
 var DefaultClientMetrics = []string{
@@ -343,7 +294,7 @@ var DefaultClientMetrics = []string{
 	"grpc.client.attempt.sent_total_compressed_message_size",
 	"grpc.client.attempt.rcvd_total_compressed_message_size",
 	"grpc.client.call.duration",
-}
+} // type metrics immuabatlbe at build time add it then
 
 // get it to the point where I can go run it and see metrics emissions - maybe
 // rebasing will have fixed bug of not seeing last 3/ new otel mod
