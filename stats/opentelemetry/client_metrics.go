@@ -103,7 +103,7 @@ func (csh *clientStatsHandler) initializeMetrics() {
 }
 
 func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	ci := &callInfo{ // clientCallInfo?
+	ci := &callInfo{
 		target: csh.determineTarget(cc),
 		method: csh.determineMethod(method, opts...),
 	}
@@ -137,10 +137,6 @@ func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallO
 			return "other"
 		}
 	}
-	// loop through it here from call options passed in, to not reuse code,
-	// maybe will have to to persist bit or persist call options per stats
-	// handler no an object scoped to call wait we do call info which is scoped
-	// to call so use that and can be inferred that it works by good tests...
 	for _, opt := range opts {
 		if _, ok := opt.(grpc.StaticMethodCallOption); ok {
 			return method
@@ -158,7 +154,7 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 	startTime := time.Now()
 
 	// I think method passed in a result of stats handler callouts is the
-	// same...write unit tests for this.
+	// same...write unit tests for this. Doug said yes...! I think so
 	callback := func(err error) {
 		csh.perCallMetrics(ctx, err, startTime, ci)
 	}
@@ -173,7 +169,7 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 func (csh *clientStatsHandler) perCallMetrics(ctx context.Context, err error, startTime time.Time, ci *callInfo) {
 	s := status.Convert(err)
 	callLatency := float64(time.Since(startTime)) / float64(time.Millisecond)
-	if csh.registeredMetrics.clientCallDuration != nil { // no need for nil checks anymore...
+	if csh.registeredMetrics.clientCallDuration != nil {
 		csh.registeredMetrics.clientCallDuration.Record(ctx, callLatency, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(ci.method)), attribute.String("grpc.target", ci.target), attribute.String("grpc.status", canonicalString(s.Code())))) // needs method target and status should I persist this?
 	}
 }
@@ -249,12 +245,11 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		st = "OK"
 	}
 	clientAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(ci.method)), attribute.String("grpc.target", ci.target), attribute.String("grpc.status", st))
-	if csh.registeredMetrics.clientAttemptDuration != nil { // could read into local var for readability
+	if csh.registeredMetrics.clientAttemptDuration != nil {
 		csh.registeredMetrics.clientAttemptDuration.Record(ctx, latency, clientAttributeOption)
 	}
 
 	if csh.registeredMetrics.clientAttemptSentTotalCompressedMessageSize != nil {
-		// record unconditionally
 		csh.registeredMetrics.clientAttemptSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), clientAttributeOption)
 	}
 
@@ -273,6 +268,3 @@ var DefaultClientMetrics = Metrics{
 		"grpc.client.call.duration": true,
 	},
 }
-
-// get it to the point where I can go run it and see metrics emissions - maybe
-// rebasing will have fixed bug of not seeing last 3/ new otel mod

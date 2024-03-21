@@ -46,6 +46,10 @@ func Test(t *testing.T) {
 	grpctest.RunSubTests(t, s{})
 }
 
+// also need to get generated code (regenerate.sh is all I think) working
+
+
+
 // waitForServerCompletedRPCs waits until the unary and streaming stats.End
 // calls are finished processing (from the want metrics passed in)
 func waitForServerCompletedRPCs(ctx context.Context, reader metric.Reader, wantMetric metricdata.Metrics, t *testing.T) (map[string]metricdata.Metrics, error) {
@@ -76,6 +80,168 @@ func waitForServerCompletedRPCs(ctx context.Context, reader metric.Reader, wantM
 	return nil, fmt.Errorf("error waiting for metric %v: %v", wantMetric, ctx.Err())
 }
 
+// return reader and also stub server...
+func setup(t *testing.T, tafOn bool, maf func(string) bool) (*metric.ManualReader /*or generic reader*/, *stubserver.StubServer) { // also return a cleanup?
+	reader := metric.NewManualReader()
+	provider := metric.NewMeterProvider(
+		metric.WithReader(reader),
+	)
+	ss := &stubserver.StubServer{
+		UnaryCallF: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+			return &testpb.SimpleResponse{Payload: &testpb.Payload{
+				Body: make([]byte, 10000),
+			}}, nil
+		},
+		FullDuplexCallF: func(stream testgrpc.TestService_FullDuplexCallServer) error {
+			for {
+				_, err := stream.Recv()
+				if err == io.EOF {
+					return nil
+				}
+			}
+		},
+	}
+	var taf func(string) bool
+	if tafOn {
+		taf = func(str string) bool {
+			if str == ss.Target {
+				return false
+			}
+			return true
+		}
+	}
+	if err := ss.Start([]grpc.ServerOption{ServerOption(MetricsOptions{
+		MeterProvider: provider,
+		Metrics:       DefaultServerMetrics,
+		TargetAttributeFilter: taf,
+		MethodAttributeFilter: maf,
+	})}, DialOption(MetricsOptions{
+		MeterProvider: provider,
+		Metrics:       DefaultClientMetrics,
+	})); err != nil {
+		t.Fatalf("Error starting endpoint server: %v", err)
+	}
+	return reader, ss
+}
+
+func (s) TestMethodTargetAttributeFilter(t *testing.T) {
+	// get this working...
+	maf := func(str string) bool {
+		if str == "grpc.testing.TestService/UnaryCall" {
+			return false
+		}
+		// will allow duplex...do I need to declare all metrics wanted for this to work?
+		return true
+	}
+	// pull out setup into a helper
+	reader, ss := setup(t, true, maf)
+	defer ss.Stop()
+
+	// make a single RPC (unary rpc), and filter out the target and method
+	// that would correspond.
+	// on a basic metric
+	// client metric started (and client end metrics) have method and target
+	// assert the same as map below except with "other" for method and target
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if _, err := ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{Payload: &testpb.Payload{
+		Body: make([]byte, 10000),
+	}}, grpc.UseCompressor(gzip.Name)); err != nil { // deterministic compression from OpenCensus test...still need it because one of main metrics in OTel is compressed metrics
+		t.Fatalf("Unexpected error from UnaryCall: %v", err)
+	}
+	stream, err := ss.Client.FullDuplexCall(ctx)
+	if err != nil {
+		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
+	}
+
+	stream.CloseSend()
+	if _, err = stream.Recv(); err != io.EOF {
+		t.Fatalf("unexpected error: %v, expected an EOF error", err)
+	}
+	rm := &metricdata.ResourceMetrics{} // can I do this or just declare a pointer? I think this is fine allocates the memory?
+	reader.Collect(ctx, rm)
+
+	wantMetrics := []metricdata.Metrics{
+		{
+			// Use this name as key into map
+			Name: "grpc.client.attempt.started",
+			Description: "The total number of RPC attempts started, including those that have not completed.",
+			Unit: "attempt", // do these get overwritten if set in the sdk?
+			// Data: sum,/*metricdata.Sum{ // generics might require a higher version of go
+			//DataPoints:
+			//},
+			Data: metricdata.Sum[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(attribute.String("grpc.method", "other"), attribute.String("grpc.target", "other")),
+						Value: 1, // if you make more than one unary rpc this shoulddd be 2
+					},
+					{
+						Attributes: attribute.NewSet(attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall"), attribute.String("grpc.target", "other")),
+						Value: 1, // if you make more than one streaming rpc this shoulddd be 2
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+				IsMonotonic: true,
+			},
+		},
+		// could do another metric for good measure...
+	} // is it eventually consistent on the started? does it not block right on the started?
+	// no need to sync anything because started happens sync? if async need to
+	// poll until it happens, sync point in main testing goroutine.
+	mapToBuildOut /*ForFastAccess :) */ := map[string]metricdata.Metrics{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			mapToBuildOut[m.Name] = m
+		}
+	}
+
+
+
+
+	// could do a second measure for good reason...
+	for _, metric := range wantMetrics {
+		val, ok := mapToBuildOut[metric.Name]
+		if !ok {
+			t.Fatalf("metric %v not present in recorded metrics", metric.Name)
+		}
+		// their package has good assertions on their data types.
+		// use their assertions, only on subset we want and ignore fields we don't want
+		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
+			t.Fatalf("metrics data type not equal")
+		}
+		// did this ever pass the other one's equality or was I just looking at presence?
+		// I see method: "other" and target: "whatever:///" and a single data point...
+	}
+
+}
+
+func (s) TestBasicBehaviors(t *testing.T) {
+	// lighter weight tests here for the specific behaviors want to test
+
+	// some contenders:
+	// canonical target client (need client) and server? side (or let unit tests logically handle this) ***
+
+	// Problem: start an rpc for method not registered
+	// attempt to start for method not_registered, can see in client start?
+
+
+
+	// static method vs. not client side (didn't unit test generated protos, so
+	// this behavior test needs to make it's way here however I want to test
+	// it)...
+
+	// server side read pointer to server, don't need a distinction already unit
+	// test this, but perhaps add distinction. Esp if it's easy to add
+	// distinction for above ^^^.
+
+	// this will allow you to pinpoint a specific behavior, (I think below was
+	// passing if you remove the last 3?)
+
+}
+
+// getting one other for unary and streaming vvv (does it need to match with stub server? need to register? seems wrong?)
 
 // TestAllMetricsOneFunction tests emitted metrics from gRPC. It then configures
 // a system with a gRPC Client and gRPC server with the OpenTelemetry Dial and
@@ -555,7 +721,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		// their package has good assertions on their data types.
 		// use their assertions, only on subset we want and ignore fields we don't want
 		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
-			t.Fatalf("metrics data type not equal")
+			t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
 		}
 
 

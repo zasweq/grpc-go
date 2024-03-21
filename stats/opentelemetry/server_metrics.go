@@ -61,7 +61,7 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.server.call.started\", will not record") // error or log?
 		} else {
-			registeredMetrics.serverCallStarted = scs // if this is nil then it just doesn't record - no harm done
+			registeredMetrics.serverCallStarted = scs
 		}
 	}
 
@@ -134,7 +134,7 @@ func (ssh *serverStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 
 // HandleRPC implements per RPC tracing and stats implementation.
 func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
-	ri := getRPCInfo(ctx) // you do need this though and this is how OpenCensus does it...
+	ri := getRPCInfo(ctx)
 	if ri == nil {
 		// Shouldn't happen because TagRPC populates this information.
 		print("ri == nil")
@@ -186,7 +186,7 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 	if ssh.registeredMetrics.serverCallSentTotalCompressedMessageSize != nil {
 		print("recording server side sent compressed message size ", atomic.LoadInt64(&mi.sentCompressedBytes))
 		// this is being called, but it's not showing up in the recording point of Collect. Somewhere it's lost.
-		// called in a defer func server side - I think async because doesn't happen before RPC ends...event loops/processing
+		// called in a defer func server side - I think async because doesn't happen before RPC ends...event loops/processing...but should def eventually hit just defered is it even async? put end on the server transport
 		ssh.registeredMetrics.serverCallSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), serverAttributeOption)
 	}
 
@@ -202,10 +202,12 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 	}
 }
 
-// DefaultServerMetrics are the default? server metrics provided by this instrumentation code?
-var DefaultServerMetrics = []string{
-	"grpc.server.call.started",
-	"grpc.server.call.sent_total_compressed_message_size",
-	"grpc.server.call.rcvd_total_compressed_message_size",
-	"grpc.server.call.duration",
+// DefaultServerMetrics are the default server metrics provided by this module.
+var DefaultServerMetrics = Metrics{
+	metrics: map[string]bool{
+		"grpc.server.call.started": true,
+		"grpc.server.call.sent_total_compressed_message_size": true,
+		"grpc.server.call.rcvd_total_compressed_message_size": true,
+		"grpc.server.call.duration": true,
+	},
 }
