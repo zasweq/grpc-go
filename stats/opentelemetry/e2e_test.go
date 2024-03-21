@@ -118,16 +118,18 @@ func setup(t *testing.T, tafOn bool, maf func(string) bool) (*metric.ManualReade
 	})}, DialOption(MetricsOptions{
 		MeterProvider: provider,
 		Metrics:       DefaultClientMetrics,
+		TargetAttributeFilter: taf,
+		MethodAttributeFilter: maf,
 	})); err != nil {
 		t.Fatalf("Error starting endpoint server: %v", err)
 	}
 	return reader, ss
 }
 
-func (s) TestMethodTargetAttributeFilter(t *testing.T) {
+func (s) TestMethodTargetAttributeFilter(t *testing.T) { // so this works...so equality checks work!
 	// get this working...
 	maf := func(str string) bool {
-		if str == "grpc.testing.TestService/UnaryCall" {
+		if str == "/grpc.testing.TestService/UnaryCall" {
 			return false
 		}
 		// will allow duplex...do I need to declare all metrics wanted for this to work?
@@ -209,7 +211,7 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 		// their package has good assertions on their data types.
 		// use their assertions, only on subset we want and ignore fields we don't want
 		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
-			t.Fatalf("metrics data type not equal")
+			t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
 		}
 		// did this ever pass the other one's equality or was I just looking at presence?
 		// I see method: "other" and target: "whatever:///" and a single data point...
