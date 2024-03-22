@@ -241,6 +241,16 @@ func (s) TestBasicBehaviors(t *testing.T) {
 	// this will allow you to pinpoint a specific behavior, (I think below was
 	// passing if you remove the last 3?)
 
+
+	// on client (and server since server registers stubs which get read)
+
+	// test recording method for unary/streaming and method for other...
+	// client and server side will be the same bucket in vs. out, test both sides
+
+	// how do I trigger stats callouts with unregistered "generic" methods (why
+	// we expose attribute filters for this case) in a test...manually trigger
+	// generic rpc call and record started before rpc end/status?
+
 }
 
 // getting one other for unary and streaming vvv (does it need to match with stub server? need to register? seems wrong?)
@@ -256,7 +266,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		// embeds a metric.NewManualReader...use this and hold ref to it. I think this is what I need
 		reader := metric.NewManualReader(cfg.manualReaderOptions()...) // do I want any options?
 	*/
-	reader := metric.NewManualReader()
+	// subsequent reads don't see the new metric
+	reader := metric.NewManualReader() // testMetricReader
 	// I think both NewMeterProvider and NewManualReader call come out of the metrics sdk...
 	provider := metric.NewMeterProvider( // go get this...is this function call actually available and this creates a meter provider?
 		metric.WithReader(reader), // is this a metric reader - yes it is! this is the complicated piece that observes metrics, part of Provider? No created before and specified in it's constructor...
@@ -500,6 +511,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		{ // seems to be deterministic...
 			Name: "grpc.client.attempt.sent_total_compressed_message_size",
 			Description: "Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.",
+			Unit: "By",
 			Data: metricdata.Histogram[int64]{ // should be deterministic for their assertions
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
@@ -544,6 +556,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		{
 			Name: "grpc.client.attempt.rcvd_total_compressed_message_size",
 			Description: "Total bytes (compressed but not encrypted) received across all response messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.",
+			Unit: "By",
 			Data: metricdata.Histogram[int64]{ // should be deterministic for their assertions
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
@@ -615,6 +628,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		// Even if the rest do work, I'll need to define the want...
 		{ // seems to be deterministic...
 			Name: "grpc.server.call.sent_total_compressed_message_size",
+			Unit: "By",
 			Description: "Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.",
 			Data: metricdata.Histogram[int64]{ // should be deterministic for their assertions
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
@@ -659,6 +673,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		},
 		{ // seems to be deterministic...
 			Name: "grpc.server.call.rcvd_total_compressed_message_size",
+			Unit: "By",
 			Description: "Total bytes (compressed but not encrypted) received across all request messages (metadata excluded) per RPC; does not include grpc or transport framing bytes.",
 			Data: metricdata.Histogram[int64]{ // should be deterministic for their assertions
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
@@ -702,7 +717,6 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			},
 		},
 		// Duration same issue as client two durations, figure out tmrw.
-		// Finish this up and then do observability presentation (and bootstrap generator testing)
 	}
 
 	for _, metric := range wantMetrics {
@@ -713,7 +727,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			// all the rest will be synced and ready to go. Thus, update the map accordingly.
 			// or don't persist state over time, but then would need to pass a want.
 			if mapToBuildOut, err = waitForServerCompletedRPCs(ctx, reader, metric, t); err != nil {
-				t.Fatalf("error waiting for sent total compressed message size")
+				t.Fatalf("error waiting for sent total compressed message size for metric: %v", metric.Name)
 			}
 		}
 		val, ok := mapToBuildOut[metric.Name]
@@ -724,7 +738,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		// use their assertions, only on subset we want and ignore fields we don't want
 		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
 			t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
-		}
+		} // e2e_test.go:720: metric grpc.server.call.sent_total_compressed_message_size not present in recorded metrics
+		// and if you poll never records either
 
 
 		// We use cmp.Diff, so maybe just use this

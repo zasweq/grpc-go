@@ -62,7 +62,7 @@ func (csh *clientStatsHandler) initializeMetrics() {
 	}
 
 	if _, ok := setOfMetrics["grpc.client.attempt.duration"]; ok {
-		cad, err := meter.Float64Histogram("grpc.client.attempt.duration", metric.WithDescription("End-to-end time taken to complete an RPC attempt including the time it takes to pick a subchannel."))
+		cad, err := meter.Float64Histogram("grpc.client.attempt.duration", metric.WithUnit("s"), metric.WithDescription("End-to-end time taken to complete an RPC attempt including the time it takes to pick a subchannel."))
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.client.attempt.started\", will not record") // error or log
 		} else {
@@ -73,7 +73,7 @@ func (csh *clientStatsHandler) initializeMetrics() {
 	// histogram bounds are not part of their api yet - but caller can set document this and sdk over these api calls precedence wise somewhere in this file
 
 	if _, ok := setOfMetrics["grpc.client.attempt.sent_total_compressed_message_size"]; ok {
-		cas, err := meter.Int64Histogram("grpc.client.attempt.sent_total_compressed_message_size", metric.WithDescription("Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes."))
+		cas, err := meter.Int64Histogram("grpc.client.attempt.sent_total_compressed_message_size", metric.WithUnit("By"), metric.WithDescription("Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes."))
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.client.attempt.sent_total_compressed_message_size\", will not record") // error or log?
 		} else {
@@ -82,7 +82,7 @@ func (csh *clientStatsHandler) initializeMetrics() {
 	}
 
 	if _, ok := setOfMetrics["grpc.client.attempt.rcvd_total_compressed_message_size"]; ok {
-		car, err := meter.Int64Histogram("grpc.client.attempt.rcvd_total_compressed_message_size", metric.WithDescription("Total bytes (compressed but not encrypted) received across all response messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes."))
+		car, err := meter.Int64Histogram("grpc.client.attempt.rcvd_total_compressed_message_size", metric.WithUnit("By"), metric.WithDescription("Total bytes (compressed but not encrypted) received across all response messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes."))
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.client.rcvd.sent_total_compressed_message_size\", will not record") // error or log?
 		} else {

@@ -67,7 +67,7 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 
 	if _, ok := setOfMetrics["grpc.server.call.sent_total_compressed_message_size"]; ok {
 		print("creating compressed message size")
-		ss, err := meter.Int64Histogram("grpc.server.call.sent_total_compressed_message_size", metric.WithDescription("Total bytes (compressed but not encrypted) sent across all response messages (metadata excluded) per RPC; does not include grpc or transport framing bytes."))
+		ss, err := meter.Int64Histogram("grpc.server.call.sent_total_compressed_message_size", metric.WithUnit("By"), metric.WithDescription("Total bytes (compressed but not encrypted) sent across all response messages (metadata excluded) per RPC; does not include grpc or transport framing bytes."))
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.server.call.sent_total_compressed_message_size\", will not record") // error or log?
 		} else {
@@ -76,7 +76,7 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 	}
 
 	if _, ok := setOfMetrics["grpc.server.call.rcvd_total_compressed_message_size"]; ok {
-		sr, err := meter.Int64Histogram("grpc.server.rcvd.sent_total_compressed_message_size", metric.WithDescription("Total bytes (compressed but not encrypted) received across all request messages (metadata excluded) per RPC; does not include grpc or transport framing bytes."))
+		sr, err := meter.Int64Histogram("grpc.server.rcvd.sent_total_compressed_message_size", metric.WithUnit("By"), metric.WithDescription("Total bytes (compressed but not encrypted) received across all request messages (metadata excluded) per RPC; does not include grpc or transport framing bytes."))
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.server.rcvd.sent_total_compressed_message_size\", will not record") // error or log?
 		} else {
@@ -85,7 +85,7 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 	}
 
 	if _, ok := setOfMetrics["grpc.server.call.duration"]; ok {
-		scd, err := meter.Float64Histogram("grpc.server.call.duration", metric.WithDescription("\nThis metric aims to measure the end2end time an RPC takes from the server transport’s (HTTP2/ inproc / cronet) perspective.")) // there's gotta be like with bounds (latency bucket) or something...also declare bounds above only settable at sdk level not api level which wins out anyway precedence wise anyway...otherwise default bounds
+		scd, err := meter.Float64Histogram("grpc.server.call.duration", metric.WithUnit("s"), metric.WithDescription("This metric aims to measure the end2end time an RPC takes from the server transport’s (HTTP2/ inproc / cronet) perspective.")) // there's gotta be like with bounds (latency bucket) or something...also declare bounds above only settable at sdk level not api level which wins out anyway precedence wise anyway...otherwise default bounds
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.server.call.duration\", will not record") // error or log?
 		} else {
@@ -184,6 +184,7 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 	serverAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.status", st))
 
 	if ssh.registeredMetrics.serverCallSentTotalCompressedMessageSize != nil {
+		// I see it being recorded, but it doesn't make it's way to metric reader...why? all the other metrics work
 		print("recording server side sent compressed message size ", atomic.LoadInt64(&mi.sentCompressedBytes))
 		// this is being called, but it's not showing up in the recording point of Collect. Somewhere it's lost.
 		// called in a defer func server side - I think async because doesn't happen before RPC ends...event loops/processing...but should def eventually hit just defered is it even async? put end on the server transport
@@ -194,9 +195,10 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		print("recording server side rcvd compressed message size ", atomic.LoadInt64(&mi.recvCompressedBytes))
 		// this is being called, but it's not showing up in the recording point of Collect. Somewhere it's lost.
 		ssh.registeredMetrics.serverCallRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), serverAttributeOption)
-	}
+	} // cleanup of meter provider before these three? noop perhaps?
 
 	if ssh.registeredMetrics.serverCallDuration != nil {
+		print("recording server side call duration ", latency)
 		// this is being called, but it's not showing up in the recording point of Collect. Somewhere it's lost.
 		ssh.registeredMetrics.serverCallDuration.Record(ctx, latency, serverAttributeOption) // happens before RPC ends so good to make assertions on it.
 	}
