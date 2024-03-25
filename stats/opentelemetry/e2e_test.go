@@ -52,22 +52,25 @@ func Test(t *testing.T) {
 
 // waitForServerCompletedRPCs waits until the unary and streaming stats.End
 // calls are finished processing (from the want metrics passed in)
-func waitForServerCompletedRPCs(ctx context.Context, reader metric.Reader, wantMetric metricdata.Metrics, t *testing.T) (map[string]metricdata.Metrics, error) {
+func waitForServerCompletedRPCs(ctx context.Context, provider *metric.MeterProvider, reader metric.Reader, wantMetric metricdata.Metrics, t *testing.T) (map[string]metricdata.Metrics, error) {
 	// poll seen metrics. The row length should be 2.
 	for ; ctx.Err() == nil; <-time.After(time.Millisecond) { // I do need this sync point, but it's just not showing up in the metrics readers map. and I don't set any default views. I also see it happen, but it doesn't work
 		// poll until two rows found with the distinct names...
+		// provider.ForceFlush(ctx) // even flushing doesn't work, it doesn't get otel data...
+		// 5 maximum?
 		rm := &metricdata.ResourceMetrics{} // can I do this or just declare a pointer? I think this is fine allocates the memory?
 		reader.Collect(ctx, rm)
 		newMapToBuildOut /*ForFastAccess :) */ := map[string]metricdata.Metrics{}
 		for _, sm := range rm.ScopeMetrics {
 			for _, m := range sm.Metrics {
-				print("new map name: ", m.Name)
+				print("new map name: ", m.Name, "\n")
 				newMapToBuildOut[m.Name] = m
 			}
 		}
+		print("length of map to build out: ", len(newMapToBuildOut), "\n")
 		val, ok := newMapToBuildOut[wantMetric.Name]
 		if !ok {
-			print("not found in new map")
+			print(wantMetric.Name," not found in new map\n")
 			continue
 		}
 		// their package has good assertions on their data types.
@@ -294,6 +297,19 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		},)))*/
 	)
 
+	// has all client + server working
+	// the last three that do get pinged and recorded what happens to them? size 57 with the right
+
+	// where is it stored in this provider, can the reader read it?
+	// 12345 <- stored somewhere, the reader can consistent read it after polls
+	// I can observe changes to this 12345, but I can't see 678 at all
+	// why no new metrics?
+
+	// (what happens if I add data with new RPCs (could also help with
+	// triggering outside generic) for the working 5, is that also observed?)
+
+	// 678 <- where does this information go in OTel? if this data is persisted, why is it not observed in the manual reader
+
 	ss := &stubserver.StubServer{
 		UnaryCallF: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
 			return &testpb.SimpleResponse{Payload: &testpb.Payload{
@@ -414,42 +430,6 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 
 	// This all was working outside the three in server defer, I also have no idea how to test generics
 
-	/*
-
-		metricdata.HistogramDataPoint[float64]{Attributes:attribute.Set{equivalent:attribute.Distinct{iface:[3]attribute.KeyValue{attribute.KeyValue{Key:"grpc.method",
-		Value:attribute.Value{vtype:4, numeric:0x0,
-		stringly:"grpc.testing.TestService/UnaryCall", slice:interface {}(nil)}},
-		attribute.KeyValue{Key:"grpc.status", Value:attribute.Value{vtype:4,
-		numeric:0x0, stringly:"OK", slice:interface {}(nil)}},
-		attribute.KeyValue{Key:"grpc.target", Value:attribute.Value{vtype:4,
-		numeric:0x0, stringly:"whatever:///127.0.0.1:65413", slice:interface
-		{}(nil)}}}}}, StartTime:time.Date(2023, time.August, 24, 21, 11, 49,
-		380659000, time.Local), Time:time.Date(2023, time.August, 24, 21, 11, 49,
-		385354000, time.Local), Count:0x1, Bounds:[]float64{0, 5, 10, 25, 50, 75,
-		100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000},
-		BucketCounts:[]uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-		0x0, 0x0, 0x0, 0x0, 0x0}, Min:metricdata.Extrema[float64]{value:2.029647,
-		valid:true}, Max:metricdata.Extrema[float64]{value:2.029647, valid:true},
-		Sum:2.029647, Exemplars:[]metricdata.Exemplar[float64](nil)}
-
-		metricdata.HistogramDataPoint[float64]{Attributes:attribute.Set{equivalent:attribute.Distinct{iface:[3]attribute.KeyValue{attribute.KeyValue{Key:"grpc.method",
-		Value:attribute.Value{vtype:4, numeric:0x0,
-		stringly:"grpc.testing.TestService/FullDuplexCall", slice:interface
-		{}(nil)}}, attribute.KeyValue{Key:"grpc.status",
-		Value:attribute.Value{vtype:4, numeric:0x0, stringly:"OK", slice:interface
-		{}(nil)}}, attribute.KeyValue{Key:"grpc.target",
-		Value:attribute.Value{vtype:4, numeric:0x0,
-		stringly:"whatever:///127.0.0.1:65413", slice:interface {}(nil)}}}}},
-		StartTime:time.Date(2023, time.August, 24, 21, 11, 49, 380659000,
-		time.Local), Time:time.Date(2023, time.August, 24, 21, 11, 49, 385354000,
-		time.Local), Count:0x1, Bounds:[]float64{0, 5, 10, 25, 50, 75, 100, 250,
-		500, 750, 1000, 2500, 5000, 7500, 10000}, BucketCounts:[]uint64{0x0, 0x1,
-		0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-		Min:metricdata.Extrema[float64]{value:0.142856, valid:true},
-		Max:metricdata.Extrema[float64]{value:0.142856, valid:true}, Sum:0.142856,
-		Exemplars:[]metricdata.Exemplar[float64](nil)}
-
-	*/
 	wantMetrics := []metricdata.Metrics{
 		{
 			// Use this name as key into map
@@ -625,11 +605,15 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 				IsMonotonic: true,
 			},
 		},
-		// Even if the rest do work, I'll need to define the want...
+		// ^^^ these all work
+
+
+		// vvv this doesn't
+
 		{ // seems to be deterministic...
 			Name: "grpc.server.call.sent_total_compressed_message_size",
 			Unit: "By",
-			Description: "Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.",
+			Description: "Total bytes (compressed but not encrypted) sent across all response messages (metadata excluded) per RPC; does not include grpc or transport framing bytes.",
 			Data: metricdata.Histogram[int64]{ // should be deterministic for their assertions
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
@@ -716,7 +700,14 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 				Temporality: metricdata.CumulativeTemporality,
 			},
 		},
-		// Duration same issue as client two durations, figure out tmrw.
+
+		// Duration same issue as client two durations, figure out tmrw. still need to figure out
+		// duration.
+
+		// I think for durations - it's a histogram - should take place within 5
+		// seconds (according to default bounds, which are stable I guess).
+
+
 	}
 
 	for _, metric := range wantMetrics {
@@ -726,7 +717,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			// Thus, poll until it shows up. Once this first server side metric shows up,
 			// all the rest will be synced and ready to go. Thus, update the map accordingly.
 			// or don't persist state over time, but then would need to pass a want.
-			if mapToBuildOut, err = waitForServerCompletedRPCs(ctx, reader, metric, t); err != nil {
+			if mapToBuildOut, err = waitForServerCompletedRPCs(ctx, provider, reader, metric, t); err != nil { // I still think you need this.
 				t.Fatalf("error waiting for sent total compressed message size for metric: %v", metric.Name)
 			}
 		}
@@ -747,6 +738,74 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			t.Fatalf("unexpected metrics data (-got, +want): %v", diff)
 		}*/
 	}
+
+
+
+
+
+
+	// It's observing the new grpc.client.attempt.started
+	// extra point for unary and streaming call, but not the three ends
+
+	// after vvv, uncomment the async above ^^^ if you want to run it there
+	// this after also isn't being observed.
+	/*if _, err := ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{Payload: &testpb.Payload{
+		Body: make([]byte, 10000),
+	}}, grpc.UseCompressor(gzip.Name)); err != nil { // deterministic compression from OpenCensus test...still need it because one of main metrics in OTel is compressed metrics
+		t.Fatalf("Unexpected error from UnaryCall: %v", err)
+	}
+	stream, err = ss.Client.FullDuplexCall(ctx)
+	if err != nil {
+		t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
+	}
+
+	stream.CloseSend()
+	if _, err = stream.Recv(); err != io.EOF {
+		t.Fatalf("unexpected error: %v, expected an EOF error", err)
+	}
+	// time.Sleep(5 * time.Second)
+	rm = &metricdata.ResourceMetrics{} // can I do this or just declare a pointer? I think this is fine allocates the memory?
+	reader.Collect(ctx, rm)
+	mapToBuildOut /*ForFastAccess :)  = map[string]metricdata.Metrics{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			mapToBuildOut[m.Name] = m
+		}
+	}
+
+	for _, metric := range wantMetrics {
+		// note that must come first in the map. Needs to be first one.
+		if metric.Name == "grpc.server.call.sent_total_compressed_message_size" { // or have this be the first
+			// sync the metric reader to see the event because stats.End is handled async server side.
+			// Thus, poll until it shows up. Once this first server side metric shows up,
+			// all the rest will be synced and ready to go. Thus, update the map accordingly.
+			// or don't persist state over time, but then would need to pass a want.
+			if mapToBuildOut, err = waitForServerCompletedRPCs(ctx, provider, reader, metric, t); err != nil {
+				t.Fatalf("error waiting for sent total compressed message size for metric: %v", metric.Name)
+			}
+		}
+		val, ok := mapToBuildOut[metric.Name]
+		if !ok {
+			t.Fatalf("metric %v not present in recorded metrics", metric.Name)
+		}
+		// their package has good assertions on their data types.
+		// use their assertions, only on subset we want and ignore fields we don't want
+		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
+			t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
+		} // e2e_test.go:720: metric grpc.server.call.sent_total_compressed_message_size not present in recorded metrics
+		// and if you poll never records either
+
+
+		// We use cmp.Diff, so maybe just use this
+		/*if diff := cmp.Diff(val, metric, cmpopts.IgnoreUnexported(metricdata.DataPoint[int64]{}, metricdata.HistogramDataPoint[float64]{}, attribute.KeyValue{})); diff != "" { // What exactly to compare?
+			t.Fatalf("unexpected metrics data (-got, +want): %v", diff)
+		}
+	}*/
+
+
+
+
+
 
 	// SEE HOW OPENTELEMETRY TESTS IT - YASH DOES SAME THING
 	// sum metric data - this should be for the first want sum
