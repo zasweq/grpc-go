@@ -39,25 +39,19 @@ var (
 	joinDialOptions = internal.JoinDialOptions.(func(...grpc.DialOption) grpc.DialOption)
 )
 
-// Metrics is a set of metrics to initialize. Once created, metrics is
+// EmptyMetrics represents no metrics. To start from a clean slate if want to
+// pick a subset of metrics, use this and add onto it.
+var EmptyMetrics = Metrics{}
+
+// Metrics is a set of metrics to initialize. Once created, Metrics is
 // immutable.
 type Metrics struct {
-	// default string
-	// map string -> bool
-	metrics map[string]bool // loop through this thing when creating...
+	// metrics are the set of metrics to initialize.
+	metrics map[string]bool
 }
 
-// (default set), enable1, disable1, disableall (add and remove ... metrics)
-// start an empty one if don't want, or start with defaults
-
-
-// empty then add or remove (represents clear all)
-
-// default then add or remove (represents clear all)
-
-// return a new map entirely - immutable
-
-// AddImmu adds the metrics and returns a new copy
+// Add adds the metrics to the metrics set and returns a new copy with the
+// additional metrics.
 func (m *Metrics) Add(metrics ...string) *Metrics {
 	newMetrics := make(map[string]bool)
 	for metric := range m.metrics {
@@ -72,6 +66,8 @@ func (m *Metrics) Add(metrics ...string) *Metrics {
 	}
 }
 
+// Remove removes the metrics from the metrics set and returns a new copy with
+// the metrics removed.
 func (m *Metrics) Remove(metrics ...string) *Metrics {
 	newMetrics := make(map[string]bool)
 	for metric := range m.metrics {
@@ -95,21 +91,10 @@ type MetricsOptions struct {
 	// take precedence over the API calls from the interface in this component
 	// (i.e. it will create default views for unset views).
 	MeterProvider metric.MeterProvider
-
-
-	// *** Do I need these? ***
 	// Metrics are the metrics to instrument. Will turn on the corresponding
 	// metric supported by the client and server instrumentation components if
 	// applicable.
-	Metrics Metrics // Unconditionally register all metrics. (see gRFC)
-	// will wrap with way we decided with enable, disable, disable all (with certain that are default)
-
-	// *** Do I need these? ***
-	// could I do a disable/enable on a set helper as you construct it? default +
-	// others (try that)
-
-
-
+	Metrics Metrics
 	// TargetAttributeFilter is a callback that takes the target string and
 	// returns a bool representing whether to use target as a label value or use
 	// the string "other". If unset, will use the target string as is.
@@ -118,21 +103,8 @@ type MetricsOptions struct {
 	// returns a bool representing whether to use method as a label value or use
 	// the string "other". If unset, will use the method string as is. This is
 	// used only for generic methods, and not registered methods.
-	MethodAttributeFilter func(string) bool // *Done with these*
+	MethodAttributeFilter func(string) bool
 }
-
-// use CanonicalTarget() helper on ClientConn (where does this component have access to it?)
-// to record target attribute *Done* (need to test all of these)
-
-// security...
-// read isStaticMethod call option (I already wrote code for this somewhere...)
-// client side to see if it works...
-
-// server side read the pointer to server (I think I already have this done)
-
-// Finished, but will need to test thee behaviors ^^^
-
-
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation
 // code for a grpc.ClientConn.
@@ -263,9 +235,4 @@ type registeredMetrics struct { // nil or not nil means presence
 	serverCallRcvdTotalCompressedMessageSize metric.Int64Histogram
 	// "grpc.server.call.duration"
 	serverCallDuration metric.Float64Histogram
-} // use this for both client and server side, so that way you can have metrics recording for both (and Yash mentioned orthogonal metrics that aren't tied to client or server)
-
-
-// start pulling these into different files and cleaning up*** :)
-
-var EmptyMetrics = Metrics{}
+}

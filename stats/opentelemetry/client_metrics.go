@@ -246,17 +246,14 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 	}
 	clientAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(ci.method)), attribute.String("grpc.target", ci.target), attribute.String("grpc.status", st))
 	if csh.registeredMetrics.clientAttemptDuration != nil {
-		print("recording client attempt duration: ", latency)
 		csh.registeredMetrics.clientAttemptDuration.Record(ctx, latency, clientAttributeOption)
 	}
 
 	if csh.registeredMetrics.clientAttemptSentTotalCompressedMessageSize != nil {
-		print("recording client side sent compressed message size: ", atomic.LoadInt64(&mi.sentCompressedBytes), "\n")
 		csh.registeredMetrics.clientAttemptSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), clientAttributeOption)
 	}
 
 	if csh.registeredMetrics.clientAttemptRcvdTotalCompressedMessageSize != nil {
-		print("recording server recv sent compressed message size: ", atomic.LoadInt64(&mi.recvCompressedBytes), "\n")
 		csh.registeredMetrics.clientAttemptRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), clientAttributeOption)
 	}
 }
