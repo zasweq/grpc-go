@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/grpclog"
+	"google.golang.org/grpc/internal/balancer/balanceraggregator"
 	"google.golang.org/grpc/serviceconfig"
 )
 
@@ -51,9 +52,9 @@ type customRRConfig struct {
 type customRoundRobinBuilder struct{}
 
 func (customRoundRobinBuilder) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	// hardcode a pick first with no shuffling, since this is a petiole, and
+	// Hardcode a pick first with no shuffling, since this is a petiole, and
 	// that is what petiole policies will interact with.
-	gspf, err := ParseConfig(json.RawMessage(PickFirstConfig))
+	gspf, err := balanceraggregator.ParseConfig(json.RawMessage(balanceraggregator.PickFirstConfig))
 	if err != nil {
 		return nil, fmt.Errorf("error parsing hardcoded pick_first config: %v", err)
 	}
@@ -74,12 +75,11 @@ func (customRoundRobinBuilder) Name() string {
 }
 
 func (customRoundRobinBuilder) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
-	// gspf, err := ParseConfig(json.RawMessage(PickFirstConfig))
 	crr := &customRoundRobin{
 		ClientConn:       cc,
 		bOpts:            bOpts,
 	}
-	crr.balancerAggregator = Build(crr, bOpts)
+	crr.balancerAggregator = balanceraggregator.Build(crr, bOpts)
 	return crr
 }
 
@@ -135,11 +135,11 @@ func (crr *customRoundRobin) Close() {
 
 // regeneratePicker generates a picker if both child balancers are READY and
 // forwards it upward.
-func (crr *customRoundRobin) UpdateChildState(childStates []childState) {
+func (crr *customRoundRobin) UpdateChildState(childStates []balanceraggregator.ChildState) {
 	var readyPickers []balancer.Picker
 	for _, childState := range childStates {
-		if childState.state.ConnectivityState == connectivity.Ready {
-			readyPickers = append(readyPickers, childState.state.Picker)
+		if childState.State.ConnectivityState == connectivity.Ready {
+			readyPickers = append(readyPickers, childState.State.Picker)
 		}
 	}
 

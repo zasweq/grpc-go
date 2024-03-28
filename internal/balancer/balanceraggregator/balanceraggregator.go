@@ -1,31 +1,46 @@
-package customroundrobin
+/*
+ *
+ * Copyright 2024 gRPC authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
+// Package balanceraggregator implements a BalancerAggregator helper.
+package balanceraggregator
 
 import (
 	"encoding/json"
 	"fmt"
+
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/internal/balancer/gracefulswitch"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 )
 
-// full balancer
-
-// Takes in []Endpoints, each endpoint becomes a child that it sends to (child config determined by ParseConfig) - type this out in a nice comment
-
-// passes back a tuple of child state []childState, caller is free to aggregator how caller likes
-type childState struct {
-	endpoint resolver.Endpoint
-	state    balancer.State
-} // []childState, caller is free to use how it likes such as aggregation and
-// picker algorithm
-type childUpdates interface { // petiole policies need to implement this interface
-	UpdateChildState(childStates []childState) // pointer?
+// ChildState is the balancer state of the child along with the
+// endpoint which ID's the child balancer.
+type ChildState struct {
+	Endpoint resolver.Endpoint
+	State    balancer.State
 }
 
+// Parent is a balancer.ClientConn that can also receive
+// child state updates.
 type Parent interface {
 	balancer.ClientConn
-	UpdateChildState(childStates []childState)
+	UpdateChildState(childStates []ChildState)
 }
 
 // Build returns a new BalancerAggregator.
@@ -37,19 +52,21 @@ func Build(parent Parent, opts balancer.BuildOptions) *BalancerAggregator {
 	}
 }
 
-// BalancerAggregator...
+// BalancerAggregator is a balancer that wraps child balancers. It creates a
+// child balancer with child config for every Endpoint received. It updates the
+// child states on any update from parent or child.
 type BalancerAggregator struct {
 	parent Parent
 	bOpts  balancer.BuildOptions
 
 	children              *resolver.EndpointMap
 
-	inhibitPickerUpdates bool
+	inhibitChildUpdates bool
 }
 
 func (ba *BalancerAggregator) UpdateClientConnState(state balancer.ClientConnState) error {
 	endpointSet := resolver.NewEndpointMap()
-	ba.inhibitPickerUpdates = true
+	ba.inhibitChildUpdates = true
 	// Update/Create new children.
 	for _, endpoint := range state.ResolverState.Endpoints {
 		endpointSet.Set(endpoint, nil)
@@ -84,22 +101,23 @@ func (ba *BalancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 			ba.children.Delete(e)
 		}
 	}
-	ba.inhibitPickerUpdates = false
-	ba.BuildChildStates()
+	ba.inhibitChildUpdates = false
+	ba.updateChildStates()
 	return nil
 }
 
 func (ba *BalancerAggregator) ResolverError(err error) {
-	ba.inhibitPickerUpdates = true
+	ba.inhibitChildUpdates = true
 	for _, child := range ba.children.Values() {
 		bal := child.(balancer.Balancer)
 		bal.ResolverError(err)
 	}
-	ba.inhibitPickerUpdates = false
+	ba.inhibitChildUpdates = false
+	ba.updateChildStates()
 }
 
 func (ba *BalancerAggregator) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
-	logger.Errorf("custom_round_robin: UpdateSubConnState(%v, %+v) called unexpectedly", sc, state)
+	// UpdateSubConnState is deprecated.
 }
 
 func (ba *BalancerAggregator) Close() {
@@ -109,17 +127,17 @@ func (ba *BalancerAggregator) Close() {
 	}
 }
 
-func (ba *BalancerAggregator) BuildChildStates() {
-	if ba.inhibitPickerUpdates {
+func (ba *BalancerAggregator) updateChildStates() {
+	if ba.inhibitChildUpdates {
 		return
 	}
 
-	childUpdates := make([]childState, ba.children.Len())
+	childUpdates := make([]ChildState, ba.children.Len())
 	for _, child := range ba.children.Values() {
 		bw := child.(*balancerWrapper)
-		childUpdates = append(childUpdates, childState{
-			endpoint: bw.endpoint,
-			state:    bw.state,
+		childUpdates = append(childUpdates, ChildState{
+			Endpoint: bw.endpoint,
+			State:    bw.state,
 		})
 	}
 	ba.parent.UpdateChildState(childUpdates)
@@ -139,17 +157,12 @@ type balancerWrapper struct {
 
 func (bw *balancerWrapper) UpdateState(state balancer.State) {
 	bw.state = state
-	bw.ba.BuildChildStates()
+	bw.ba.updateChildStates()
 }
 
-// ParseConfig returns the child config for it
 func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	return gracefulswitch.ParseConfig(cfg)
 }
 
-// export a const for basic pick_first config...
+// PickFirstConfig is a pick first config without shuffling enabled.
 const PickFirstConfig = "[{\"pick_first\": {}}]"
-
-// Unit tests for this?
-
-// **Scope out time estimates for CSM**
