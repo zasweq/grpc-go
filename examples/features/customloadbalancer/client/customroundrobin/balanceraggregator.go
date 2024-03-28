@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"google.golang.org/grpc/balancer"
+	"google.golang.org/grpc/internal/balancer/gracefulswitch"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 )
@@ -22,64 +23,57 @@ type childUpdates interface { // petiole policies need to implement this interfa
 	UpdateChildState(childStates []childState) // pointer?
 }
 
-type parent interface {
+type Parent interface {
 	balancer.ClientConn
 	UpdateChildState(childStates []childState)
 }
 
-func Build(parent parent, opts balancer.BuildOptions) *balancerAggregator {
-	return &balancerAggregator{
+// Build returns a new BalancerAggregator.
+func Build(parent Parent, opts balancer.BuildOptions) *BalancerAggregator {
+	return &BalancerAggregator{
 		parent: parent,
 		bOpts: opts,
+		children: resolver.NewEndpointMap(),
 	}
 }
 
-type balancerAggregator struct { // build returns this?
+// BalancerAggregator...
+type BalancerAggregator struct {
+	parent Parent
+	bOpts  balancer.BuildOptions
 
-	parent parent
-
-
-	bOpts balancer.BuildOptions
-	cfg lbConfig // persist config instead
-
-	// Do I want to store a graceful switch in this or not?
-	children              *resolver.EndpointMap // child per endpoint, this is what I want right since it's per endpoint, if it switches needs to delete and add
+	children              *resolver.EndpointMap
 
 	inhibitPickerUpdates bool
 }
 
-func (ba *balancerAggregator) UpdateClientConnState(state balancer.ClientConnState) error {
-	// same thing here, create childrens for every endpoint
-	cfg, ok := state.BalancerConfig.(*lbConfig)
-	if !ok {
-		return balancer.ErrBadResolverState
-	}
-	ba.cfg // old config
-	cfg // new config - should I have logic for type switching? I feel like I should? would then need to recreate all endpoints/clear
-
+func (ba *BalancerAggregator) UpdateClientConnState(state balancer.ClientConnState) error {
 	endpointSet := resolver.NewEndpointMap()
 	ba.inhibitPickerUpdates = true
-	// Update/Create new children
+	// Update/Create new children.
 	for _, endpoint := range state.ResolverState.Endpoints {
 		endpointSet.Set(endpoint, nil)
 		var bal *balancerWrapper
 		if child, ok := ba.children.Get(endpoint); ok {
 			bal = child.(*balancerWrapper)
 		} else {
-			// build it, and then put it in the child
 			bal = &balancerWrapper{
+				endpoint: endpoint,
 				ClientConn: ba.parent,
 				ba: ba,
 			}
-			bal.Balancer = ba.cfg.childBuilder.Build(bal, ba.bOpts)
-			ba.children.Set(endpoint, bal) // child is still balancer.Balancer so we're good? unit test this?
+			bal.Balancer = gracefulswitch.NewBalancer(bal, ba.bOpts)
+			ba.children.Set(endpoint, bal)
 		}
-		bal.UpdateClientConnState(balancer.ClientConnState{
+		if err := bal.UpdateClientConnState(balancer.ClientConnState{
+			BalancerConfig: state.BalancerConfig,
 			ResolverState: resolver.State{
 				Endpoints:  []resolver.Endpoint{endpoint},
 				Attributes: state.ResolverState.Attributes,
 			},
-		})
+		}); err != nil {
+			return fmt.Errorf("error updating child balancer: %v", err)
+		}
 	}
 	// Delete old children that are no longer present.
 	for _, e := range ba.children.Keys() {
@@ -91,12 +85,11 @@ func (ba *balancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 		}
 	}
 	ba.inhibitPickerUpdates = false
-	// Talks to above using new interface, so needs to have a build that takes the interface...
 	ba.BuildChildStates()
 	return nil
 }
 
-func (ba *balancerAggregator) ResolverError(err error) {
+func (ba *BalancerAggregator) ResolverError(err error) {
 	ba.inhibitPickerUpdates = true
 	for _, child := range ba.children.Values() {
 		bal := child.(balancer.Balancer)
@@ -105,18 +98,18 @@ func (ba *balancerAggregator) ResolverError(err error) {
 	ba.inhibitPickerUpdates = false
 }
 
-func (ba *balancerAggregator) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
+func (ba *BalancerAggregator) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
 	logger.Errorf("custom_round_robin: UpdateSubConnState(%v, %+v) called unexpectedly", sc, state)
 }
 
-func (ba *balancerAggregator) Close() {
+func (ba *BalancerAggregator) Close() {
 	for _, child := range ba.children.Values() {
 		bal := child.(balancer.Balancer)
 		bal.Close()
 	}
 }
 
-func (ba *balancerAggregator) BuildChildStates() {
+func (ba *BalancerAggregator) BuildChildStates() {
 	if ba.inhibitPickerUpdates {
 		return
 	}
@@ -129,47 +122,34 @@ func (ba *balancerAggregator) BuildChildStates() {
 			state:    bw.state,
 		})
 	}
-	// caller does logic of ready == 2 <<<
 	ba.parent.UpdateChildState(childUpdates)
 }
 
-// would graceful switch live here or in component above...
-
-// ids child with endpoint...to send endpoint upward in the tuple
+// balancerWrapper is a wrapper of a balancer. It ID's a child balancer by
+// endpoint, and persists recent child balancer state.
 type balancerWrapper struct {
-	// both a balancer and a clientconn?
-	balancer.Balancer   // Simply forward balancer.Balancer operations
+	balancer.Balancer   // Simply forward balancer.Balancer operations.
 	balancer.ClientConn // embed to intercept UpdateState, doesn't deal with SubConns
 
-	ba *balancerAggregator
+	ba *BalancerAggregator
 
-	endpoint resolver.Endpoint // the endpoint this balancer is linked to...created at construction time
+	endpoint resolver.Endpoint
 	state balancer.State
 }
 
 func (bw *balancerWrapper) UpdateState(state balancer.State) {
-	// persist around to send upward in BuildChildStates...
 	bw.state = state
-
-	// call into above? to tell to regenerate picker...yeah you need it since
-	// this can come outside of the UpdateClientConnState call
 	bw.ba.BuildChildStates()
 }
 
-type lbConfig struct { // for balanceraggregator
-	serviceconfig.LoadBalancingConfig
-
-	childBuilder balancer.Builder
-	childConfig  serviceconfig.LoadBalancingConfig
-}
-
-// full balancer - update client conn state operation (v1) is listed above
-// what about
+// ParseConfig returns the child config for it
 func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	gracefulswitch.
+	return gracefulswitch.ParseConfig(cfg)
 }
 
-
-
+// export a const for basic pick_first config...
+const PickFirstConfig = "[{\"pick_first\": {}}]"
 
 // Unit tests for this?
+
+// **Scope out time estimates for CSM**

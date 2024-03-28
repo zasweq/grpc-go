@@ -23,11 +23,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/grpclog"
-	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 )
 
@@ -40,20 +38,31 @@ const customRRName = "custom_round_robin"
 type customRRConfig struct {
 	serviceconfig.LoadBalancingConfig `json:"-"`
 
+	// ChildPolicy is the child policy of this balancer. This will be hardcoded
+	// to a graceful switch config which wraps a pick first with no shuffling
+	// enabled.
+	ChildPolicy serviceconfig.LoadBalancingConfig `json:"childPolicy"`
+
 	// ChooseSecond represents how often pick iterations choose the second
 	// SubConn in the list. Defaults to 3. If 0 never choose the second SubConn.
 	ChooseSecond uint32 `json:"chooseSecond,omitempty"`
 }
 
-// pick first config passed down from the parent
-
 type customRoundRobinBuilder struct{}
 
 func (customRoundRobinBuilder) ParseConfig(s json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
-	// This will switch to parseconfig using arbitary child config type...
+	// hardcode a pick first with no shuffling, since this is a petiole, and
+	// that is what petiole policies will interact with.
+	gspf, err := ParseConfig(json.RawMessage(PickFirstConfig))
+	if err != nil {
+		return nil, fmt.Errorf("error parsing hardcoded pick_first config: %v", err)
+	}
 	lbConfig := &customRRConfig{
 		ChooseSecond: 3,
+		ChildPolicy: gspf,
 	}
+
+
 	if err := json.Unmarshal(s, lbConfig); err != nil {
 		return nil, fmt.Errorf("custom-round-robin: unable to unmarshal customRRConfig: %v", err)
 	}
@@ -65,16 +74,13 @@ func (customRoundRobinBuilder) Name() string {
 }
 
 func (customRoundRobinBuilder) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
-	pfBuilder := balancer.Get(grpc.PickFirstBalancerName)
-	if pfBuilder == nil {
-		return nil
-	}
-	return &customRoundRobin{
-		cc:               cc,
+	// gspf, err := ParseConfig(json.RawMessage(PickFirstConfig))
+	crr := &customRoundRobin{
+		ClientConn:       cc,
 		bOpts:            bOpts,
-		pfs:              resolver.NewEndpointMap(),
-		pickFirstBuilder: pfBuilder,
 	}
+	crr.balancerAggregator = Build(crr, bOpts)
+	return crr
 }
 
 var logger = grpclog.Component("example")
@@ -86,14 +92,12 @@ type customRoundRobin struct {
 	// balancer.Balancer calls as well, and children are called one at a time),
 	// in which calls are guaranteed to come synchronously. Thus, no extra
 	// synchronization is required in this balancer.
-	cc    balancer.ClientConn
+	balancer.ClientConn
 	bOpts balancer.BuildOptions
-	// Note that this balancer is a petiole policy which wraps pick first (see
-	// gRFC A61). This is the intended way a user written custom lb should be
-	// specified, as pick first will contain a lot of useful functionality, such
-	// as Sticky Transient Failure, Happy Eyeballs, and Health Checking.
-	pickFirstBuilder balancer.Builder
-	pfs              *resolver.EndpointMap
+
+	// hardcoded child config, graceful switch that wraps a pick_first with no
+	// shuffling enabled.
+	balancerAggregator balancer.Balancer
 
 	cfg *customRRConfig
 
@@ -103,11 +107,19 @@ type customRoundRobin struct {
 }
 
 func (crr *customRoundRobin) UpdateClientConnState(state balancer.ClientConnState) error {
-	return /*crr.child.UpdateClientConnState?*/
+	crrCfg, ok := state.BalancerConfig.(*customRRConfig)
+	if !ok {
+		return balancer.ErrBadResolverState
+	}
+	crr.cfg = crrCfg
+	return crr.balancerAggregator.UpdateClientConnState(balancer.ClientConnState{
+		BalancerConfig: crrCfg.ChildPolicy,
+		ResolverState:  state.ResolverState,
+	})
 }
 
 func (crr *customRoundRobin) ResolverError(err error) {
-	// forward to child
+	crr.balancerAggregator.ResolverError(err)
 }
 
 // This function is deprecated. SubConn state updates now come through listener
@@ -117,15 +129,14 @@ func (crr *customRoundRobin) UpdateSubConnState(sc balancer.SubConn, state balan
 	logger.Errorf("custom_round_robin: UpdateSubConnState(%v, %+v) called unexpectedly", sc, state)
 }
 
-func (crr *customRoundRobin) Close() { // hold child...delegate to that, this gets callouts and that determines updatestate
-	// simply now forward to child
+func (crr *customRoundRobin) Close() {
+	crr.balancerAggregator.Close()
 }
 
 // regeneratePicker generates a picker if both child balancers are READY and
 // forwards it upward.
-func (crr *customRoundRobin) UpdateChildState(childStates []childState) { // pointer?
+func (crr *customRoundRobin) UpdateChildState(childStates []childState) {
 	var readyPickers []balancer.Picker
-	// Check if two are ready...if ready
 	for _, childState := range childStates {
 		if childState.state.ConnectivityState == connectivity.Ready {
 			readyPickers = append(readyPickers, childState.state.Picker)
@@ -140,13 +151,12 @@ func (crr *customRoundRobin) UpdateChildState(childStates []childState) { // poi
 	if len(readyPickers) != 2 {
 		return
 	}
-	// can do what I want with the errors, rr across all those
 	picker := &customRoundRobinPicker{
-		pickers:      readyPickers, // ignores the errors, but can rr to them...
+		pickers:      readyPickers,
 		chooseSecond: crr.cfg.ChooseSecond,
 		next:         0,
 	}
-	crr.cc.UpdateState(balancer.State{
+	crr.ClientConn.UpdateState(balancer.State{
 		ConnectivityState: connectivity.Ready,
 		Picker:            picker,
 	})
