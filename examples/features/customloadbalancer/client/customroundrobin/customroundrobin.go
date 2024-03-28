@@ -60,9 +60,8 @@ func (customRoundRobinBuilder) ParseConfig(s json.RawMessage) (serviceconfig.Loa
 	}
 	lbConfig := &customRRConfig{
 		ChooseSecond: 3,
-		ChildPolicy: gspf,
+		ChildPolicy:  gspf,
 	}
-
 
 	if err := json.Unmarshal(s, lbConfig); err != nil {
 		return nil, fmt.Errorf("custom-round-robin: unable to unmarshal customRRConfig: %v", err)
@@ -76,8 +75,8 @@ func (customRoundRobinBuilder) Name() string {
 
 func (customRoundRobinBuilder) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
 	crr := &customRoundRobin{
-		ClientConn:       cc,
-		bOpts:            bOpts,
+		ClientConn: cc,
+		bOpts:      bOpts,
 	}
 	crr.balancerAggregator = balanceraggregator.Build(crr, bOpts)
 	return crr

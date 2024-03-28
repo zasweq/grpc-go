@@ -46,8 +46,8 @@ type Parent interface {
 // Build returns a new BalancerAggregator.
 func Build(parent Parent, opts balancer.BuildOptions) *BalancerAggregator {
 	return &BalancerAggregator{
-		parent: parent,
-		bOpts: opts,
+		parent:   parent,
+		bOpts:    opts,
 		children: resolver.NewEndpointMap(),
 	}
 }
@@ -59,7 +59,7 @@ type BalancerAggregator struct {
 	parent Parent
 	bOpts  balancer.BuildOptions
 
-	children              *resolver.EndpointMap
+	children *resolver.EndpointMap
 
 	inhibitChildUpdates bool
 }
@@ -75,9 +75,9 @@ func (ba *BalancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 			bal = child.(*balancerWrapper)
 		} else {
 			bal = &balancerWrapper{
-				endpoint: endpoint,
+				endpoint:   endpoint,
 				ClientConn: ba.parent,
-				ba: ba,
+				ba:         ba,
 			}
 			bal.Balancer = gracefulswitch.NewBalancer(bal, ba.bOpts)
 			ba.children.Set(endpoint, bal)
@@ -152,7 +152,7 @@ type balancerWrapper struct {
 	ba *BalancerAggregator
 
 	endpoint resolver.Endpoint
-	state balancer.State
+	state    balancer.State
 }
 
 func (bw *balancerWrapper) UpdateState(state balancer.State) {
