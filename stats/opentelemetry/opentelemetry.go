@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 gRPC authors.
+ * Copyright 2024 gRPC authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -118,9 +118,6 @@ type MetricsOptions struct {
 // provide an implementation of a MeterProvider. If the passed in Meter Provider
 // does not have the view configured for an individual metric turned on, the API
 // call in this component will create a default view for that metric.
-
-// Talk about how to instrument here...like setting names of metrics and Meter Provider (which creates default views/bounds/instruments? if not set by caller)
-// and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func DialOption(mo MetricsOptions) grpc.DialOption {
 	csh := &clientStatsHandler{mo: mo}
 	csh.initializeMetrics()
@@ -140,12 +137,9 @@ func DialOption(mo MetricsOptions) grpc.DialOption {
 // provide an implementation of a MeterProvider. If the passed in Meter Provider
 // does not have the view configured for an individual metric turned on, the API
 // call in this component will create a default view for that metric.
-
-// Talk about how to instrument here...like setting names of metrics and Meter Provider (which creates default views/bounds/instruments? if not set by caller)
-// and also needs an exporter (which contains a metric reader inside it) to actually see recorded metrics.
 func ServerOption(mo MetricsOptions) grpc.ServerOption {
 	ssh := &serverStatsHandler{mo: mo}
-	ssh.initializeMetrics() // build "fixed" "hardcoded"?
+	ssh.initializeMetrics()
 	return grpc.StatsHandler(ssh)
 }
 
@@ -164,14 +158,10 @@ func setCallInfo(ctx context.Context, ci *callInfo) context.Context {
 
 // getCallInfo returns the callInfo stored in the context, or nil
 // if there isn't one.
-func getCallInfo(ctx context.Context) *callInfo { // if this errors in attempt component error out right? Or should this set method to empty string if call info isn't set?
+func getCallInfo(ctx context.Context) *callInfo {
 	ci, _ := ctx.Value(callInfoKey{}).(*callInfo)
 	return ci
 }
-
-// retry delay per call (A45)...through interceptor will be wrt the talking
-// between interceptor and stats handler right...actually retry stats are
-// handled in top level call object.
 
 // rpcInfo is RPC information scoped to the RPC attempt life span client side,
 // and the RPC life span server side.
@@ -200,10 +190,11 @@ func removeLeadingSlash(mn string) string {
 // side, and the RPC life span server side.
 type metricsInfo struct {
 	// access these counts atomically for hedging in the future:
-	// number of bytes after compression (within each message) from side (client || server)
+	// number of bytes after compression (within each message) from side (client
+	// || server).
 	sentCompressedBytes int64
 	// number of compressed bytes received (within each message) received on
-	// side (client || server)
+	// side (client || server).
 	recvCompressedBytes int64
 
 	startTime time.Time
@@ -211,10 +202,9 @@ type metricsInfo struct {
 	authority string
 }
 
-// built out at client/server handler init time
-// nil pointers mean don't record, populate with a pointer
-// count if set, record on pointer.
-type registeredMetrics struct { // nil or not nil means presence
+// registeredMetrics are the set of metrics to record with for the OpenTelemetry
+// component.
+type registeredMetrics struct {
 	// "grpc.client.attempt.started"
 	clientAttemptStarted metric.Int64Counter
 	// "grpc.client.attempt.duration"
@@ -236,16 +226,15 @@ type registeredMetrics struct { // nil or not nil means presence
 	// "grpc.server.call.duration"
 	serverCallDuration metric.Float64Histogram
 }
-/*
-Latency : 0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100
-Size : 0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296
-Count : 0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536
-*/
 
-// Users of this component should use these bucket boundaries in their SDK.
+// Users of this component should use these bucket boundaries as part of their
+// SDK MeterProvider passed in. This component sends this as "advice" to the
+// API, which works, however this stability is not guaranteed, so for safety the
+// SDK Meter Provider should set these bounds.
 var (
+	// DefaultLatencyBounds are the default bounds for latency metrics.
 	DefaultLatencyBounds = []float64{0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100} // provide "advice" through API, SDK should set this too
+	// DefaultLatencyBounds are the default bounds for metrics which record
+	// size.
 	DefaultSizeBounds = []float64{0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
-	DefaultCountBounds = []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536}
-	// CountBounds? for what (should set through SDK - see how that effects my test)
 )

@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 gRPC authors.
+ * Copyright 2024 gRPC authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,24 +38,19 @@ type serverStatsHandler struct {
 
 
 func (ssh *serverStatsHandler) initializeMetrics() {
-	// Don't use no-op, just don't fill out any of the metrics, and if none of the
-	// metrics are set then you just don't record.
+	// Will set no metrics to record, logically making this stats handler a
+	// no-op.
 	if ssh.mo.MeterProvider == nil {
 		return
 	}
 
-	// what happens if meter is nil?
-	meter := ssh.mo.MeterProvider.Meter("no-op")
+	meter := ssh.mo.MeterProvider.Meter("gRPC-Go")
 	if meter == nil {
 		return
 	}
 	setOfMetrics := ssh.mo.Metrics.metrics
 
 	registeredMetrics := registeredMetrics{}
-
-
-	// counter name - sdk takes precedence, then api (api here is defaults overwritten by SDK)
-
 	if _, ok := setOfMetrics["grpc.server.call.started"]; ok {
 		scs, err := meter.Int64Counter("grpc.server.call.started", metric.WithUnit("call"), metric.WithDescription("The total number of RPCs started, including those that have not completed."))
 		if err != nil {
@@ -77,17 +72,16 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 	if _, ok := setOfMetrics["grpc.server.call.rcvd_total_compressed_message_size"]; ok {
 		sr, err := meter.Int64Histogram("grpc.server.call.rcvd_total_compressed_message_size", metric.WithUnit("By"), metric.WithDescription("Total bytes (compressed but not encrypted) received across all request messages (metadata excluded) per RPC; does not include grpc or transport framing bytes."), metric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 		if err != nil {
-			logger.Errorf("failed to register metric \"grpc.server.rcvd.sent_total_compressed_message_size\", will not record") // error or log?
+			logger.Errorf("failed to register metric \"grpc.server.rcvd.sent_total_compressed_message_size\", will not record")
 		} else {
 			registeredMetrics.serverCallRcvdTotalCompressedMessageSize = sr
 		}
 	}
 
 	if _, ok := setOfMetrics["grpc.server.call.duration"]; ok {
-		metric.WithExplicitBucketBoundaries() // set advice for bounds here, and the rest through SDK
-		scd, err := meter.Float64Histogram("grpc.server.call.duration", metric.WithUnit("s"), metric.WithDescription("This metric aims to measure the end2end time an RPC takes from the server transport’s (HTTP2/ inproc) perspective."), metric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
+		scd, err := meter.Float64Histogram("grpc.server.call.duration", metric.WithUnit("s"), metric.WithDescription("This metric aims to measure the end2end time an RPC takes from the server transport’s perspective."), metric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
 		if err != nil {
-			logger.Errorf("failed to register metric \"grpc.server.call.duration\", will not record") // error or log?
+			logger.Errorf("failed to register metric \"grpc.server.call.duration\", will not record")
 		} else {
 			registeredMetrics.serverCallDuration = scd
 		}
@@ -149,7 +143,7 @@ func (ssh *serverStatsHandler) processRPCData(ctx context.Context, s stats.RPCSt
 		// measures concern number of messages and bytes for messages. This
 		// aligns with flow control.
 	case *stats.InHeader:
-		if ssh.registeredMetrics.serverCallStarted != nil { // could read this into a local var for readability see what they say on CLs
+		if ssh.registeredMetrics.serverCallStarted != nil {
 			ssh.registeredMetrics.serverCallStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method))))
 		}
 	case *stats.OutPayload:
@@ -167,8 +161,6 @@ func (ssh *serverStatsHandler) processRPCData(ctx context.Context, s stats.RPCSt
 
 
 func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInfo, e *stats.End) {
-	// latency bounds for distribution data (speced millisecond bounds) have
-	// fractions, thus need a float.
 	latency := float64(time.Since(mi.startTime)) / float64(time.Second)
 	var st string
 	if e.Error != nil {
@@ -176,10 +168,9 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		st = canonicalString(s.Code())
 	} else {
 		st = "OK"
-	} // it's the same server goroutine, just async with the test. Even sleeping doesn't do anything
+	}
 	serverAttributeOption := metric.WithAttributes(attribute.String("grpc.method", removeLeadingSlash(mi.method)), attribute.String("grpc.status", st))
 
-	// 57 and 0, is 0 correct here? yeah makes sense no message sent on stream, as client side
 	if ssh.registeredMetrics.serverCallDuration != nil {
 		ssh.registeredMetrics.serverCallDuration.Record(ctx, latency, serverAttributeOption)
 	}

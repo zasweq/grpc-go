@@ -28,9 +28,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// after below need to add default bounds then poll for all 3 ends, then add
-// loop for < 5s (first task blocks this)
-
 type clientStatsHandler struct {
 	mo MetricsOptions
 
@@ -39,13 +36,13 @@ type clientStatsHandler struct {
 
 
 func (csh *clientStatsHandler) initializeMetrics() {
-	// Don't use no-op, just don't fill out any of the metrics, and if none of the
-	// metrics are set then you just don't record.
+	// Will set no metrics to record, logically making this stats handler a
+	// no-op.
 	if csh.mo.MeterProvider == nil {
 		return
 	}
 
-	meter := csh.mo.MeterProvider.Meter("no-op namespace name? Prevent collisions?"/*any options here? I don't thinkkk so...*/)
+	meter := csh.mo.MeterProvider.Meter("gRPC-Go")
 	if meter == nil {
 		return
 	}
@@ -57,8 +54,8 @@ func (csh *clientStatsHandler) initializeMetrics() {
 
 	if _, ok := setOfMetrics["grpc.client.attempt.started"]; ok {
 		asc, err := meter.Int64Counter("grpc.client.attempt.started", metric.WithUnit("attempt"), metric.WithDescription("The total number of RPC attempts started, including those that have not completed."))
-		if err != nil { // or should this trigger error and exit? but should be best effort?
-			logger.Errorf("failed to register metric \"grpc.client.attempt.started\", will not record") // error or log?
+		if err != nil {
+			logger.Errorf("failed to register metric \"grpc.client.attempt.started\", will not record")
 		} else {
 			registeredMetrics.clientAttemptStarted = asc
 		}
@@ -67,18 +64,16 @@ func (csh *clientStatsHandler) initializeMetrics() {
 	if _, ok := setOfMetrics["grpc.client.attempt.duration"]; ok {
 		cad, err := meter.Float64Histogram("grpc.client.attempt.duration", metric.WithUnit("s"), metric.WithDescription("End-to-end time taken to complete an RPC attempt including the time it takes to pick a subchannel."), metric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
 		if err != nil {
-			logger.Errorf("failed to register metric \"grpc.client.attempt.started\", will not record") // error or log
+			logger.Errorf("failed to register metric \"grpc.client.attempt.started\", will not record")
 		} else {
 			registeredMetrics.clientAttemptDuration = cad
 		}
 	}
 
-	// histogram bounds are not part of their api yet - but caller can set document this and sdk over these api calls precedence wise somewhere in this file
-
 	if _, ok := setOfMetrics["grpc.client.attempt.sent_total_compressed_message_size"]; ok {
 		cas, err := meter.Int64Histogram("grpc.client.attempt.sent_total_compressed_message_size", metric.WithUnit("By"), metric.WithDescription("Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes."), metric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 		if err != nil {
-			logger.Errorf("failed to register metric \"grpc.client.attempt.sent_total_compressed_message_size\", will not record") // error or log?
+			logger.Errorf("failed to register metric \"grpc.client.attempt.sent_total_compressed_message_size\", will not record")
 		} else {
 			registeredMetrics.clientAttemptSentTotalCompressedMessageSize = cas
 		}
@@ -87,17 +82,16 @@ func (csh *clientStatsHandler) initializeMetrics() {
 	if _, ok := setOfMetrics["grpc.client.attempt.rcvd_total_compressed_message_size"]; ok {
 		car, err := meter.Int64Histogram("grpc.client.attempt.rcvd_total_compressed_message_size", metric.WithUnit("By"), metric.WithDescription("Total bytes (compressed but not encrypted) received across all response messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes."), metric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 		if err != nil {
-			logger.Errorf("failed to register metric \"grpc.client.rcvd.sent_total_compressed_message_size\", will not record") // error or log?
+			logger.Errorf("failed to register metric \"grpc.client.rcvd.sent_total_compressed_message_size\", will not record")
 		} else {
 			registeredMetrics.clientAttemptRcvdTotalCompressedMessageSize = car
 		}
 	}
 
-	// counter name - sdk takes precedence, then api (api here is defaults)
 	if _, ok := setOfMetrics["grpc.client.call.duration"]; ok {
 		ccs, err := meter.Float64Histogram("grpc.client.call.duration", metric.WithUnit("s"), metric.WithDescription("This metric aims to measure the end-to-end time the gRPC library takes to complete an RPC from the application’s perspective."), metric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
 		if err != nil {
-			logger.Errorf("failed to register metric \"grpc.client.call.duration\", will not record") // error or log?
+			logger.Errorf("failed to register metric \"grpc.client.call.duration\", will not record")
 		} else {
 			registeredMetrics.clientCallDuration = ccs
 		}
@@ -134,7 +128,7 @@ func (csh *clientStatsHandler) determineTarget(cc *grpc.ClientConn) string {
 // determineMethod determines the method to record attributes with. This will be
 // "other" if StaticMethod isn't specified or if method filter is set and
 // specifies, the method name as is otherwise.
-func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallOption) string { // assert this is right in e2e tests...
+func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallOption) string {
 	if csh.mo.MethodAttributeFilter != nil {
 		if !csh.mo.MethodAttributeFilter(method) {
 			return "other"
@@ -156,8 +150,6 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 	ctx = setCallInfo(ctx, ci)
 	startTime := time.Now()
 
-	// I think method passed in a result of stats handler callouts is the
-	// same...write unit tests for this. Doug said yes...! I think so
 	callback := func(err error) {
 		csh.perCallMetrics(ctx, err, startTime, ci)
 	}
@@ -234,11 +226,9 @@ func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCS
 func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInfo, e *stats.End) {
 	ci := getCallInfo(ctx)
 	if ci == nil {
-		// Shouldn't happen, set by interceptor, defensive programming. Log it won't record?
+		// Shouldn't happen, set by interceptor, defensive programming.
 		return
 	}
-	// latency bounds for distribution data (speced millisecond bounds) have
-	// fractions, thus need a float.
 	latency := float64(time.Since(mi.startTime)) / float64(time.Second)
 	var st string
 	if e.Error != nil {
