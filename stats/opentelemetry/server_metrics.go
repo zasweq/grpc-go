@@ -84,6 +84,7 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 	}
 
 	if _, ok := setOfMetrics["grpc.server.call.duration"]; ok {
+		metric.WithExplicitBucketBoundaries() // set advice for bounds here, and the rest through SDK
 		scd, err := meter.Float64Histogram("grpc.server.call.duration", metric.WithUnit("s"), metric.WithDescription("This metric aims to measure the end2end time an RPC takes from the server transport’s (HTTP2/ inproc / cronet) perspective.")) // there's gotta be like with bounds (latency bucket) or something...also declare bounds above only settable at sdk level not api level which wins out anyway precedence wise anyway...otherwise default bounds
 		if err != nil {
 			logger.Errorf("failed to register metric \"grpc.server.call.duration\", will not record") // error or log?

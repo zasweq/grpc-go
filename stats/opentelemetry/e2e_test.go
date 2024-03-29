@@ -75,7 +75,7 @@ func waitForServerCompletedRPCs(ctx context.Context, reader metric.Reader, wantM
 
 // return reader and also stub server...
 // setup does and returns...
-func setup(t *testing.T, tafOn bool, maf func(string) bool) (*metric.ManualReader /*or generic reader*/, *stubserver.StubServer) { // also return a cleanup?
+func setup(t *testing.T, tafOn bool, maf func(string) bool) (*metric.ManualReader, *stubserver.StubServer) { // also return a cleanup? user can do it
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(
 		metric.WithReader(reader),
@@ -200,8 +200,6 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
 			t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
 		}
-		// did this ever pass the other one's equality or was I just looking at presence?
-		// I see method: "other" and target: "whatever:///" and a single data point...
 	}
 
 }
@@ -214,7 +212,66 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 // that are static/registered client and server side should show up as an
 // attribute in metrics, and methods that aren't (such as generic methods)
 // shouldn't show up.
+/*
 func (s) TestStaticMethod(t *testing.T) {
+	reader, ss := setup(t, false, nil)
+	defer ss.Stop()
+
+	// full server option for grpc.UnknownServiceHandler plumb this in
+	// can I invoke into an unknown? at least hit started
+	// merge this with assertion of second?
+
+	//
+	grpc.StreamHandler()
+	// poll for all metrics that come from End
+	// also loop through under 5s for the duration...maybe second pass lightweight
+
+	/*
+	FullDuplexCallF: func(stream testgrpc.TestService_FullDuplexCallServer) error {
+				for {
+					_, err := stream.Recv()
+					if err == io.EOF {
+						return nil
+					}
+				}
+			},
+
+
+	// invoke client side for "unknown" method - if unset here will get an unimplemented back but will still get a
+	// RPC, as stats.InHeader comes before
+
+	streamHandler := func (srv any, stream grpc.ServerStream) { // where does it get callout - unregistered doesn't it come out from transport?
+		// doesn't do anything with it - this is orthogonal to started though right started comes before
+	}
+	// same context you pass into generated stubs...
+	grpc.UnknownServiceHandler()
+	// unimplemented_method_name should become "other"
+
+	/*
+	te.unknownHandler = func(srv any, stream grpc.ServerStream) error {
+			method, ok = grpc.MethodFromServerStream(stream)
+			return nil
+	}
+
+
+	ss.CC.Invoke(ctx, "unimplemented_method_name", nil, nil, nil)
+
+	// if can add handlers to server, can also do this as part of my second
+	// RPC's in full test below...
+
+
+	// what to expose server side? UnknownServiceHandler...
+
+	// server option, make client and server option configurable, switch setup below to use that too
+
+	// invoke and start an RPC Client Side that hits the UnknownServiceHandler started server side?
+
+
+
+	// irrespective of how I plumb "genericmethodhandler",
+	// I'll have to plumb the dial and server option of otel in,
+	// can I just use mock?
+
 	// Figure out a way to trigger a method inside vs. outside
 	// the buckets that are acceptable.
 
@@ -222,11 +279,80 @@ func (s) TestStaticMethod(t *testing.T) {
 
 	// How to set a generic method server side? Can I plumb in/control method header?
 
+	// All I need here is normal metrics stuff wanted but with the attribute for method bucked into "other".
+
+	// Below tests that :method is ok and doesn't get bucketed into "other".
+	reader := metric.NewManualReader()
+	provider := metric.NewMeterProvider(
+		metric.WithReader(reader),
+	)
+
+	// cc.Invoke string for method
+
+	// register a handler for it
+	// or unregistered method handler grpc.UnregisteredMethodHandler (path for Invoke)
+	// examples maybe for server side...
+
+	// Can I use unregistered method handler in this case? Or does it not need to go through stub server...
+
+	// setup with
+
+
+	// a single unary RPC for client and server
+
+	// declare the want metric as
+	// started as "other" on client and server
+
+	// OpenTelemetry should bucket unregistered methods into "other".
+	otherMethodAttr := attribute.String("grpc.method", "other")
+	targetAttr := attribute.String("grpc.target", ss.Target) // can I use ss here? can I plumb unregistered method handler through stub server?
+	// statusAttr := attribute.String("grpc.status", "OK")
+	wantMetrics := []metricdata.Metrics{
+		{
+			Name: "grpc.client.attempt.started",
+			Description: "The total number of RPC attempts started, including those that have not completed.",
+			Unit: "attempt",
+			Data: metricdata.Sum[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(otherMethodAttr, targetAttr),
+						Value: 1,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+				IsMonotonic: true,
+			},
+		},
+		{
+			Name: "grpc.server.call.started",
+			Description: "The total number of RPCs started, including those that have not completed.",
+			Unit: "call",
+			Data: metricdata.Sum[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(otherMethodAttr),
+						Value: 1,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+				IsMonotonic: true,
+			},
+		},
+	}
+	for _, metric := range wantMetrics {
+		val, ok := gotMetrics[metric.Name]
+		if !ok {
+			t.Fatalf("metric %v not present in recorded metrics", metric.Name)
+		}
+		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
+			t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
+		} // what does assert equal actually check...this is what they use...where to make this comment
+	}
 } // lighter weight test maybe? server side already have tested distinction?
 // client is isStaticMethod call option (comes from generated code)
 // server side is to read isStaticMethod call option...
+ */
 
-// go get 1.24 (and delete my changes...)
 
 // getting one other for unary and streaming vvv (does it need to match with stub server? need to register? seems wrong?)
 
@@ -407,7 +533,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 						// how do bounds work and how is the count linked to bounds?
 						// default bounds due to api call, as no views set on the default meter provider passed in.
 						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000},
+							500, 750, 1000, 2500, 5000, 7500, 10000}, // is this milliseconds? 5000 won't be enough or is it < 5 seconds. Should user set these bounds?
 						BucketCounts: []uint64{0x1, 0x0, // why is this deterministic? wtf? doesn't seem to align with min and max
 							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min: metricdata.NewExtrema(int64(0)), // these are non deterministic. Should I do this in a seperate assertion? Like OpenCensus, needs to assert within certain bounds.
@@ -422,39 +548,30 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			Name: "grpc.client.attempt.rcvd_total_compressed_message_size",
 			Description: "Total bytes (compressed but not encrypted) received across all response messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.",
 			Unit: "By",
-			Data: metricdata.Histogram[int64]{ // should be deterministic for their assertions
+			Data: metricdata.Histogram[int64]{
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
 						Count: 1, // if you make more than one streaming rpc call this should be 2
-
-						// how do bounds work and how is the count linked to bounds?
-						// default bounds due to api call, as no views set on the default meter provider passed in. Should I use a variable for default bounds?
-
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
+						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250, // picks up default bounds if not set in SDK/caller.
 							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x0, 0x0, // why is this deterministic? wtf? doesn't seem to align with min and max
+						BucketCounts: []uint64{0x0, 0x0,
 							0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						// Yup body with 10k both ways so this is how it works...
-						Min: metricdata.NewExtrema(int64(57)), // these are non deterministic. Should I do this in a seperate assertion? Like OpenCensus, needs to assert within certain bounds.
-						Max: metricdata.NewExtrema(int64(57)), // oh right it receives bytes from the server...the exact same though? Maybe
-						Sum: 57, // this seems wrong (although deterministic, and could very well fall under bounds of OpenCensus tests)
+						Min: metricdata.NewExtrema(int64(57)),
+						Max: metricdata.NewExtrema(int64(57)),
+						Sum: 57,
 					},
 					// No data sent or received on stream so nothing recorded here...maybe add a send/recv msg on stream and see what happens
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
 						// ignore start time/endtime
 						Count: 1, // if you make more than one streaming rpc call this should be 2
-						// much others, fill out and see if you want it
-
-						// how do bounds work and how is the count linked to bounds?
-						// default bounds due to api call, as no views set on the default meter provider passed in.
 
 						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
 							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x1, 0x0, // why is this deterministic? wtf? doesn't seem to align with min and max
+						BucketCounts: []uint64{0x1, 0x0,
 							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(0)), // these are non deterministic. Should I do this in a seperate assertion? Like OpenCensus, needs to assert within certain bounds.
+						Min: metricdata.NewExtrema(int64(0)),
 						Max: metricdata.NewExtrema(int64(0)),
 						Sum: 0,
 					},
@@ -466,45 +583,35 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			// grpc client call duration, same issue as client call duration typecast down and make manual assertions it's within 5 seconds
 		},*/
 		{
-			// Use this name as key into map
 			Name: "grpc.server.call.started",
 			Description: "The total number of RPCs started, including those that have not completed.",
-			Unit: "call", // do these get overwritten if set in the sdk?
-			// Data: sum,/*metricdata.Sum{ // generics might require a higher version of go
-			//DataPoints:
-			//},
+			Unit: "call",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
-						Attributes: attribute.NewSet(unaryMethodAttr), // delete authority anyway
-						Value: 1, // if you make more than one unary rpc this shoulddd be 2
+						Attributes: attribute.NewSet(unaryMethodAttr),
+						Value: 1,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr),
-						Value: 1, // if you make more than one streaming rpc this shoulddd be 2
+						Value: 1,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 				IsMonotonic: true,
 			},
 		},
-		{ // Upgrade version...
+		{
 			Name: "grpc.server.call.sent_total_compressed_message_size",
 			Unit: "By",
 			Description: "Total bytes (compressed but not encrypted) sent across all response messages (metadata excluded) per RPC; does not include grpc or transport framing bytes.",
-			Data: metricdata.Histogram[int64]{ // should be deterministic for their assertions
+			Data: metricdata.Histogram[int64]{
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, statusAttr),
-						// ignore start time/endtime
-						Count: 1, // if you make more than one streaming rpc call this should be 2
-						// much others, fill out and see if you want it
-
-						// how do bounds work and how is the count linked to bounds?
-						// default bounds due to api call, as no views set on the default meter provider passed in.
-
+						Count: 1,
 						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000},
+							500, 750, 1000, 2500, 5000, 7500, 10000}, // just assert < 5000
 						BucketCounts: []uint64{0x0, 0x0,
 							0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min: metricdata.NewExtrema(int64(57)),
@@ -514,18 +621,12 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 					// No data sent or received on stream so nothing recorded here...maybe add a send/recv msg on stream and see what happens
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, statusAttr),
-						// ignore start time/endtime does this happen in there assertion?
-						Count: 1, // if you make more than one streaming rpc call this should be 2
-						// much others, fill out and see if you want it
-
-						// how do bounds work and how is the count linked to bounds?
-						// default bounds due to api call, as no views set on the default meter provider passed in.
-
+						Count: 1,
 						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
 							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x1, 0x0, // why is this deterministic? wtf? doesn't seem to align with min and max
+						BucketCounts: []uint64{0x1, 0x0,
 							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(0)), // these are non deterministic. Should I do this in a seperate assertion? Like OpenCensus, needs to assert within certain bounds.
+						Min: metricdata.NewExtrema(int64(0)),
 						Max: metricdata.NewExtrema(int64(0)),
 						Sum: 0,
 					},
@@ -537,24 +638,18 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			Name: "grpc.server.call.rcvd_total_compressed_message_size",
 			Unit: "By",
 			Description: "Total bytes (compressed but not encrypted) received across all request messages (metadata excluded) per RPC; does not include grpc or transport framing bytes.",
-			Data: metricdata.Histogram[int64]{ // should be deterministic for their assertions
+			Data: metricdata.Histogram[int64]{
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, statusAttr),
-						// ignore start time/endtime
-						Count: 1, // if you make more than one streaming rpc call this should be 2
-						// much others, fill out and see if you want it
-
-						// how do bounds work and how is the count linked to bounds?
-						// default bounds due to api call, as no views set on the default meter provider passed in.
-
+						Count: 1,
 						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
 							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x0, 0x0, // why is this deterministic? wtf? doesn't seem to align with min and max
+						BucketCounts: []uint64{0x0, 0x0,
 							0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(57)), // these are non deterministic. Should I do this in a seperate assertion? Like OpenCensus, needs to assert within certain bounds.
+						Min: metricdata.NewExtrema(int64(57)),
 						Max: metricdata.NewExtrema(int64(57)),
-						Sum: 57, // this seems wrong (although deterministic, and could very well fall under bounds of OpenCensus tests)
+						Sum: 57,
 					},
 					// No data sent or received on stream so nothing recorded here...maybe add a send/recv msg on stream and see what happens
 					{
@@ -596,10 +691,10 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			// all the rest will be synced and ready to go.
 			if gotMetrics, err = waitForServerCompletedRPCs(ctx, reader, metric, t); err != nil { // I still think you need this. Wait technically need a sync point for all.
 				t.Fatalf("error waiting for sent total compressed message size for metric: %v", metric.Name)
-			}
+			} // you need to wait for all of these actually.
 		}
-
-		
+		// if metric.Name == one of the three duration metrics
+		//        loop through bounds and make sure all < 5 seconds buckets... (maybe helper)
 
 		val, ok := gotMetrics[metric.Name]
 		if !ok {
@@ -616,7 +711,9 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 
 	// Make another unary and streaming call. This should should up in the
 	// metrics. (copy over once cleaned up and double it).
-	if _, err := ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{Payload: &testpb.Payload{
+
+
+	/*if _, err := ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{Payload: &testpb.Payload{
 		Body: make([]byte, 10000),
 	}}, grpc.UseCompressor(gzip.Name)); err != nil { // deterministic compression from OpenCensus test...still need it because one of main metrics in OTel is compressed metrics
 		t.Fatalf("Unexpected error from UnaryCall: %v", err)
@@ -629,7 +726,19 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 	stream.CloseSend()
 	if _, err = stream.Recv(); err != io.EOF {
 		t.Fatalf("unexpected error: %v, expected an EOF error", err)
-	}
+	}*/
+
+	// after below need to add default bounds then poll for all 3 ends, then add loop for < 5s (first task blocks this)
+
+	// started is sync, so no need to poll
+
+	// This Invoke doesn't pass the StaticMethodCallOption. Thus, it should
+	// become "other" on client side metrics. Since it is also not registered on
+	// the server either, it should also become "other" on the server.
+	err = ss.CC.Invoke(ctx, "/grpc.testing.TestService/UnregisteredCall", nil, nil, []grpc.CallOption{}...) // handle the error or just use it?
+	t.Log(err)
+
+
 	rm = &metricdata.ResourceMetrics{}
 	reader.Collect(ctx, rm)
 	gotMetrics = map[string]metricdata.Metrics{}
@@ -638,17 +747,56 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			gotMetrics[m.Name] = m
 		}
 	}
-
+	otherMethodAttr := attribute.String("grpc.method", "other")
+	wantMetrics = []metricdata.Metrics{
+		{
+			Name: "grpc.client.attempt.started",
+			Description: "The total number of RPC attempts started, including those that have not completed.",
+			Unit: "attempt",
+			Data: metricdata.Sum[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr),
+						Value: 1, // if you make more than one unary rpc this shoulddd be 2 - could add to test below
+					},
+					{
+						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr),
+						Value: 1, // if you make more than one streaming rpc this shoulddd be 2
+					},
+					{
+						Attributes: attribute.NewSet(otherMethodAttr, targetAttr),
+						Value: 1,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+				IsMonotonic: true,
+			},
+		},
+		{
+			Name: "grpc.server.call.started",
+			Description: "The total number of RPCs started, including those that have not completed.",
+			Unit: "call",
+			Data: metricdata.Sum[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(unaryMethodAttr),
+						Value: 1,
+					},
+					{
+						Attributes: attribute.NewSet(duplexMethodAttr),
+						Value: 1,
+					},
+					{
+						Attributes: attribute.NewSet(otherMethodAttr),
+						Value: 1,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+				IsMonotonic: true,
+			},
+		},
+	}
 	for _, metric := range wantMetrics {
-		if metric.Name == "grpc.server.call.sent_total_compressed_message_size" {
-			// Sync the metric reader to see the event because stats.End is
-			// handled async server side. Thus, poll until it shows up. Once
-			// this first server side metric triggered by stats.End shows up,
-			// all the rest will be synced and ready to go.
-			if gotMetrics, err = waitForServerCompletedRPCs(ctx, reader, metric, t); err != nil { // I still think you need this. Wait technically need a sync point for all.
-				t.Fatalf("error waiting for sent total compressed message size for metric: %v", metric.Name)
-			}
-		}
 		val, ok := gotMetrics[metric.Name]
 		if !ok {
 			t.Fatalf("metric %v not present in recorded metrics", metric.Name)
