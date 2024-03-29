@@ -355,6 +355,35 @@ func (s) TestStaticMethod(t *testing.T) {
 
 
 // getting one other for unary and streaming vvv (does it need to match with stub server? need to register? seems wrong?)
+func assertDataPointWithinFiveSeconds(metric metricdata.Metrics) error {
+	histo, ok := metric.Data.(metricdata.Histogram[float64])
+	if !ok {
+		return fmt.Errorf("metric data is not histogram")
+	}
+	for _, dataPoint := range histo.DataPoints {
+		// 0 1 5
+		var boundWithFive int
+		for i, bucket := range dataPoint.Bounds {
+			if bucket >= 5 {
+				boundWithFive = i
+			}
+		}
+		foundPoint := false
+		for i, bucket := range dataPoint.BucketCounts {
+			if i >= boundWithFive {
+				return fmt.Errorf("data point not found in bucket <=5 seconds")
+			}
+			if bucket == 1 {
+				foundPoint = true
+				break
+			}
+		}
+		if !foundPoint {
+			return fmt.Errorf("no data point found for metric")
+		}
+	}
+	return nil
+}
 
 // TestAllMetricsOneFunction tests emitted metrics from OpenTelemetry
 // instrumentation component. It then configures a system with a gRPC Client and
@@ -467,40 +496,26 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 				IsMonotonic: true,
 			},
 		},
-		/*{
+		{
 			Name:        "grpc.client.attempt.duration",
 			Description: "End-to-end time taken to complete an RPC attempt including the time it takes to pick a subchannel.",
-			// Unit: , // ignore this, since it isn't present. Yeah empty string so just don't set it
+			Unit: "s",
 			Data: metricdata.Histogram[float64]{
 				DataPoints: []metricdata.HistogramDataPoint[float64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
-						// ignore start time/endtime
-						Count: 1, // if you make more than one unary rpc call this should be 2
-						// much others, fill out and see if you want it
-
-						// how do bounds work and how is the count linked to bounds?
+						Count: 1,
+						Bounds: DefaultLatencyBounds,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
-						// ignore start time/endtime
-						Count: 1, // if you make more than one streaming rpc call this should be 2
-						// much others, fill out and see if you want it
-
-						// how do bounds work and how is the count linked to bounds?
-						// default bounds due to api call, as no views set on the default meter provider passed in.
-
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x0, 0x1, // why is this deterministic? wtf? doesn't seem to align with min and max
-							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.Extrema[float64]{value:0.142856, valid:true}, // these are non deterministic. Should I do this in a seperate assertion? Like OpenCensus, needs to assert within certain bounds.
-						Max: metricdata.Extrema[float64]{value:0.142856, valid:true},
+						Count: 1,
+						Bounds: DefaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 			},
-		},*/ // seems like there's more values...need to test these somehow (buckets below 5?)
+		},
 		{
 			Name: "grpc.client.attempt.sent_total_compressed_message_size",
 			Description: "Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.",
@@ -516,10 +531,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 						// how do bounds work and how is the count linked to bounds?
 						// default bounds due to api call, as no views set on the default meter provider passed in.
 
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x0, 0x0,
-							0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+						Bounds: DefaultSizeBounds,
+						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min: metricdata.NewExtrema(int64(57)),
 						Max: metricdata.NewExtrema(int64(57)),
 						Sum: 57,
@@ -532,11 +545,9 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 
 						// how do bounds work and how is the count linked to bounds?
 						// default bounds due to api call, as no views set on the default meter provider passed in.
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000}, // is this milliseconds? 5000 won't be enough or is it < 5 seconds. Should user set these bounds?
-						BucketCounts: []uint64{0x1, 0x0, // why is this deterministic? wtf? doesn't seem to align with min and max
-							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(0)), // these are non deterministic. Should I do this in a seperate assertion? Like OpenCensus, needs to assert within certain bounds.
+						Bounds: DefaultSizeBounds, // is this milliseconds? 5000 won't be enough or is it < 5 seconds. Should user set these bounds?
+						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+						Min: metricdata.NewExtrema(int64(0)),
 						Max: metricdata.NewExtrema(int64(0)),
 						Sum: 0,
 					},
@@ -553,10 +564,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
 						Count: 1, // if you make more than one streaming rpc call this should be 2
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250, // picks up default bounds if not set in SDK/caller.
-							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x0, 0x0,
-							0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+						Bounds: DefaultSizeBounds,
+						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min: metricdata.NewExtrema(int64(57)),
 						Max: metricdata.NewExtrema(int64(57)),
 						Sum: 57,
@@ -567,10 +576,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 						// ignore start time/endtime
 						Count: 1, // if you make more than one streaming rpc call this should be 2
 
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x1, 0x0,
-							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+						Bounds: DefaultSizeBounds,
+						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min: metricdata.NewExtrema(int64(0)),
 						Max: metricdata.NewExtrema(int64(0)),
 						Sum: 0,
@@ -579,9 +586,26 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 				Temporality: metricdata.CumulativeTemporality,
 			}, // these are same values receives server side for these types of metrics too...(also don't build on go 1.17 due to generics)
 		},
-		/*{
-			// grpc client call duration, same issue as client call duration typecast down and make manual assertions it's within 5 seconds
-		},*/
+		{
+			Name:        "grpc.client.call.duration",
+			Description: "This metric aims to measure the end-to-end time the gRPC library takes to complete an RPC from the application’s perspective.",
+			Unit: "s",
+			Data: metricdata.Histogram[float64]{
+				DataPoints: []metricdata.HistogramDataPoint[float64]{
+					{
+						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
+						Count: 1,
+						Bounds: DefaultLatencyBounds,
+					},
+					{
+						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
+						Count: 1,
+						Bounds: DefaultLatencyBounds,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+			},
+		},
 		{
 			Name: "grpc.server.call.started",
 			Description: "The total number of RPCs started, including those that have not completed.",
@@ -610,10 +634,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, statusAttr),
 						Count: 1,
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000}, // just assert < 5000
-						BucketCounts: []uint64{0x0, 0x0,
-							0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+						Bounds: DefaultSizeBounds, // just assert < 5000
+						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min: metricdata.NewExtrema(int64(57)),
 						Max: metricdata.NewExtrema(int64(57)),
 						Sum: 57,
@@ -622,10 +644,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, statusAttr),
 						Count: 1,
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x1, 0x0,
-							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+						Bounds: DefaultSizeBounds,
+						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min: metricdata.NewExtrema(int64(0)),
 						Max: metricdata.NewExtrema(int64(0)),
 						Sum: 0,
@@ -643,10 +663,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, statusAttr),
 						Count: 1,
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x0, 0x0,
-							0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+						Bounds: DefaultSizeBounds,
+						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min: metricdata.NewExtrema(int64(57)),
 						Max: metricdata.NewExtrema(int64(57)),
 						Sum: 57,
@@ -661,11 +679,9 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 						// how do bounds work and how is the count linked to bounds?
 						// default bounds due to api call, as no views set on the default meter provider passed in.
 
-						Bounds: []float64{0, 5, 10, 25, 50, 75, 100, 250,
-							500, 750, 1000, 2500, 5000, 7500, 10000},
-						BucketCounts: []uint64{0x1, 0x0, // why is this deterministic? wtf? doesn't seem to align with min and max
-							0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(0)), // these are non deterministic. Should I do this in a seperate assertion? Like OpenCensus, needs to assert within certain bounds.
+						Bounds: DefaultSizeBounds,
+						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+						Min: metricdata.NewExtrema(int64(0)),
 						Max: metricdata.NewExtrema(int64(0)),
 						Sum: 0,
 					},
@@ -673,18 +689,30 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 				Temporality: metricdata.CumulativeTemporality,
 			},
 		},
-
-		// Duration same issue as client two durations, figure out tmrw. still need to figure out
-		// duration.
-
-		// I think for durations - it's a histogram - should take place within 5
-		// seconds (according to default bounds, which are stable I guess).
-
-
+		{
+			Name:        "grpc.server.call.duration",
+			Description: "This metric aims to measure the end2end time an RPC takes from the server transport’s (HTTP2/ inproc) perspective.",
+			Unit: "s",
+			Data: metricdata.Histogram[float64]{
+				DataPoints: []metricdata.HistogramDataPoint[float64]{
+					{
+						Attributes: attribute.NewSet(unaryMethodAttr, statusAttr),
+						Count: 1,
+						Bounds: DefaultLatencyBounds,
+					},
+					{
+						Attributes: attribute.NewSet(duplexMethodAttr, statusAttr),
+						Count: 1,
+						Bounds: DefaultLatencyBounds,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+			},
+		},
 	}
 
 	for _, metric := range wantMetrics {
-		if metric.Name == "grpc.server.call.sent_total_compressed_message_size" {
+		if metric.Name == "grpc.server.call.sent_total_compressed_message_size" || metric.Name == "grpc.server.call.rcvd_total_compressed_message_size" {
 			// Sync the metric reader to see the event because stats.End is
 			// handled async server side. Thus, poll until it shows up. Once
 			// this first server side metric triggered by stats.End shows up,
@@ -692,14 +720,31 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			if gotMetrics, err = waitForServerCompletedRPCs(ctx, reader, metric, t); err != nil { // I still think you need this. Wait technically need a sync point for all.
 				t.Fatalf("error waiting for sent total compressed message size for metric: %v", metric.Name)
 			} // you need to wait for all of these actually.
+			continue
 		}
 		// if metric.Name == one of the three duration metrics
 		//        loop through bounds and make sure all < 5 seconds buckets... (maybe helper)
+		//        either ignore the buckets field and manually check and send to assert equal, or just compare bounds
+		metricdatatest.IgnoreValue() // ignore the value, and then manually assert on it
+
+		// If one of the duration metrics, ignore the bucket counts, and make
+		// sure it falls within a count < 5 seconds (maximum duration of test
+		// due to context).
 
 		val, ok := gotMetrics[metric.Name]
 		if !ok {
 			t.Fatalf("metric %v not present in recorded metrics", metric.Name)
 		}
+		if metric.Name == "grpc.client.attempt.duration" || metric.Name == "grpc.client.call.duration" || metric.Name == "grpc.server.call.duration" {
+			if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars(), metricdatatest.IgnoreValue()) {
+				t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
+			}
+			if err := assertDataPointWithinFiveSeconds(val); err != nil {
+				t.Fatalf("Data point not within five seconds for metric %v: %v", metric.Name, err)
+			}
+			continue
+		}
+
 		// their package has good assertions on their data types.
 		// use their assertions, only on subset we want and ignore fields we don't want
 		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
