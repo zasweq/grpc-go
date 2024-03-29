@@ -124,7 +124,6 @@ func DialOption(mo MetricsOptions) grpc.DialOption {
 	return joinDialOptions(grpc.WithChainUnaryInterceptor(csh.unaryInterceptor), grpc.WithStreamInterceptor(csh.streamInterceptor), grpc.WithStatsHandler(csh))
 }
 
-
 // ServerOption returns a server option which enables OpenTelemetry
 // instrumentation code for a grpc.Server.
 //
@@ -150,7 +149,7 @@ type callInfo struct {
 	method string
 }
 
-type callInfoKey struct {}
+type callInfoKey struct{}
 
 func setCallInfo(ctx context.Context, ci *callInfo) context.Context {
 	return context.WithValue(ctx, callInfoKey{}, ci)

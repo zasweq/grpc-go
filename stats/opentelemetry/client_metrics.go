@@ -34,7 +34,6 @@ type clientStatsHandler struct {
 	registeredMetrics registeredMetrics
 }
 
-
 func (csh *clientStatsHandler) initializeMetrics() {
 	// Will set no metrics to record, logically making this stats handler a
 	// no-op.
@@ -50,7 +49,6 @@ func (csh *clientStatsHandler) initializeMetrics() {
 	setOfMetrics := csh.mo.Metrics.metrics
 
 	registeredMetrics := registeredMetrics{}
-
 
 	if _, ok := setOfMetrics["grpc.client.attempt.started"]; ok {
 		asc, err := meter.Int64Counter("grpc.client.attempt.started", metric.WithUnit("attempt"), metric.WithDescription("The total number of RPC attempts started, including those that have not completed."))
@@ -254,10 +252,10 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 // DefaultClientMetrics are the default client metrics provided by this module.
 var DefaultClientMetrics = Metrics{
 	metrics: map[string]bool{
-		"grpc.client.attempt.started": true,
-		"grpc.client.attempt.duration": true,
+		"grpc.client.attempt.started":                            true,
+		"grpc.client.attempt.duration":                           true,
 		"grpc.client.attempt.sent_total_compressed_message_size": true,
 		"grpc.client.attempt.rcvd_total_compressed_message_size": true,
-		"grpc.client.call.duration": true,
+		"grpc.client.call.duration":                              true,
 	},
 }

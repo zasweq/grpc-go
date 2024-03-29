@@ -104,13 +104,13 @@ func setup(t *testing.T, tafOn bool, maf func(string) bool) (*metric.ManualReade
 		}
 	}
 	if err := ss.Start([]grpc.ServerOption{ServerOption(MetricsOptions{
-		MeterProvider: provider,
-		Metrics:       DefaultServerMetrics,
+		MeterProvider:         provider,
+		Metrics:               DefaultServerMetrics,
 		TargetAttributeFilter: taf,
 		MethodAttributeFilter: maf,
 	})}, DialOption(MetricsOptions{
-		MeterProvider: provider,
-		Metrics:       DefaultClientMetrics,
+		MeterProvider:         provider,
+		Metrics:               DefaultClientMetrics,
 		TargetAttributeFilter: taf,
 		MethodAttributeFilter: maf,
 	})); err != nil {
@@ -157,18 +157,18 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 
 	wantMetrics := []metricdata.Metrics{
 		{
-			Name: "grpc.client.attempt.started",
+			Name:        "grpc.client.attempt.started",
 			Description: "The total number of RPC attempts started, including those that have not completed.",
-			Unit: "attempt",
+			Unit:        "attempt",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(attribute.String("grpc.method", "other"), attribute.String("grpc.target", "other")),
-						Value: 1,
+						Value:      1,
 					},
 					{
 						Attributes: attribute.NewSet(attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall"), attribute.String("grpc.target", "other")),
-						Value: 1,
+						Value:      1,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -275,18 +275,18 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 
 	wantMetrics := []metricdata.Metrics{
 		{
-			Name: "grpc.client.attempt.started",
+			Name:        "grpc.client.attempt.started",
 			Description: "The total number of RPC attempts started, including those that have not completed.",
-			Unit: "attempt",
+			Unit:        "attempt",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr),
-						Value: 1,
+						Value:      1,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr),
-						Value: 1,
+						Value:      1,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -296,74 +296,74 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		{
 			Name:        "grpc.client.attempt.duration",
 			Description: "End-to-end time taken to complete an RPC attempt including the time it takes to pick a subchannel.",
-			Unit: "s",
+			Unit:        "s",
 			Data: metricdata.Histogram[float64]{
 				DataPoints: []metricdata.HistogramDataPoint[float64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultLatencyBounds,
+						Count:      1,
+						Bounds:     DefaultLatencyBounds,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultLatencyBounds,
+						Count:      1,
+						Bounds:     DefaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 			},
 		},
 		{
-			Name: "grpc.client.attempt.sent_total_compressed_message_size",
+			Name:        "grpc.client.attempt.sent_total_compressed_message_size",
 			Description: "Total bytes (compressed but not encrypted) sent across all request messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.",
-			Unit: "By",
+			Unit:        "By",
 			Data: metricdata.Histogram[int64]{
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
-						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultSizeBounds,
+						Attributes:   attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
+						Count:        1,
+						Bounds:       DefaultSizeBounds,
 						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(57)),
-						Max: metricdata.NewExtrema(int64(57)),
-						Sum: 57,
+						Min:          metricdata.NewExtrema(int64(57)),
+						Max:          metricdata.NewExtrema(int64(57)),
+						Sum:          57,
 					},
 					{
-						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultSizeBounds,
+						Attributes:   attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
+						Count:        1,
+						Bounds:       DefaultSizeBounds,
 						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(0)),
-						Max: metricdata.NewExtrema(int64(0)),
-						Sum: 0,
+						Min:          metricdata.NewExtrema(int64(0)),
+						Max:          metricdata.NewExtrema(int64(0)),
+						Sum:          0,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 			},
 		},
 		{
-			Name: "grpc.client.attempt.rcvd_total_compressed_message_size",
+			Name:        "grpc.client.attempt.rcvd_total_compressed_message_size",
 			Description: "Total bytes (compressed but not encrypted) received across all response messages (metadata excluded) per RPC attempt; does not include grpc or transport framing bytes.",
-			Unit: "By",
+			Unit:        "By",
 			Data: metricdata.Histogram[int64]{
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
-						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultSizeBounds,
+						Attributes:   attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
+						Count:        1,
+						Bounds:       DefaultSizeBounds,
 						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(57)),
-						Max: metricdata.NewExtrema(int64(57)),
-						Sum: 57,
+						Min:          metricdata.NewExtrema(int64(57)),
+						Max:          metricdata.NewExtrema(int64(57)),
+						Sum:          57,
 					},
 					{
-						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultSizeBounds,
+						Attributes:   attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
+						Count:        1,
+						Bounds:       DefaultSizeBounds,
 						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(0)),
-						Max: metricdata.NewExtrema(int64(0)),
-						Sum: 0,
+						Min:          metricdata.NewExtrema(int64(0)),
+						Max:          metricdata.NewExtrema(int64(0)),
+						Sum:          0,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -372,36 +372,36 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		{
 			Name:        "grpc.client.call.duration",
 			Description: "This metric aims to measure the end-to-end time the gRPC library takes to complete an RPC from the application’s perspective.",
-			Unit: "s",
+			Unit:        "s",
 			Data: metricdata.Histogram[float64]{
 				DataPoints: []metricdata.HistogramDataPoint[float64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultLatencyBounds,
+						Count:      1,
+						Bounds:     DefaultLatencyBounds,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultLatencyBounds,
+						Count:      1,
+						Bounds:     DefaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 			},
 		},
 		{
-			Name: "grpc.server.call.started",
+			Name:        "grpc.server.call.started",
 			Description: "The total number of RPCs started, including those that have not completed.",
-			Unit: "call",
+			Unit:        "call",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr),
-						Value: 1,
+						Value:      1,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr),
-						Value: 1,
+						Value:      1,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -409,56 +409,56 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			},
 		},
 		{
-			Name: "grpc.server.call.sent_total_compressed_message_size",
-			Unit: "By",
+			Name:        "grpc.server.call.sent_total_compressed_message_size",
+			Unit:        "By",
 			Description: "Total bytes (compressed but not encrypted) sent across all response messages (metadata excluded) per RPC; does not include grpc or transport framing bytes.",
 			Data: metricdata.Histogram[int64]{
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
-						Attributes: attribute.NewSet(unaryMethodAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultSizeBounds,
+						Attributes:   attribute.NewSet(unaryMethodAttr, statusAttr),
+						Count:        1,
+						Bounds:       DefaultSizeBounds,
 						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(57)),
-						Max: metricdata.NewExtrema(int64(57)),
-						Sum: 57,
+						Min:          metricdata.NewExtrema(int64(57)),
+						Max:          metricdata.NewExtrema(int64(57)),
+						Sum:          57,
 					},
 					{
-						Attributes: attribute.NewSet(duplexMethodAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultSizeBounds,
+						Attributes:   attribute.NewSet(duplexMethodAttr, statusAttr),
+						Count:        1,
+						Bounds:       DefaultSizeBounds,
 						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(0)),
-						Max: metricdata.NewExtrema(int64(0)),
-						Sum: 0,
+						Min:          metricdata.NewExtrema(int64(0)),
+						Max:          metricdata.NewExtrema(int64(0)),
+						Sum:          0,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 			},
 		},
 		{
-			Name: "grpc.server.call.rcvd_total_compressed_message_size",
-			Unit: "By",
+			Name:        "grpc.server.call.rcvd_total_compressed_message_size",
+			Unit:        "By",
 			Description: "Total bytes (compressed but not encrypted) received across all request messages (metadata excluded) per RPC; does not include grpc or transport framing bytes.",
 			Data: metricdata.Histogram[int64]{
 				DataPoints: []metricdata.HistogramDataPoint[int64]{
 					{
-						Attributes: attribute.NewSet(unaryMethodAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultSizeBounds,
+						Attributes:   attribute.NewSet(unaryMethodAttr, statusAttr),
+						Count:        1,
+						Bounds:       DefaultSizeBounds,
 						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(57)),
-						Max: metricdata.NewExtrema(int64(57)),
-						Sum: 57,
+						Min:          metricdata.NewExtrema(int64(57)),
+						Max:          metricdata.NewExtrema(int64(57)),
+						Sum:          57,
 					},
 					{
-						Attributes: attribute.NewSet(duplexMethodAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultSizeBounds,
+						Attributes:   attribute.NewSet(duplexMethodAttr, statusAttr),
+						Count:        1,
+						Bounds:       DefaultSizeBounds,
 						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min: metricdata.NewExtrema(int64(0)),
-						Max: metricdata.NewExtrema(int64(0)),
-						Sum: 0,
+						Min:          metricdata.NewExtrema(int64(0)),
+						Max:          metricdata.NewExtrema(int64(0)),
+						Sum:          0,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -467,18 +467,18 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		{
 			Name:        "grpc.server.call.duration",
 			Description: "This metric aims to measure the end2end time an RPC takes from the server transport’s perspective.",
-			Unit: "s",
+			Unit:        "s",
 			Data: metricdata.Histogram[float64]{
 				DataPoints: []metricdata.HistogramDataPoint[float64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultLatencyBounds,
+						Count:      1,
+						Bounds:     DefaultLatencyBounds,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, statusAttr),
-						Count: 1,
-						Bounds: DefaultLatencyBounds,
+						Count:      1,
+						Bounds:     DefaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -536,22 +536,22 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 	otherMethodAttr := attribute.String("grpc.method", "other")
 	wantMetrics = []metricdata.Metrics{
 		{
-			Name: "grpc.client.attempt.started",
+			Name:        "grpc.client.attempt.started",
 			Description: "The total number of RPC attempts started, including those that have not completed.",
-			Unit: "attempt",
+			Unit:        "attempt",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr),
-						Value: 1,
+						Value:      1,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr),
-						Value: 1,
+						Value:      1,
 					},
 					{
 						Attributes: attribute.NewSet(otherMethodAttr, targetAttr),
-						Value: 1,
+						Value:      1,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -559,22 +559,22 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			},
 		},
 		{
-			Name: "grpc.server.call.started",
+			Name:        "grpc.server.call.started",
 			Description: "The total number of RPCs started, including those that have not completed.",
-			Unit: "call",
+			Unit:        "call",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr),
-						Value: 1,
+						Value:      1,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr),
-						Value: 1,
+						Value:      1,
 					},
 					{
 						Attributes: attribute.NewSet(otherMethodAttr),
-						Value: 1,
+						Value:      1,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,

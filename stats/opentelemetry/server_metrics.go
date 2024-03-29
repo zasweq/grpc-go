@@ -36,7 +36,6 @@ type serverStatsHandler struct {
 	registeredMetrics registeredMetrics
 }
 
-
 func (ssh *serverStatsHandler) initializeMetrics() {
 	// Will set no metrics to record, logically making this stats handler a
 	// no-op.
@@ -118,7 +117,7 @@ func (ssh *serverStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 
 	mi := &metricsInfo{
 		startTime: time.Now(),
-		method: method,
+		method:    method,
 	}
 	ri := &rpcInfo{
 		mi: mi,
@@ -159,7 +158,6 @@ func (ssh *serverStatsHandler) processRPCData(ctx context.Context, s stats.RPCSt
 	}
 }
 
-
 func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInfo, e *stats.End) {
 	latency := float64(time.Since(mi.startTime)) / float64(time.Second)
 	var st string
@@ -185,9 +183,9 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 // DefaultServerMetrics are the default server metrics provided by this module.
 var DefaultServerMetrics = Metrics{
 	metrics: map[string]bool{
-		"grpc.server.call.started": true,
+		"grpc.server.call.started":                            true,
 		"grpc.server.call.sent_total_compressed_message_size": true,
 		"grpc.server.call.rcvd_total_compressed_message_size": true,
-		"grpc.server.call.duration": true,
+		"grpc.server.call.duration":                           true,
 	},
 }
