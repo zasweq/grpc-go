@@ -23,6 +23,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
