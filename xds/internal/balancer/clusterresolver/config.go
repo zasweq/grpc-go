@@ -103,8 +103,18 @@ type DiscoveryMechanism struct {
 	// OutlierDetection is the Outlier Detection LB configuration for this
 	// priority.
 	OutlierDetection json.RawMessage `json:"outlierDetection,omitempty"`
+
+	// does this unmarshal into the correct thing? how does marshaling and unmarshaling work here...
+
+	// TelemetryLabels are the telemetry labels associated with this cluster.
+	TelemetryLabels map[string]string `json:"telemetryLabels,omitempty"` // how will this break tests?
 	outlierDetection outlierdetection.LBConfig
 }
+
+/*
+// Telemetry labels associated with this cluster
+    map<string, string> telemetry_labels = 10;
+*/
 
 // Equal returns whether the DiscoveryMechanism is the same with the parameter.
 func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {

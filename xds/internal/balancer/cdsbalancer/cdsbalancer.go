@@ -645,6 +645,8 @@ func (b *cdsBalancer) generateDMsForCluster(name string, depth int, dms []cluste
 	}
 	dm.OutlierDetection = odJSON
 
+	dm.TelemetryLabels = cluster.StringMD
+
 	return append(dms, dm), true, nil
 }
 

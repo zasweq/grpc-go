@@ -26,6 +26,7 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -562,6 +563,8 @@ type ClusterOptions struct {
 	// EnableLRS adds a load reporting configuration with a config source
 	// pointing to self.
 	EnableLRS bool
+	// TelemetryLabels are the telemetry labels to record
+	TelemetryLabels map[string]string // don't need determinism...iterate through and eventually gets read from map read...
 }
 
 // ClusterResourceWithOptions returns an xDS Cluster resource configured with
@@ -663,6 +666,31 @@ func ClusterResourceWithOptions(opts ClusterOptions) *v3clusterpb.Cluster {
 				Self: &v3corepb.SelfConfigSource{},
 			},
 		}
+	}
+	if opts.TelemetryLabels != nil {
+
+	/*Metadata: &v3corepb.Metadata{
+		FilterMetadata: map[string]*structpb.Struct{
+			"com.google.csm.telemetry_labels": {
+				Fields: map[string]*structpb.Value{
+					"service_name":      structpb.NewStringValue("grpc-service"),
+					"service_namespace": structpb.NewStringValue("grpc-service-namespace"),
+				},
+			},
+		},
+	},*/
+		fields := make(map[string]*structpb.Value)
+		for k, v := range opts.TelemetryLabels {
+			fields[k] = structpb.NewStringValue(v)
+		}
+		cluster.Metadata = &v3corepb.Metadata{
+			FilterMetadata: map[string]*structpb.Struct{
+				"com.google.csm.telemetry_labels": {
+					Fields: fields,
+				},
+			},
+		}
+
 	}
 	return cluster
 }

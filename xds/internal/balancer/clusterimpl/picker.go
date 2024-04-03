@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/internal/stats"
 	"google.golang.org/grpc/internal/wrr"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/xds/internal/xdsclient"
@@ -83,19 +84,59 @@ type picker struct {
 	loadStore loadReporter
 	counter   *xdsclient.ClusterRequestsCounter
 	countMax  uint32
-}
+	telemetryLabels map[string]string
+} // plumbs the map[string]string all the way to OTel component...
 
-func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterReporter) *picker {
+func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterReporter, telemetryLabels map[string]string) *picker {
 	return &picker{
 		drops:     config.drops,
 		s:         s,
 		loadStore: loadStore,
 		counter:   config.requestCounter,
 		countMax:  config.requestCountMax,
+		telemetryLabels: telemetryLabels,
 	}
 }
 
+// c tests given
+// Give it config see what picker
+
+// e2e test xDS OTel, fake stats handler...
+// what c ended up doing since separate, no dependencies between each other
+// in xDS e2e test fake stats handler sets...check fake stats handler gets optional Labels from
+
+// clean this up then run xds test suite to see what breaks and what doesn't...
+
+// otel e2e case - interceptor adds Labels using context simulating cluster_impl
+// picker, make sure OTel plugin records those Labels...
+
+
+// unit tests all pass
+
+// now time to write xDS e2e test testing this (will add OTel e2e test once that and this is merged)
+// I guess new feature in OTel so can add e2e test then...
+
+// Do I need to write unit tests for any of these components maybe the cluster impl?
+
+
+// SetLabels - mutate ctx in place in stats/ (pass a map[string]string)...don't expose telemetryLabels
+
+// ignore if no csm plugin option
+
+
+
+// locality - interested in optional label (GCS)
+
+
 func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	if info.Ctx != nil {
+		if labels := stats.GetLabels(info.Ctx); labels != nil && labels.TelemetryLabels != nil {
+			for key, value := range d.telemetryLabels { // Doug will probably want this to be a map write and read...
+				labels.TelemetryLabels[key] = value
+			}
+		} // Unconditionally set, even dropped or queued RPC's can use this label.
+	}
+
 	// Don't drop unless the inner picker is READY. Similar to
 	// https://github.com/grpc/grpc-go/issues/2622.
 	if d.s.ConnectivityState == connectivity.Ready {

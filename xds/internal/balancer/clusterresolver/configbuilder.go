@@ -123,6 +123,12 @@ func buildPriorityConfig(priorities []priorityConfig, xdsLBPolicy *internalservi
 	return retConfig, retAddrs, nil
 }
 
+// how does this get parsed and unparsed? is there headache here?
+// discovery mechanism adds md
+// add this to cluster_impl config
+// discovery mechanism md -> cluster_impl config...
+
+
 func convertClusterImplMapToOutlierDetection(ciCfgs map[string]*clusterimpl.LBConfig, odCfg outlierdetection.LBConfig) map[string]*outlierdetection.LBConfig {
 	odCfgs := make(map[string]*outlierdetection.LBConfig, len(ciCfgs))
 	for n, c := range ciCfgs {
@@ -147,6 +153,7 @@ func buildClusterImplConfigForDNS(g *nameGenerator, addrStrs []string, mechanism
 	}
 	return pName, &clusterimpl.LBConfig{
 		Cluster:     mechanism.Cluster,
+		TelemetryLabels: mechanism.TelemetryLabels,
 		ChildPolicy: &internalserviceconfig.BalancerConfig{Name: childPolicy},
 	}, retAddrs
 }
@@ -283,6 +290,7 @@ func priorityLocalitiesToClusterImpl(localities []xdsresource.Locality, priority
 		EDSServiceName:        mechanism.EDSServiceName,
 		LoadReportingServer:   mechanism.LoadReportingServer,
 		MaxConcurrentRequests: mechanism.MaxConcurrentRequests,
+		TelemetryLabels:       mechanism.TelemetryLabels,
 		DropCategories:        drops,
 		ChildPolicy:           xdsLBPolicy,
 	}, addrs, nil
