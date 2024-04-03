@@ -469,14 +469,14 @@ func (b *clusterImplBalancer) run() {
 						drops:           b.drops,
 						requestCounter:  b.requestCounter,
 						requestCountMax: b.requestCountMax,
-					}, b.loadWrapper),
+					}, b.loadWrapper, b.config.TelemetryLabels), // does this race with anything?
 				})
 			case *LBConfig:
 				dc := b.handleDropAndRequestCount(u)
 				if dc != nil && b.childState.Picker != nil {
 					b.ClientConn.UpdateState(balancer.State{
 						ConnectivityState: b.childState.ConnectivityState,
-						Picker:            newPicker(b.childState, dc, b.loadWrapper),
+						Picker:            newPicker(b.childState, dc, b.loadWrapper, b.config.TelemetryLabels),
 					})
 				}
 			}

@@ -19,6 +19,7 @@
 package clusterimpl
 
 import (
+	"context"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
@@ -83,9 +84,10 @@ type picker struct {
 	loadStore loadReporter
 	counter   *xdsclient.ClusterRequestsCounter
 	countMax  uint32
-}
+	telemetryLabels map[string]string
+} // plumbs the map[string]string all the way to OTel component...
 
-func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterReporter) *picker {
+func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterReporter, telemetryLabels map[string]string) *picker {
 	return &picker{
 		drops:     config.drops,
 		s:         s,
@@ -95,7 +97,66 @@ func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterR
 	}
 }
 
-func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+/*
+Plumbing in Java
+
+On the client side, an interface will be passed into the load balancing policy
+via CallOptions. The interface will allow adding the service labels. The OTel
+stats interceptor will add in an implementation of this interface such that the
+attributes can be added for CSM metrics.
+
+Plumbing in Go
+The plumbing will be the same as Java, but with Context instead of CallOptions.
+
+So I pass in something *in* the context?
+*/
+
+// Questions:
+// does it need to be set for logical DNS?
+
+// how to take this and send it to stats handler?
+
+// get the thing out of context, *that* is mutable, this thing gets it then sets it on that mutable thing
+// thread safe...not shared, per attempt
+
+// put these helpers in OTel eventually...
+// ctx -> mutable, ctx is not mutable
+type labels struct {
+	telemetryLabels map[string]string // mutable map, if I mutate this is it a pointer?
+}
+
+type labelsKey struct {}
+
+// GetLabels...
+func GetLabels(ctx context.Context) *labels {
+
+}
+
+// SetLabels sets the labels
+func SetLabels(ctx context.Context, labels *labels) {
+
+}
+
+// Update in flight PR to only parse the two labels wanted (still ignore not
+// string type), wait until Yash sends his out...
+
+// unconditionally set even for DNS, since it uses cluster_impl
+
+func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) { // inject labels into something that gets passed to OTel
+	// d.telemetryLabels // map[string]string
+	// stick these telemetryLabels onto something that gets passed to the stats handler...
+	// context...or maybe something else
+	// info has context in it, that's only link I think
+
+	// info.Ctx // this is the RPC's context, and may contain relevant RPC-Level information like the outgoing header's metadata
+	if labels := GetLabels(info.Ctx); labels != nil {
+		for key, value := range labels.telemetryLabels {
+			labels.telemetryLabels[key] = value // is this write permanent on the heap?
+		}
+	} // This is it...am I done? Write an e2e test or what?
+
+	// stick it RPC's ctx throguh a helper in OTel, then pull it out in OTel, if set use it if not "unknown" or "other"
+
 	// Don't drop unless the inner picker is READY. Similar to
 	// https://github.com/grpc/grpc-go/issues/2622.
 	if d.s.ConnectivityState == connectivity.Ready {
