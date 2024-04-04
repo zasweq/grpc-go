@@ -25,11 +25,9 @@
 package balanceraggregator
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc/internal/grpcsync"
 	"sync"
 	"sync/atomic"
 
@@ -51,13 +49,10 @@ type ChildState struct {
 
 // NewBalancer returns a new BalancerAggregator.
 func NewBalancer(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
-	ctx, cancel := context.WithCancel(context.Background())
 	return &BalancerAggregator{
 		cc:       cc,
 		bOpts:    opts,
 		children: resolver.NewEndpointMap(),
-		serializer: grpcsync.NewCallbackSerializer(ctx), // this guarantees we don't need a lock around UpdateState, and that it comes serially and not concurrently...
-		serializerCancel: cancel, // when to cancel this?
 	}
 }
 
@@ -69,30 +64,12 @@ type BalancerAggregator struct {
 	bOpts balancer.BuildOptions
 
 	children *resolver.EndpointMap
-
-
-
 	// inhibitChildUpdates is set during UpdateClientConnState/ResolverError
 	// calls (calls to children will each produce an update, only want one
 	// update).
-	inhibitChildUpdates bool // protect with atomic...? this and child state...
+	inhibitChildUpdates atomic.Bool
 
-	// set by
-	// inhibitChildUpdates set (writes) by UpdateCCS and ResolverError
-	// UpdateState() from child reads
-
-	// recentState read/written in UpdateCCS/ResolverError
-	// written in UpdateState()
-
-
-	// The serializer and its cancel func are initialized at build time(((, and the
-	// rest of the fields here are only accessed from serializer callbacks (or
-	// from balancer.Balancer methods, which themselves are guaranteed to be
-	// mutually exclusive) and hence do not need to be guarded by a mutex.))) stick inhibit in this...?
-
-
-	serializer       *grpcsync.CallbackSerializer // Serializes updates from gRPC and xDS client.
-	serializerCancel context.CancelFunc           // Stops the above serializer.
+	mu sync.Mutex // Sync updateState callouts and childState recent state updates
 }
 
 // UpdateClientConnState creates a child for new endpoints and deletes children
@@ -114,9 +91,9 @@ func (ba *BalancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 		}
 	}
 	endpointSet := resolver.NewEndpointMap()
-	ba.inhibitChildUpdates = true
+	ba.inhibitChildUpdates.Store(true)
 	defer func() {
-		ba.inhibitChildUpdates = false
+		ba.inhibitChildUpdates.Store(false)
 		ba.updateState()
 	}()
 	var ret error
@@ -170,9 +147,9 @@ func (ba *BalancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 // children and sends a single synchronous update of the childStates at the end
 // of the ResolverError operation.
 func (ba *BalancerAggregator) ResolverError(err error) {
-	ba.inhibitChildUpdates = true
+	ba.inhibitChildUpdates.Store(true)
 	defer func() {
-		ba.inhibitChildUpdates = false
+		ba.inhibitChildUpdates.Store(false)
 		ba.updateState()
 	}()
 	for _, child := range ba.children.Values() {
@@ -186,55 +163,17 @@ func (ba *BalancerAggregator) UpdateSubConnState(sc balancer.SubConn, state bala
 }
 
 func (ba *BalancerAggregator) Close() {
-	/*
-	b.serializer.Schedule(func(ctx context.Context) {
-			b.closeAllWatchers()
-
-			if b.childLB != nil {
-				b.childLB.Close()
-				b.childLB = nil
-			}
-			if b.cachedRoot != nil {
-				b.cachedRoot.Close()
-			}
-			if b.cachedIdentity != nil {
-				b.cachedIdentity.Close()
-			}
-			b.logger.Infof("Shutdown")
-		})
-		b.serializerCancel()
-		<-b.serializer.Done()
-	*/
-
-	// Looks like he schedules cleanup, and then cancels, and then blocks until
-	// done.
-
 	for _, child := range ba.children.Values() {
 		bal := child.(balancer.Balancer)
 		bal.Close()
 	}
 }
 
-// synchronization of child state, bool of inhibit - atomic or sync by that
-// event loop
-
 // updateState updates this component's state. It sends the aggregated state,
 // and a picker with round robin behavior with all the child states present if
 // needed.
 func (ba *BalancerAggregator) updateState() {
-	ba.serializer.Schedule(func() { // what context do I pass in here...allows timeouts?
-		if ba.inhibitChildUpdates { // needs an atomic, does this serialization prevent this?
-			return
-		}
-
-		// do all the stuff after...
-
-		// does child state need to have a mutex around it?
-
-	})
-
-
-	if ba.inhibitChildUpdates {
+	if ba.inhibitChildUpdates.Load() {
 		return
 	}
 	readyPickers := make([]balancer.Picker, 0)
@@ -243,11 +182,11 @@ func (ba *BalancerAggregator) updateState() {
 	transientFailurePickers := make([]balancer.Picker, 0)
 
 	childStates := make([]ChildState, 0, ba.children.Len())
+	ba.mu.Lock()
+	defer ba.mu.Unlock()
 	for _, child := range ba.children.Values() {
 		bw := child.(*balancerWrapper)
-		bw.mu.Lock()
 		childState := bw.childState
-		bw.mu.Unlock()
 		childStates = append(childStates, childState)
 		childPicker := childState.State.Picker
 		switch childState.State.ConnectivityState {
@@ -293,16 +232,7 @@ func (ba *BalancerAggregator) updateState() {
 	ba.cc.UpdateState(balancer.State{
 		ConnectivityState: aggState,
 		Picker:            p,
-	}) // these calls out need to come serially
-
-
-	// Unlock() here after update state, sync whole operation - can handle
-	// updatestate atomically read and write bool that inhibits...
-
-	// I sync on an individual child...could switch to one lock that
-	// is scoped to all children...Unlock() here
-
-	// inhibit with a bool
+	})
 }
 
 // pickerWithChildStates delegates to the pickers it holds in a round robin
@@ -338,42 +268,15 @@ type balancerWrapper struct {
 
 	ba *BalancerAggregator
 
-	mu         sync.Mutex
 	childState ChildState
 }
 
 func (bw *balancerWrapper) UpdateState(state balancer.State) {
-	bw.mu.Lock()
+	bw.ba.mu.Lock()
 	bw.childState.State = state
-	bw.mu.Unlock()
-	bw.ba.updateState() // this is called by sync UpdateCCS and UpdateState, need to add a mutex somewhere...how to prevent deadlock?
+	bw.ba.mu.Unlock()
+	bw.ba.updateState()
 }
-
-/*
-Doug's commment about synchronization of state:
-
-
-> The latest state/inhibit will need something to protect the r/w data race
-
-This can probably also be a simple atomic?
-Either that or you always push something to the serializer that updates the child state and then only calls updateState if you aren't inhibiting (or uS does the inhibit check as it does already)
-
-
-*/
-
-
-// not a problem to block on processing UpdateState, can't callback inline
-
-// sync inhibitPickerUpdates, childstate, and the operation of updating the parent (doesn't call back inline)
-
-// inhibit be atomic (I think unconditional)
-// callback serializer - handles eventual consistency and deadlock or channel which you drain...
-// or gate calls into callback serializer that do updatestate by the inhibit
-
-// orrrrr
-
-// callback serializer that updates state only if inhibit - this can write state
-// and UpdateState if inhibit not set
 
 func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	return gracefulswitch.ParseConfig(cfg)
@@ -381,6 +284,3 @@ func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error)
 
 // PickFirstConfig is a pick first config without shuffling enabled.
 const PickFirstConfig = "[{\"pick_first\": {}}]"
-
-// against master, add either atomics or locks to prevent deadlocks
-// forget about callback serializer for now...
