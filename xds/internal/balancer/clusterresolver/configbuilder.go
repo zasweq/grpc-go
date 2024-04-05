@@ -153,7 +153,7 @@ func buildClusterImplConfigForDNS(g *nameGenerator, addrStrs []string, mechanism
 	}
 	return pName, &clusterimpl.LBConfig{
 		Cluster:     mechanism.Cluster,
-		TelemetryLabels: mechanism.TelemetryLabels, // Do I need this for DNS? If this is wrong Doug will say so...
+		TelemetryLabels: mechanism.TelemetryLabels,
 		ChildPolicy: &internalserviceconfig.BalancerConfig{Name: childPolicy},
 	}, retAddrs
 }

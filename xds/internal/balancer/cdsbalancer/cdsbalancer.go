@@ -414,7 +414,7 @@ func (b *cdsBalancer) onClusterUpdate(name string, update xdsresource.ClusterUpd
 	b.logger.Infof("Received Cluster resource: %s", pretty.ToJSON(update))
 
 	// Update the watchers map with the update for the cluster.
-	state.lastUpdate = &update // this is the ClusterUpdate, persists the extra metadata...somewhere this prepares the cluster resolver config, and it's associated discovery mechanism
+	state.lastUpdate = &update
 
 	// For an aggregate cluster, always use the security configuration on the
 	// root cluster.
@@ -644,15 +644,8 @@ func (b *cdsBalancer) generateDMsForCluster(name string, depth int, dms []cluste
 		odJSON = json.RawMessage(`{}`)
 	}
 	dm.OutlierDetection = odJSON
-	// prepares list of discovery mechanisms here...
 
-	// this has already been added to canonical? service config protos...
-	// Do I need to add to cluster resolver's internal data type...also protos?
 	dm.TelemetryLabels = cluster.StringMD
-
-	// cluster resolver then takes this and
-	// puts it at the cluster_impl level
-
 
 	return append(dms, dm), true, nil
 }

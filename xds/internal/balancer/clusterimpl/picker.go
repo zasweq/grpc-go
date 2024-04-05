@@ -20,6 +20,7 @@ package clusterimpl
 
 import (
 	"context"
+
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
@@ -112,7 +113,7 @@ So I pass in something *in* the context?
 */
 
 // Questions:
-// does it need to be set for logical DNS?
+// does it need to be set for logical DNS? yes
 
 // how to take this and send it to stats handler?
 
@@ -122,40 +123,91 @@ So I pass in something *in* the context?
 // put these helpers in OTel eventually...
 // ctx -> mutable, ctx is not mutable
 type labels struct {
-	telemetryLabels map[string]string // mutable map, if I mutate this is it a pointer?
+	telemetryLabels map[string]string // mutable map, if I mutate this is it a pointer? this can only be tested through e2e test...
 }
 
 type labelsKey struct {}
 
-// GetLabels...
-func GetLabels(ctx context.Context) *labels {
+/*
+// rpcInfo is RPC information scoped to the RPC attempt life span client side,
+// and the RPC life span server side.
+type rpcInfo struct {
+	mi *metricsInfo
+}
 
+type rpcInfoKey struct{}
+
+func setRPCInfo(ctx context.Context, ri *rpcInfo) context.Context {
+	return context.WithValue(ctx, rpcInfoKey{}, ri)
+}
+
+// getRPCInfo returns the rpcInfo stored in the context, or nil
+// if there isn't one.
+func getRPCInfo(ctx context.Context) *rpcInfo {
+	ri, _ := ctx.Value(rpcInfoKey{}).(*rpcInfo)
+	return ri
+}
+*/
+
+// unit tests what components affected, what breaks and doesn't break...
+// xds/internal/balancer/cdsbalancer (processes labels) (does this need e2e test?)
+// xds/internal/balancer/clusterimpl (takes labels from config - puts it in picker (could write a unit test for this))
+// xds/internal/balancer/clusterresolver (takes labels in discovery mechanism, and sets them in cluster impl) (does this need e2e test?)
+// these three - only behavior except plumbing is this clusterresolver component...
+
+// what is a valid e2e test for this?
+
+// will parsing/unparsing through the tree create any headache?
+// Need to set labels in CDS, the e2e test can catch any parsing/unparsing logic...
+// do I need to add any unit tests for this?
+
+// test with fake stats handler move to OTel...will need to configure with CDS eventually so might as well
+// xDS e2e test with fake stats handler...
+// for e2e test - have stats handler plumbed into a channel with xDS
+// set labels, or can test later? or test at the picker level?
+
+// rebase onto cds-metadata change nothing should conflict (after done?)
+
+// GetLabels returns the labels stored in theo context, or nil if there is one
+func GetLabels(ctx context.Context) *labels {
+	labels, _ := ctx.Value(labelsKey{}).(*labels)
+	return labels
 }
 
 // SetLabels sets the labels
-func SetLabels(ctx context.Context, labels *labels) {
-
+func SetLabels(ctx context.Context, labels *labels) context.Context {
+	return context.WithValue(ctx, labelsKey{}, labels)
 }
 
-// Update in flight PR to only parse the two labels wanted (still ignore not
-// string type), wait until Yash sends his out...
+// c tests given
+// Give it config see what picker
 
-// unconditionally set even for DNS, since it uses cluster_impl
+// e2e test xDS OTel, fake stats handler...
+// what c ended up doing since separate, no dependencies between each other
+// in xDS e2e test fake stats handler sets...check fake stats handler gets optional labels from
 
-func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) { // inject labels into something that gets passed to OTel
-	// d.telemetryLabels // map[string]string
-	// stick these telemetryLabels onto something that gets passed to the stats handler...
-	// context...or maybe something else
-	// info has context in it, that's only link I think
+// clean this up then run xds test suite to see what breaks and what doesn't...
 
-	// info.Ctx // this is the RPC's context, and may contain relevant RPC-Level information like the outgoing header's metadata
-	if labels := GetLabels(info.Ctx); labels != nil {
-		for key, value := range labels.telemetryLabels {
-			labels.telemetryLabels[key] = value // is this write permanent on the heap?
-		}
-	} // This is it...am I done? Write an e2e test or what?
+// otel e2e case - interceptor adds labels, make sure OTel plugin records those
+// labels...
 
-	// stick it RPC's ctx throguh a helper in OTel, then pull it out in OTel, if set use it if not "unknown" or "other"
+
+// unit tests all pass
+
+// now time to write xDS e2e test testing this (will add OTel e2e test once that and this is merged)
+// I guess new feature in OTel so can add e2e test then...
+
+// Do I need to write unit tests for any of these components maybe the cluster impl?
+
+
+func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	if info.Ctx != nil {
+		if labels := GetLabels(info.Ctx); labels != nil {
+			for key, value := range labels.telemetryLabels {
+				labels.telemetryLabels[key] = value // is this write permanent on the heap? need e2e test...also need to write an example test?
+			}
+		} // even for dropped or queue ones
+	}
 
 	// Don't drop unless the inner picker is READY. Similar to
 	// https://github.com/grpc/grpc-go/issues/2622.

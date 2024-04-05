@@ -103,6 +103,7 @@ type clusterImplBalancer struct {
 	xdsClient xdsclient.XDSClient
 
 	config           *LBConfig
+	telemetryLabels  map[string]string // read and written to as part of picker update goroutine only, that synchronizes reads and writes
 	child            *gracefulswitch.Balancer
 	cancelLoadReport func()
 	edsServiceName   string
@@ -254,7 +255,7 @@ func (b *clusterImplBalancer) UpdateClientConnState(s balancer.ClientConnState) 
 	// Addresses and sub-balancer config are sent to sub-balancer.
 	return b.child.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState:  s.ResolverState,
-		BalancerConfig: b.config.ChildPolicy.Config,
+		BalancerConfig: b.config.ChildPolicy.Config, // read here, sync with above...
 	})
 }
 
@@ -461,7 +462,7 @@ func (b *clusterImplBalancer) run() {
 				return
 			}
 			switch u := update.(type) {
-			case balancer.State:
+			case balancer.State: // whether it's UpdateState or run() this can come in at any time...
 				b.childState = u
 				b.ClientConn.UpdateState(balancer.State{
 					ConnectivityState: b.childState.ConnectivityState,
@@ -469,17 +470,21 @@ func (b *clusterImplBalancer) run() {
 						drops:           b.drops,
 						requestCounter:  b.requestCounter,
 						requestCountMax: b.requestCountMax,
-					}, b.loadWrapper, b.config.TelemetryLabels), // does this race with anything?
+					}, b.loadWrapper, b.telemetryLabels), // does this race with anything? yes since this is on a UpdateState() upward this does race with this read...
 				})
 			case *LBConfig:
-				dc := b.handleDropAndRequestCount(u)
+				// does empty map or nil break anything
+				b.telemetryLabels = u.TelemetryLabels // telemetry labels is a picker concept, mention you can't read it out of config in PR description...as UpdateClientConnState is async with this run or UpdateState, this synchronizes the telemetry labels state as part of *picker* update processing which is sync
+				dc := b.handleDropAndRequestCount(u) // the b.drops and b.requestCounter happen here...
 				if dc != nil && b.childState.Picker != nil {
 					b.ClientConn.UpdateState(balancer.State{
-						ConnectivityState: b.childState.ConnectivityState,
-						Picker:            newPicker(b.childState, dc, b.loadWrapper, b.config.TelemetryLabels),
+						ConnectivityState: b.childState.ConnectivityState, // can get the telemetry labels passed in
+						Picker:            newPicker(b.childState, dc, b.loadWrapper, b.telemetryLabels), // this races with UpdateCCS, see OD, but need this read to be protected with a mutex...
 					})
 				}
 			}
+			// two issues here: how to sync this config read with this async run()
+			// and also is the context truly mutable? I guess e2e test will figure this out...
 			b.mu.Unlock()
 		case <-b.closed.Done():
 			if b.cancelLoadReport != nil {
