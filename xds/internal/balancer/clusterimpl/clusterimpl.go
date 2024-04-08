@@ -474,11 +474,11 @@ func (b *clusterImplBalancer) run() {
 				})
 			case *LBConfig:
 				// does empty map or nil break anything
-				b.telemetryLabels = u.TelemetryLabels // telemetry labels is a picker concept, mention you can't read it out of config in PR description...as UpdateClientConnState is async with this run or UpdateState, this synchronizes the telemetry labels state as part of *picker* update processing which is sync
+				b.telemetryLabels = u.TelemetryLabels // telemetry Labels is a picker concept, mention you can't read it out of config in PR description...as UpdateClientConnState is async with this run or UpdateState, this synchronizes the telemetry Labels state as part of *picker* update processing which is sync
 				dc := b.handleDropAndRequestCount(u) // the b.drops and b.requestCounter happen here...
 				if dc != nil && b.childState.Picker != nil {
 					b.ClientConn.UpdateState(balancer.State{
-						ConnectivityState: b.childState.ConnectivityState, // can get the telemetry labels passed in
+						ConnectivityState: b.childState.ConnectivityState, // can get the telemetry Labels passed in
 						Picker:            newPicker(b.childState, dc, b.loadWrapper, b.telemetryLabels), // this races with UpdateCCS, see OD, but need this read to be protected with a mutex...
 					})
 				}

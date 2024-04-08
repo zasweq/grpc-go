@@ -43,7 +43,7 @@ type LBConfig struct {
 	LoadReportingServer   *bootstrap.ServerConfig               `json:"lrsLoadReportingServer,omitempty"`
 	MaxConcurrentRequests *uint32                               `json:"maxConcurrentRequests,omitempty"`
 	DropCategories        []DropConfig                          `json:"dropCategories,omitempty"`
-	// TelemetryLabels are the telemetry labels associated with this cluster.
+	// TelemetryLabels are the telemetry Labels associated with this cluster.
 	TelemetryLabels map[string]string `json:"telemetryLabels,omitempty"` // how will this break tests?
 	ChildPolicy           *internalserviceconfig.BalancerConfig `json:"childPolicy,omitempty"`
 }

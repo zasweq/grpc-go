@@ -19,7 +19,7 @@
 package clusterimpl
 
 import (
-	"context"
+	"google.golang.org/grpc/stats/opentelemetry"
 
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/codes"
@@ -102,7 +102,7 @@ func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterR
 Plumbing in Java
 
 On the client side, an interface will be passed into the load balancing policy
-via CallOptions. The interface will allow adding the service labels. The OTel
+via CallOptions. The interface will allow adding the service Labels. The OTel
 stats interceptor will add in an implementation of this interface such that the
 attributes can be added for CSM metrics.
 
@@ -112,84 +112,17 @@ The plumbing will be the same as Java, but with Context instead of CallOptions.
 So I pass in something *in* the context?
 */
 
-// Questions:
-// does it need to be set for logical DNS? yes
-
-// how to take this and send it to stats handler?
-
-// get the thing out of context, *that* is mutable, this thing gets it then sets it on that mutable thing
-// thread safe...not shared, per attempt
-
-// put these helpers in OTel eventually...
-// ctx -> mutable, ctx is not mutable
-type labels struct {
-	telemetryLabels map[string]string // mutable map, if I mutate this is it a pointer? this can only be tested through e2e test...
-}
-
-type labelsKey struct {}
-
-/*
-// rpcInfo is RPC information scoped to the RPC attempt life span client side,
-// and the RPC life span server side.
-type rpcInfo struct {
-	mi *metricsInfo
-}
-
-type rpcInfoKey struct{}
-
-func setRPCInfo(ctx context.Context, ri *rpcInfo) context.Context {
-	return context.WithValue(ctx, rpcInfoKey{}, ri)
-}
-
-// getRPCInfo returns the rpcInfo stored in the context, or nil
-// if there isn't one.
-func getRPCInfo(ctx context.Context) *rpcInfo {
-	ri, _ := ctx.Value(rpcInfoKey{}).(*rpcInfo)
-	return ri
-}
-*/
-
-// unit tests what components affected, what breaks and doesn't break...
-// xds/internal/balancer/cdsbalancer (processes labels) (does this need e2e test?)
-// xds/internal/balancer/clusterimpl (takes labels from config - puts it in picker (could write a unit test for this))
-// xds/internal/balancer/clusterresolver (takes labels in discovery mechanism, and sets them in cluster impl) (does this need e2e test?)
-// these three - only behavior except plumbing is this clusterresolver component...
-
-// what is a valid e2e test for this?
-
-// will parsing/unparsing through the tree create any headache?
-// Need to set labels in CDS, the e2e test can catch any parsing/unparsing logic...
-// do I need to add any unit tests for this?
-
-// test with fake stats handler move to OTel...will need to configure with CDS eventually so might as well
-// xDS e2e test with fake stats handler...
-// for e2e test - have stats handler plumbed into a channel with xDS
-// set labels, or can test later? or test at the picker level?
-
-// rebase onto cds-metadata change nothing should conflict (after done?)
-
-// GetLabels returns the labels stored in theo context, or nil if there is one
-func GetLabels(ctx context.Context) *labels {
-	labels, _ := ctx.Value(labelsKey{}).(*labels)
-	return labels
-}
-
-// SetLabels sets the labels
-func SetLabels(ctx context.Context, labels *labels) context.Context {
-	return context.WithValue(ctx, labelsKey{}, labels)
-}
-
 // c tests given
 // Give it config see what picker
 
 // e2e test xDS OTel, fake stats handler...
 // what c ended up doing since separate, no dependencies between each other
-// in xDS e2e test fake stats handler sets...check fake stats handler gets optional labels from
+// in xDS e2e test fake stats handler sets...check fake stats handler gets optional Labels from
 
 // clean this up then run xds test suite to see what breaks and what doesn't...
 
-// otel e2e case - interceptor adds labels, make sure OTel plugin records those
-// labels...
+// otel e2e case - interceptor adds Labels, make sure OTel plugin records those
+// Labels...
 
 
 // unit tests all pass
@@ -202,9 +135,9 @@ func SetLabels(ctx context.Context, labels *labels) context.Context {
 
 func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	if info.Ctx != nil {
-		if labels := GetLabels(info.Ctx); labels != nil {
-			for key, value := range labels.telemetryLabels {
-				labels.telemetryLabels[key] = value // is this write permanent on the heap? need e2e test...also need to write an example test?
+		if labels := opentelemetry.GetLabels(info.Ctx); labels != nil {
+			for key, value := range labels.TelemetryLabels {
+				labels.TelemetryLabels[key] = value // is this write permanent on the heap? need e2e test...also need to write an example test?
 			}
 		} // even for dropped or queue ones
 	}
