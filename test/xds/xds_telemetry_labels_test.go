@@ -22,19 +22,24 @@ import (
 	"fmt"
 	"testing"
 
-	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	istats "google.golang.org/grpc/internal/stats"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/internal/testutils/xds/e2e"
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
 	"google.golang.org/grpc/stats"
-	"google.golang.org/grpc/stats/opentelemetry"
+
+	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
+// cleanup, then rebase on in flight PR...
+
+const serviceNameKey = "service_name"
+const serviceNamespaceKey = "service_namespace"
 const serviceNameValue = "grpc-service"
 const serviceNamespaceValue = "grpc-service-namespace"
 
@@ -45,11 +50,9 @@ const serviceNamespaceValue = "grpc-service-namespace"
 // contain telemetry labels that it can see.
 
 func (s) TestTelemetryLabels(t *testing.T) {
-	// e2e.SetupManagementServer(t, e2e.ManagementServerOptions{}) // do I need to set something for management server?
 	managementServer, nodeID, _, resolver, cleanup1 := e2e.SetupManagementServer(t, e2e.ManagementServerOptions{})
 	defer cleanup1()
 
-	// I think you just need one
 	server := stubserver.StartTestService(t, nil)
 	defer server.Stop()
 
@@ -59,39 +62,41 @@ func (s) TestTelemetryLabels(t *testing.T) {
 	// basic xDS configuration that will make it work + CDS with correct labels plumbed in
 	// (see unit tests in client for the two labels I want)
 
-	// this is client side configuration...what's the server just the stub server...
-
 	const xdsServiceName = "my-service-client-side-xds"
 	resources := e2e.DefaultClientResources(e2e.ResourceParams{
-		DialTarget: xdsServiceName, // use this for service name label?
+		DialTarget: xdsServiceName,
 		NodeID:     nodeID,
 		Host:       "localhost",
 		Port:       testutils.ParsePort(t, server.Address),
 		SecLevel:   e2e.SecurityLevelNone,
 	})
 
-	/*
-	clusterName := "cluster-" + params.DialTarget
-		endpointsName := "endpoints-" + params.DialTarget
-	*/
-	// set the telemetry labels on the cds - end goal is default cluster with
-	// telemetry labels, plumb through options...
-	resources.Clusters = []*v3clusterpb.Cluster{e2e.ClusterResourceWithOptions(e2e.ClusterOptions{
+	resources.Clusters[0].Metadata = &v3corepb.Metadata{
+		FilterMetadata: map[string]*structpb.Struct{
+			"com.google.csm.telemetry_labels": {
+				Fields: map[string]*structpb.Value{
+					serviceNameKey: structpb.NewStringValue(serviceNameValue),
+					serviceNamespaceKey: structpb.NewStringValue(serviceNamespaceValue),
+				},
+			},
+		},
+	}
+
+	/*resources.Clusters = []*v3clusterpb.Cluster{e2e.ClusterResourceWithOptions(e2e.ClusterOptions{
 		// What other options do I need to configure here?
-		ClusterName:   "cluster-" + xdsServiceName,
-		ServiceName:   "endpoint-" + xdsServiceName, // change this
+		ClusterName:   "cluster-" + xdsServiceName, // can I not add it to a const?
+		ServiceName:   "endpoint-" + xdsServiceName,
 		Policy:        e2e.LoadBalancingPolicyRoundRobin,
 		SecurityLevel: e2e.SecurityLevelNone,
 		// Default..
 
 		TelemetryLabels: map[string]string{
-			"service_name":      serviceNameValue, // you might have to use the service name that works
-			"service_namespace": serviceNamespaceValue,
-		},
-	} /*eventually default + telemetry configured...*/),
-	}
-
-	// resources.Cluster // append to this the telemetry labels...plumb it as part of options
+			serviceNameKey:      serviceNameValue, // you might have to use the service name that works
+			serviceNamespaceKey: serviceNamespaceValue,
+		}, // this doesn't work
+	}), // eventually default + telemetry configured...
+	}*/ // replace cluster with default + telemetry labels
+	//resources.SkipValidation = true // what happens if this gets set?
 
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -100,34 +105,31 @@ func (s) TestTelemetryLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 
-
-
-
-
 	fsh := &fakeStatsHandler{
-		// do I need to construct labels?
+		// do I need to construct labels? map or is it constructed on TagRPC and
+		// stored in fakeStatsHandler...
 		t: t,
 	}
-	// then make an RPC
-	cc, err := grpc.NewClient(fmt.Sprintf("xds:///%s", serviceName), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(resolver), grpc.WithStatsHandler(fsh))
+
+	cc, err := grpc.NewClient(fmt.Sprintf("xds:///%s", xdsServiceName), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(resolver), grpc.WithStatsHandler(fsh))
 	if err != nil {
 		t.Fatalf("failed to create a new client to local test server: %v", err)
 	}
 	defer cc.Close()
-	// stats handler plumbed in ^^^
 
 	client := testgrpc.NewTestServiceClient(cc)
 	if _, err := client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true)); err != nil {
 		t.Fatalf("rpc EmptyCall() failed: %v", err)
 	}
 
-	// stats handler asserts it can see telemetry labels...
+	// stats handler asserts it can see telemetry labels...will this actually
+	// fail?
 
 }
 
 type fakeStatsHandler struct {
 	// immutable pointer
-	labels *opentelemetry.Labels // does this work?
+	labels *istats.Labels // does this work?
 
 	// is this a valid pattern holding onto it?
 	t *testing.T
@@ -145,47 +147,48 @@ func (fsh *fakeStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 // when would opentelemetry set it - interceptor or stats handler?
 func (fsh *fakeStatsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
 	// use helper to set mutable thing in context value...
-	labels := &opentelemetry.Labels{}
-	fsh.labels = labels // does this write work?
+	labels := &istats.Labels{
+		TelemetryLabels: make(map[string]string),
+	}
+	fsh.labels = labels // does this write work? tests the mutablity
 	// this is currently in xds/internal...move it to stats/opentelemetry...
-	ctx = opentelemetry.SetLabels(ctx, labels)
+	ctx = istats.SetLabels(ctx, labels)
 	return ctx
 }
 
 
 func (fsh *fakeStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	// for the events that we know can get it (i.e. not client started
-	// metrics)...
+	// metrics)...write a comment about it
 
 	switch /*st := */ rs.(type) {
-	// in headers etc. are ignored
+	// in headers etc. are ignored, don't record metrics on sh...but theoritically which events should get it?
 	case *stats.Begin:
 		// this records started RPC metrics, which we've established won't have access to telemetry labels...
 	case *stats.OutPayload:
 	case *stats.InPayload:
 	case *stats.End:
+
+		// GetLabels happens in cluster_impl, that happens on heap so it's
+		// observable by this... same heap as what's pointed to by this map,
+		// doesn't race because pick comes before.
+
+
+
 		// These all record the metrics we want...we want access to the labels
 		// all the metrics but started defined in A68
 
 		// could make these wants consts...
-		if label, ok := fsh.labels.TelemetryLabels["service_name"]; !ok || label != serviceName { // these wanted vals (make const) will be plumbed through cds
+		if label, ok := fsh.labels.TelemetryLabels[serviceNameKey]; !ok || label != serviceNameValue { // these wanted vals (make const) will be plumbed through cds
 			// persist t? it's in same goroutine as test?
-			fsh.t.Fatalf() // what to log as error message?
+			fsh.t.Fatalf("for telemetry label %v, want: %v, got: %v", serviceNameKey, serviceNameValue, label) // what to log as error message?
 		}
-		if label, ok := fsh.labels.TelemetryLabels["service_namespace"]; !ok || label != serviceNamespace {
-			fsh.t.Fatalf() // what to log as error message?
+		if label, ok := fsh.labels.TelemetryLabels[serviceNamespaceKey]; !ok || label != serviceNamespaceValue {
+			fsh.t.Fatalf("for telemetry label %v, want: %v, got: %v", serviceNamespaceKey, serviceNamespaceValue, label) // what to log as error message?
 		}
 
-	case /*all the stats handler events we want here...that correspond to metrics we want i.e. !started*/
-	}
-
-	// could make these wants consts...
-	if label, ok := fsh.labels.TelemetryLabels[""/*first telemetry label wanted here...*/]; !ok || label != "val wanted here..." {
-		// persist t? it's in same goroutine as test?
-		t.Fatalf() // what to log as error message?
-	}
-	if label, ok := fsh.labels.TelemetryLabels[""/*second telemetry label wanted here...*/]; !ok || label != "val wanted here..." {
-		t.Fatalf() // what to log as error message?
+	default:
+		// Unknown sh event?
 	}
 
 }

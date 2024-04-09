@@ -19,11 +19,10 @@
 package clusterimpl
 
 import (
-	"google.golang.org/grpc/stats/opentelemetry"
-
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/internal/stats"
 	"google.golang.org/grpc/internal/wrr"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/xds/internal/xdsclient"
@@ -95,6 +94,7 @@ func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterR
 		loadStore: loadStore,
 		counter:   config.requestCounter,
 		countMax:  config.requestCountMax,
+		telemetryLabels: telemetryLabels,
 	}
 }
 
@@ -133,10 +133,23 @@ So I pass in something *in* the context?
 // Do I need to write unit tests for any of these components maybe the cluster impl?
 
 
+// SetLabels - mutate ctx in place in stats/ (pass a map[string]string)...don't expose telemetryLabels
+
+// ignore if no csm plugin option
+
+
+
+// locality - interested in optional label (GCS)
+
+
 func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	print("in cluster impl pick\n")
 	if info.Ctx != nil {
-		if labels := opentelemetry.GetLabels(info.Ctx); labels != nil {
-			for key, value := range labels.TelemetryLabels {
+		print("setting labels in picker\n")
+		if labels := stats.GetLabels(info.Ctx); labels != nil && labels.TelemetryLabels != nil { // stats/
+			print("labels is not nil\n")
+			for key, value := range d.telemetryLabels {
+				print("telemetry label key: ", key, "value: ", value, "\n")
 				labels.TelemetryLabels[key] = value // is this write permanent on the heap? need e2e test...also need to write an example test?
 			}
 		} // even for dropped or queue ones

@@ -16,20 +16,9 @@
  *
  */
 
-package opentelemetry
+package stats
 
 import "context"
-
-// Questions:
-// does it need to be set for logical DNS? yes
-
-// how to take this and send it to stats handler?
-
-// get the thing out of context, *that* is mutable, this thing gets it then sets it on that mutable thing
-// thread safe...not shared, per attempt
-
-// put these helpers in OTel eventually...
-// ctx -> mutable, ctx is not mutable
 
 // Labels...
 type Labels struct {
@@ -39,26 +28,31 @@ type Labels struct {
 
 type labelsKey struct {}
 
-/*
-// rpcInfo is RPC information scoped to the RPC attempt life span client side,
-// and the RPC life span server side.
-type rpcInfo struct {
-	mi *metricsInfo
+// all helpers scale TelemetryLabels up and down...
+
+
+// this will be the same always Get
+
+// persist the raw map[string]string, but that is immutable, do I need the
+// second layer here...lol xDS e2e doesn't even work...does default work for the
+// normal case out of the box?
+
+// return raw map now...?
+
+// GetLabels returns the Labels stored in theo context, or nil if there is one
+func GetLabels(ctx context.Context) *Labels {
+	labels, _ := ctx.Value(labelsKey{}).(*Labels) // get pointer, than set mutable data through that pointer...
+	return labels
 }
 
-type rpcInfoKey struct{}
+// Probably want these setters and getters to take map[string]string
+// vs. layer( map[string]string )...do I even need this layer?
 
-func setRPCInfo(ctx context.Context, ri *rpcInfo) context.Context {
-	return context.WithValue(ctx, rpcInfoKey{}, ri)
+// SetLabels sets the Labels
+func SetLabels(ctx context.Context, labels *Labels) context.Context {
+	// could also append
+	return context.WithValue(ctx, labelsKey{}, labels)
 }
-
-// getRPCInfo returns the rpcInfo stored in the context, or nil
-// if there isn't one.
-func getRPCInfo(ctx context.Context) *rpcInfo {
-	ri, _ := ctx.Value(rpcInfoKey{}).(*rpcInfo)
-	return ri
-}
-*/
 
 // unit tests what components affected, what breaks and doesn't break...
 // xds/internal/balancer/cdsbalancer (processes Labels) (does this need e2e test?)
@@ -72,20 +66,4 @@ func getRPCInfo(ctx context.Context) *rpcInfo {
 // Need to set Labels in CDS, the e2e test can catch any parsing/unparsing logic...
 // do I need to add any unit tests for this?
 
-// test with fake stats handler move to OTel...will need to configure with CDS eventually so might as well
-// xDS e2e test with fake stats handler...
-// for e2e test - have stats handler plumbed into a channel with xDS
-// set Labels, or can test later? or test at the picker level?
-
 // rebase onto cds-metadata change nothing should conflict (after done?)
-
-// GetLabels returns the Labels stored in theo context, or nil if there is one
-func GetLabels(ctx context.Context) *Labels {
-	labels, _ := ctx.Value(labelsKey{}).(*Labels) // get pointer, than set mutable data through that pointer...
-	return labels
-}
-
-// SetLabels sets the Labels
-func SetLabels(ctx context.Context, labels *Labels) context.Context {
-	return context.WithValue(ctx, labelsKey{}, labels)
-}
