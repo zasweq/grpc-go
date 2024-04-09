@@ -85,7 +85,7 @@ type picker struct {
 	counter   *xdsclient.ClusterRequestsCounter
 	countMax  uint32
 	telemetryLabels map[string]string
-} // plumbs the map[string]string all the way to OTel component...
+}
 
 func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterReporter, telemetryLabels map[string]string) *picker {
 	return &picker{
@@ -98,32 +98,14 @@ func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterR
 	}
 }
 
-// c tests given
-// Give it config see what picker
-
-// e2e test xDS OTel, fake stats handler...
-// what c ended up doing since separate, no dependencies between each other
-// in xDS e2e test fake stats handler sets...check fake stats handler gets optional Labels from
-
-// clean this up then run xds test suite to see what breaks and what doesn't...
-
-// otel e2e case - interceptor adds Labels using context simulating cluster_impl
-// picker, make sure OTel plugin records those Labels...
-
-
-// unit tests all pass
-
-// now time to write xDS e2e test testing this (will add OTel e2e test once that and this is merged)
-// I guess new feature in OTel so can add e2e test then...
 
 // Do I need to write unit tests for any of these components maybe the cluster impl?
 
 
 // SetLabels - mutate ctx in place in stats/ (pass a map[string]string)...don't expose telemetryLabels
+// Talk about this in PR description or in message to Doug ^^^
 
 // ignore if no csm plugin option
-
-
 
 // locality - interested in optional label (GCS)
 

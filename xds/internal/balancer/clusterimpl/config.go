@@ -44,7 +44,7 @@ type LBConfig struct {
 	MaxConcurrentRequests *uint32                               `json:"maxConcurrentRequests,omitempty"`
 	DropCategories        []DropConfig                          `json:"dropCategories,omitempty"`
 	// TelemetryLabels are the telemetry Labels associated with this cluster.
-	TelemetryLabels map[string]string `json:"telemetryLabels,omitempty"` // how will this break tests?
+	TelemetryLabels map[string]string `json:"telemetryLabels,omitempty"`
 	ChildPolicy           *internalserviceconfig.BalancerConfig `json:"childPolicy,omitempty"`
 }
 

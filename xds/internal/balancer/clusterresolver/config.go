@@ -111,11 +111,6 @@ type DiscoveryMechanism struct {
 	outlierDetection outlierdetection.LBConfig
 }
 
-/*
-// Telemetry labels associated with this cluster
-    map<string, string> telemetry_labels = 10;
-*/
-
 // Equal returns whether the DiscoveryMechanism is the same with the parameter.
 func (dm DiscoveryMechanism) Equal(b DiscoveryMechanism) bool {
 	od := &dm.outlierDetection

@@ -138,7 +138,7 @@ func (fsh *fakeStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 		}
 
 	default:
-		// Nothing to assert for the other stats.Handler callouts
+		// Nothing to assert for the other stats.Handler callouts.
 	}
 
 }
