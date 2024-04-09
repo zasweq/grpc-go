@@ -103,11 +103,8 @@ type DiscoveryMechanism struct {
 	// OutlierDetection is the Outlier Detection LB configuration for this
 	// priority.
 	OutlierDetection json.RawMessage `json:"outlierDetection,omitempty"`
-
-	// does this unmarshal into the correct thing? how does marshaling and unmarshaling work here...
-
 	// TelemetryLabels are the telemetry labels associated with this cluster.
-	TelemetryLabels map[string]string `json:"telemetryLabels,omitempty"` // how will this break tests?
+	TelemetryLabels map[string]string `json:"telemetryLabels,omitempty"`
 	outlierDetection outlierdetection.LBConfig
 }
 

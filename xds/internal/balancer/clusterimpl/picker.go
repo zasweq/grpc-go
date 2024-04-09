@@ -98,22 +98,10 @@ func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterR
 	}
 }
 
-
-// Do I need to write unit tests for any of these components maybe the cluster impl?
-
-
-// SetLabels - mutate ctx in place in stats/ (pass a map[string]string)...don't expose telemetryLabels
-// Talk about this in PR description or in message to Doug ^^^
-
-// ignore if no csm plugin option
-
-// locality - interested in optional label (GCS)
-
-
 func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	if info.Ctx != nil {
 		if labels := stats.GetLabels(info.Ctx); labels != nil && labels.TelemetryLabels != nil {
-			for key, value := range d.telemetryLabels { // Doug will probably want this to be a map write and read...
+			for key, value := range d.telemetryLabels {
 				labels.TelemetryLabels[key] = value
 			}
 		} // Unconditionally set, even dropped or queued RPC's can use this label.
