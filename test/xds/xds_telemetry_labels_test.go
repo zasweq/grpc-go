@@ -36,7 +36,6 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-
 const serviceNameKey = "service_name"
 const serviceNamespaceKey = "service_namespace"
 const serviceNameValue = "grpc-service"
@@ -67,13 +66,12 @@ func (s) TestTelemetryLabels(t *testing.T) {
 		FilterMetadata: map[string]*structpb.Struct{
 			"com.google.csm.telemetry_labels": {
 				Fields: map[string]*structpb.Value{
-					serviceNameKey: structpb.NewStringValue(serviceNameValue),
+					serviceNameKey:      structpb.NewStringValue(serviceNameValue),
 					serviceNamespaceKey: structpb.NewStringValue(serviceNamespaceValue),
 				},
 			},
 		},
 	}
-
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
@@ -117,7 +115,6 @@ func (fsh *fakeStatsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) co
 	ctx = istats.SetLabels(ctx, labels) // ctx passed is immutable, however cluster_impl writes to the map of Telemetry Labels on the heap.
 	return ctx
 }
-
 
 func (fsh *fakeStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 	switch rs.(type) {

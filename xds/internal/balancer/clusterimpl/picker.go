@@ -79,21 +79,21 @@ type loadReporter interface {
 
 // Picker implements RPC drop, circuit breaking drop and load reporting.
 type picker struct {
-	drops     []*dropper
-	s         balancer.State
-	loadStore loadReporter
-	counter   *xdsclient.ClusterRequestsCounter
-	countMax  uint32
+	drops           []*dropper
+	s               balancer.State
+	loadStore       loadReporter
+	counter         *xdsclient.ClusterRequestsCounter
+	countMax        uint32
 	telemetryLabels map[string]string
 }
 
 func newPicker(s balancer.State, config *dropConfigs, loadStore load.PerClusterReporter, telemetryLabels map[string]string) *picker {
 	return &picker{
-		drops:     config.drops,
-		s:         s,
-		loadStore: loadStore,
-		counter:   config.requestCounter,
-		countMax:  config.requestCountMax,
+		drops:           config.drops,
+		s:               s,
+		loadStore:       loadStore,
+		counter:         config.requestCounter,
+		countMax:        config.requestCountMax,
 		telemetryLabels: telemetryLabels,
 	}
 }

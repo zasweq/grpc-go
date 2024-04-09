@@ -26,7 +26,7 @@ type Labels struct {
 	TelemetryLabels map[string]string
 }
 
-type labelsKey struct {}
+type labelsKey struct{}
 
 // GetLabels returns the Labels stored in theo context, or nil if there is one
 func GetLabels(ctx context.Context) *Labels {

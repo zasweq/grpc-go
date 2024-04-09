@@ -146,9 +146,9 @@ func buildClusterImplConfigForDNS(g *nameGenerator, addrStrs []string, mechanism
 		retAddrs = append(retAddrs, hierarchy.Set(resolver.Address{Addr: addrStr}, []string{pName}))
 	}
 	return pName, &clusterimpl.LBConfig{
-		Cluster:     mechanism.Cluster,
+		Cluster:         mechanism.Cluster,
 		TelemetryLabels: mechanism.TelemetryLabels,
-		ChildPolicy: &internalserviceconfig.BalancerConfig{Name: childPolicy},
+		ChildPolicy:     &internalserviceconfig.BalancerConfig{Name: childPolicy},
 	}, retAddrs
 }
 
