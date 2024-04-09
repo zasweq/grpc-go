@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
@@ -56,6 +57,10 @@ func NewBalancer(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Ba
 	}
 }
 
+// look at least request
+// in dynamic rds PR you don't have access to the top lebel object, this one you do like atomic.Bool
+// uint32 (it's part of the struct so when you take the address you get it)
+
 // balancerAggregator is a balancer that wraps child balancers. It creates a
 // child balancer with child config for every unique Endpoint received. It
 // updates the child states on any update from parent or child.
@@ -63,21 +68,34 @@ type balancerAggregator struct {
 	cc    balancer.ClientConn
 	bOpts balancer.BuildOptions
 
-	children *resolver.EndpointMap
+	children *resolver.EndpointMap // add to be protected by mutex,
+	children2 unsafe.Pointer
+
 	// inhibitChildUpdates is set during UpdateClientConnState/ResolverError
 	// calls (calls to children will each produce an update, only want one
 	// update).
-	inhibitChildUpdates atomic.Bool
+	inhibitChildUpdates atomic.Bool // should I also add this to the mutex below
 
+	// for correctness, does not affect logic...
 	mu sync.Mutex // Sync updateState callouts and childState recent state updates
 }
 
+// update the map atomically
+// map a (if get a new TF, compute aggregated state and reflect this to parent)
+// map b (atomically write this, aggregated state now becomes this)
+
+// keep the bool (doesn't guarantee sync, just an optimization and prevents
+// interspliced TF), and the child state guarded by that mu
+// swap of the map (look at least request with newChildren and that "snapshot" of state)
+// is what guarantees no weird behavior here wrt interslicing, keep that operation atomic
+// for consistent aggregated state updates to parent
+
 // UpdateClientConnState creates a child for new endpoints and deletes children
 // for endpoints that are no longer present. It also updates all the children,
-// and sends a single synchronous update of the children's aggregate state at
+// and sends a single synchronous update of the childrens' aggregated state at
 // the end of the UpdateClientConnState operation. If any endpoint has no
-// addresses, returns error. Otherwise returns first error found from a child,
-// but fully processes the new update.
+// addresses, returns error without forwarding any updates. Otherwise returns
+// first error found from a child, but fully processes the new update.
 func (ba *balancerAggregator) UpdateClientConnState(state balancer.ClientConnState) error {
 	if len(state.ResolverState.Endpoints) == 0 {
 		return errors.New("endpoints list is empty")
@@ -97,6 +115,12 @@ func (ba *balancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 		ba.updateState()
 	}()
 	var ret error
+
+	// build new children map, and atomic write
+	// update state atomic read of the whole map...
+
+	// inhibit race
+
 	// Update/Create new children.
 	for _, endpoint := range state.ResolverState.Endpoints {
 		if _, ok := endpointSet.Get(endpoint); ok {
@@ -169,6 +193,11 @@ func (ba *balancerAggregator) Close() {
 	}
 }
 
+// UpdateCCS a b c updateState for each, grab lock, write new state, give up
+
+// Update for a and b come in...can either write state before (both updates will
+// show state) or after (next update will show state), and update once or twice,
+
 // updateState updates this component's state. It sends the aggregated state,
 // and a picker with round robin behavior with all the child states present if
 // needed.
@@ -176,10 +205,7 @@ func (ba *balancerAggregator) updateState() {
 	if ba.inhibitChildUpdates.Load() {
 		return
 	}
-	readyPickers := make([]balancer.Picker, 0)
-	connectingPickers := make([]balancer.Picker, 0)
-	idlePickers := make([]balancer.Picker, 0)
-	transientFailurePickers := make([]balancer.Picker, 0)
+	var readyPickers, connectingPickers, idlePickers, transientFailurePickers []balancer.Picker
 
 	childStates := make([]ChildState, 0, ba.children.Len())
 	ba.mu.Lock()
