@@ -223,7 +223,7 @@ func (em *EndpointMap) Keys() []Endpoint {
 
 // Values returns a slice of all current map values.
 func (em *EndpointMap) Values() []any {
-	ret := make([]any, 0, len(em.endpoints))
+	ret := make([]any, 0, len(em.endpoints)) // pointer to heap, and also memory of cat...
 	for _, val := range em.endpoints {
 		ret = append(ret, val)
 	}

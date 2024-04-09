@@ -50,10 +50,12 @@ type ChildState struct {
 
 // NewBalancer returns a new balancerAggregator.
 func NewBalancer(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
+	// atomic.StorePointer(&ba.children2, unsafe.Pointer(newChildren))
 	return &balancerAggregator{
 		cc:       cc,
 		bOpts:    opts,
-		children: resolver.NewEndpointMap(),
+		// children: resolver.NewEndpointMap(),
+		children: unsafe.Pointer(resolver.NewEndpointMap()),
 	}
 }
 
@@ -68,8 +70,7 @@ type balancerAggregator struct {
 	cc    balancer.ClientConn
 	bOpts balancer.BuildOptions
 
-	children *resolver.EndpointMap // add to be protected by mutex,
-	children2 unsafe.Pointer
+	children unsafe.Pointer // *resolver.EndpointMap
 
 	// inhibitChildUpdates is set during UpdateClientConnState/ResolverError
 	// calls (calls to children will each produce an update, only want one
@@ -108,13 +109,29 @@ func (ba *balancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 			return fmt.Errorf("endpoint %d has empty addresses", i)
 		}
 	}
-	endpointSet := resolver.NewEndpointMap()
+
 	ba.inhibitChildUpdates.Store(true)
 	defer func() {
 		ba.inhibitChildUpdates.Store(false)
 		ba.updateState()
 	}()
 	var ret error
+
+	/*
+	uPtr := atomic.LoadPointer(&ba.children2)
+		children := (*resolver.EndpointMap)(uPtr)
+	*/
+	children := (*resolver.EndpointMap)(ba.children)
+
+	// is it a * to a map? can I combine with endpointSet above?
+	newChildren := resolver.NewEndpointMap() // *EndpointMap, can I typecast that to unsafe?
+
+	// loop through UpdateCCS after building it out? shouldn't update children...
+	// inhibits anyway
+
+
+	// the old state still needs to be read to determine the diff...could send a commit that
+	// only does his other comments...
 
 	// build new children map, and atomic write
 	// update state atomic read of the whole map...
@@ -123,14 +140,13 @@ func (ba *balancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 
 	// Update/Create new children.
 	for _, endpoint := range state.ResolverState.Endpoints {
-		if _, ok := endpointSet.Get(endpoint); ok {
+		if _, ok := newChildren.Get(endpoint); ok {
 			// Endpoint child was already created, continue to avoid duplicate
 			// update.
 			continue
 		}
-		endpointSet.Set(endpoint, nil)
 		var bal *balancerWrapper
-		if child, ok := ba.children.Get(endpoint); ok {
+		if child, ok := children.Get(endpoint); ok { // read of the children map here - this is ok since updateState is read
 			bal = child.(*balancerWrapper)
 		} else {
 			bal = &balancerWrapper{
@@ -139,8 +155,9 @@ func (ba *balancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 				ba:         ba,
 			}
 			bal.Balancer = gracefulswitch.NewBalancer(bal, ba.bOpts)
-			ba.children.Set(endpoint, bal)
+			// ba.children.Set(endpoint, bal) // write
 		}
+		newChildren.Set(endpoint, bal) // unconditionally set, no longer need to create new children map
 		if err := bal.UpdateClientConnState(balancer.ClientConnState{
 			BalancerConfig: state.BalancerConfig,
 			ResolverState: resolver.State{
@@ -156,14 +173,18 @@ func (ba *balancerAggregator) UpdateClientConnState(state balancer.ClientConnSta
 		}
 	}
 	// Delete old children that are no longer present.
-	for _, e := range ba.children.Keys() {
-		child, _ := ba.children.Get(e)
+	for _, e := range children.Keys() {
+		child, _ := children.Get(e) // read of the children map here
 		bal := child.(balancer.Balancer)
-		if _, ok := endpointSet.Get(e); !ok {
+		if _, ok := newChildren.Get(e); !ok { // presense check, doesn't write to that pointer...so safe below writes to pointer
 			bal.Close()
-			ba.children.Delete(e)
+			// ba.children.Delete(e) // write - I think reads are sync
 		}
-	}
+	} // these closes can come in spliced...
+
+	// build a pointer to the newly constructed map
+	atomic.StorePointer(&ba.children, unsafe.Pointer(newChildren))
+
 	return ret
 }
 
@@ -176,7 +197,8 @@ func (ba *balancerAggregator) ResolverError(err error) {
 		ba.inhibitChildUpdates.Store(false)
 		ba.updateState()
 	}()
-	for _, child := range ba.children.Values() {
+	children := (*resolver.EndpointMap)(ba.children)
+	for _, child := range children.Values() {
 		bal := child.(balancer.Balancer)
 		bal.ResolverError(err)
 	}
@@ -187,7 +209,8 @@ func (ba *balancerAggregator) UpdateSubConnState(sc balancer.SubConn, state bala
 }
 
 func (ba *balancerAggregator) Close() {
-	for _, child := range ba.children.Values() {
+	children := (*resolver.EndpointMap)(ba.children)
+	for _, child := range children.Values() {
 		bal := child.(balancer.Balancer)
 		bal.Close()
 	}
@@ -207,12 +230,19 @@ func (ba *balancerAggregator) updateState() {
 	}
 	var readyPickers, connectingPickers, idlePickers, transientFailurePickers []balancer.Picker
 
-	childStates := make([]ChildState, 0, ba.children.Len())
 	ba.mu.Lock()
 	defer ba.mu.Unlock()
-	for _, child := range ba.children.Values() {
+	// load children into an unsafe pointer on the stack
+
+	// mention mutex guards interface data, top level map structure is guarded
+	// by unsafe.Pointer so you're good there...
+	uPtr := atomic.LoadPointer(&ba.children)
+	children := (*resolver.EndpointMap)(uPtr)
+	childStates := make([]ChildState, 0, children.Len())
+
+	for _, child := range children.Values() { // top level structure is fine to keep
 		bw := child.(*balancerWrapper)
-		childState := bw.childState
+		childState := bw.childState // this write is to the heap pointers, this never gets read
 		childStates = append(childStates, childState)
 		childPicker := childState.State.Picker
 		switch childState.State.ConnectivityState {
