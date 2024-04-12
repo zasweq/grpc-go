@@ -37,8 +37,8 @@ import (
 )
 
 var (
-	addr1 = "localhost:20000"
-	addr2 = "localhost:20001"
+	addr1 = "localhost:50050"
+	addr2 = "localhost:50051"
 )
 
 func main() {
@@ -93,7 +93,7 @@ func waitForDistribution(ctx context.Context, ec pb.EchoClient) error {
 					}
 					fmt.Println(r)
 					peerAddr := peer.Addr.String()
-					if strings.HasSuffix(peerAddr, addr1) || strings.HasSuffix(peerAddr, addr2) {
+					if !strings.HasSuffix(peerAddr, "50050") && !strings.HasSuffix(peerAddr, "50051") {
 						return fmt.Errorf("peer address was not one of %v or %v, got: %v", addr1, addr2, peerAddr)
 					}
 					res[peerAddr]++

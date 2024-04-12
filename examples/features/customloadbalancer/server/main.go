@@ -30,7 +30,7 @@ import (
 )
 
 var (
-	addrs = []string{"localhost:20000", "localhost:20001"}
+	addrs = []string{"localhost:50050", "localhost:50051"}
 )
 
 type echoServer struct {
