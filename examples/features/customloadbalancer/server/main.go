@@ -26,7 +26,7 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/examples/features/proto/echo"
+	pb "google.golang.org/grpc/examples/features/proto/echo"
 )
 
 var (
@@ -34,12 +34,12 @@ var (
 )
 
 type echoServer struct {
-	echo.UnimplementedEchoServer
+	pb.UnimplementedEchoServer
 	addr string
 }
 
-func (s *echoServer) UnaryEcho(ctx context.Context, req *echo.EchoRequest) (*echo.EchoResponse, error) {
-	return &echo.EchoResponse{Message: fmt.Sprintf("%s (from %s)", req.Message, s.addr)}, nil
+func (s *echoServer) UnaryEcho(ctx context.Context, req *pb.EchoRequest) (*pb.EchoResponse, error) {
+	return &pb.EchoResponse{Message: fmt.Sprintf("%s (from %s)", req.Message, s.addr)}, nil
 }
 
 func main() {
@@ -50,7 +50,7 @@ func main() {
 			log.Fatalf("failed to listen: %v", err)
 		}
 		s := grpc.NewServer()
-		echo.RegisterEchoServer(s, &echoServer{
+		pb.RegisterEchoServer(s, &echoServer{
 			addr: addr,
 		})
 		log.Printf("serving on %s\n", addr)
