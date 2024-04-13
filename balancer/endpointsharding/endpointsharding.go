@@ -86,7 +86,7 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 	if len(state.ResolverState.Endpoints) == 0 {
 		return errors.New("endpoints list is empty")
 	}
-	print("in endpoint sharding parse config")
+	print("in endpoint sharding update ccs \n")
 	// Check/return early if any endpoints have no addresses.
 	// TODO: make this configurable if needed.
 	for i, endpoint := range state.ResolverState.Endpoints {
@@ -114,6 +114,7 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 		}
 		var bal *balancerWrapper
 		if child, ok := children.Get(endpoint); ok {
+			print("bal is already in children \n")
 			bal = child.(*balancerWrapper)
 		} else {
 			bal = &balancerWrapper{
@@ -147,7 +148,6 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 		}
 	}
 	es.children.Store(newChildren)
-	print(ret.Error())
 	return ret
 }
 
@@ -205,7 +205,7 @@ func (es *endpointSharding) updateState() {
 		case connectivity.Connecting:
 			connectingPickers = append(connectingPickers, childPicker)
 		case connectivity.Idle:
-			print("appending to idle pickers")
+			print("appending to idle pickers \n")
 			idlePickers = append(idlePickers, childPicker)
 		case connectivity.TransientFailure:
 			transientFailurePickers = append(transientFailurePickers, childPicker)
@@ -234,7 +234,7 @@ func (es *endpointSharding) updateState() {
 		aggState = connectivity.TransientFailure
 		pickers = []balancer.Picker{base.NewErrPicker(errors.New("no children to pick from"))}
 	} // No children (resolver error before valid update).
-	print("picker agg state: ", aggState)
+	print("picker agg state: ", aggState, "\n")
 	pickers[0].Pick(balancer.PickInfo{})
 	p := &pickerWithChildStates{
 		pickers:     pickers,
@@ -284,7 +284,7 @@ type balancerWrapper struct {
 }
 
 func (bw *balancerWrapper) UpdateState(state balancer.State) {
-	print("bw updatestate")
+	print("bw updatestate \n")
 	bw.es.mu.Lock()
 	bw.childState.State = state
 	bw.es.mu.Unlock()

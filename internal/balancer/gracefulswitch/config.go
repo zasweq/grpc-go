@@ -51,6 +51,7 @@ func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error)
 	}
 	for i, e := range lbCfg {
 		if len(e) != 1 {
+			print("graceful switch returning nil \n")
 			return nil, fmt.Errorf("expected a JSON struct with one entry; received entry %v at index %d", e, i)
 		}
 

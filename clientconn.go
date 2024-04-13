@@ -693,6 +693,7 @@ func (cc *ClientConn) waitForResolvedAddrs(ctx context.Context) error {
 var emptyServiceConfig *ServiceConfig
 
 func init() {
+	print("registering pick first - init in cc")
 	balancer.Register(pickfirstBuilder{})
 	cfg := parseServiceConfig("{}")
 	if cfg.Err != nil {
