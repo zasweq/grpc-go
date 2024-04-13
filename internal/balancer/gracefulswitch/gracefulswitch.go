@@ -169,12 +169,14 @@ func (gsb *Balancer) latestBalancer() *balancerWrapper {
 func (gsb *Balancer) UpdateClientConnState(state balancer.ClientConnState) error {
 	// The resolver data is only relevant to the most recent LB Policy.
 	balToUpdate := gsb.latestBalancer()
-
+	print("in gsb update ccs")
 	gsbCfg, ok := state.BalancerConfig.(*lbConfig)
+	print("ok: ", ok)
 	if ok {
 		// Switch to the child in the config unless it is already active.
 		if balToUpdate == nil || gsbCfg.childBuilder.Name() != balToUpdate.builder.Name() {
 			var err error
+			print("switchTo to call in gsb")
 			balToUpdate, err = gsb.switchTo(gsbCfg.childBuilder)
 			if err != nil {
 				return fmt.Errorf("could not switch to new child balancer: %w", err)

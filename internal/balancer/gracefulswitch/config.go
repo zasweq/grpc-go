@@ -75,7 +75,7 @@ func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing config for policy %q: %v", name, err)
 		}
-
+		print("returning graceful switch config")
 		return &lbConfig{childBuilder: builder, childConfig: cfg}, nil
 	}
 

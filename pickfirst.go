@@ -41,6 +41,7 @@ const (
 type pickfirstBuilder struct{}
 
 func (pickfirstBuilder) Build(cc balancer.ClientConn, opt balancer.BuildOptions) balancer.Balancer {
+	print("building pick first")
 	b := &pickfirstBalancer{cc: cc}
 	b.logger = internalgrpclog.NewPrefixLogger(logger, fmt.Sprintf(logPrefix, b))
 	return b
@@ -61,7 +62,9 @@ type pfConfig struct {
 
 func (pickfirstBuilder) ParseConfig(js json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	var cfg pfConfig
+	print("pick first parse config")
 	if err := json.Unmarshal(js, &cfg); err != nil {
+		print("error marshaling pick first config")
 		return nil, fmt.Errorf("pickfirst: unable to unmarshal LB policy config: %s, error: %v", string(js), err)
 	}
 	return cfg, nil
@@ -94,6 +97,7 @@ func (b *pickfirstBalancer) ResolverError(err error) {
 }
 
 func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState) error {
+	print("pick first update ccs")
 	if len(state.ResolverState.Addresses) == 0 && len(state.ResolverState.Endpoints) == 0 {
 		// The resolver reported an empty address list. Treat it like an error by
 		// calling b.ResolverError.
@@ -165,6 +169,7 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 			b.logger.Infof("Failed to create new SubConn: %v", err)
 		}
 		b.state = connectivity.TransientFailure
+		print("updating state with tf")
 		b.cc.UpdateState(balancer.State{
 			ConnectivityState: connectivity.TransientFailure,
 			Picker:            &picker{err: fmt.Errorf("error creating connection: %v", err)},
@@ -173,6 +178,7 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 	}
 	b.subConn = subConn
 	b.state = connectivity.Idle
+	print("updating state with connecting")
 	b.cc.UpdateState(balancer.State{
 		ConnectivityState: connectivity.Connecting,
 		Picker:            &picker{err: balancer.ErrNoSubConnAvailable},
@@ -224,6 +230,7 @@ func (b *pickfirstBalancer) updateSubConnState(subConn balancer.SubConn, state b
 			b.subConn.Connect()
 			return
 		}
+		print("in pick first updating picker")
 		b.cc.UpdateState(balancer.State{
 			ConnectivityState: state.ConnectivityState,
 			Picker:            &idlePicker{subConn: subConn},
@@ -262,6 +269,7 @@ type idlePicker struct {
 }
 
 func (i *idlePicker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
+	print("in idle picker pick")
 	i.subConn.Connect()
 	return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 }
