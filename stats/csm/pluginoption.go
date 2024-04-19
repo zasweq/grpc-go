@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
+	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/xds"
 	"google.golang.org/protobuf/proto"
@@ -50,18 +51,23 @@ func (cpo *csmPluginOption) AddLabels(ctx context.Context) context.Context {
 
 	// talk to Doug about making this internal only
 	// base 64 encoded proto, maybe can build out this at init time
-	metadata.AppendToOutgoingContext(ctx, "x-envoy-metadata", /*key and values from env in protobuf struct, what do I put in here*/) // new and append
+
+	// Have to read this thing - set in interceptor client side (alongside
+	// mechanism that allows peer labels to be attached), what about server
+	// side?
+
+	return metadata.AppendToOutgoingContext(ctx, "x-envoy-metadata", metadataExchangeLabelsEncoded) // new and append, gets from something globally set
 
 
 	// this also fixed like the env labels you read, can you build this out at creation time...?
-	structVal := structpb.Struct{Fields: map[string]*structpb.Value{
-		"type": structpb.NewStringValue(/*value we want here...*/), // determines rest of labels, but it's fixed
-		"canonical_service": structpb.NewStringValue(/*value we want here...*/),
-		"workload_name": structpb.NewStringValue(/*value we want here...*/),
+	/*structVal := structpb.Struct{Fields: map[string]*structpb.Value{
+		"type": structpb.NewStringValue(/*value we want here...), // determines rest of labels, but it's fixed
+		"canonical_service": structpb.NewStringValue(/*value we want here...),
+		"workload_name": structpb.NewStringValue(/*value we want here.../),
 	}} // length dependent on type
 	// how do I encode this struct?
 	structVal.String() // does this do encoded for you?
-	structVal.MarshalJSON() // []byte - is this encoded is it marshalJSON or String()?
+	structVal.MarshalJSON() // []byte - is this encoded is it marshalJSON or String()?*/
 
 	// does this already get compressed/hpack encoded...hpack and huffman is done in transport
 
@@ -83,6 +89,11 @@ func (cpo *csmPluginOption) AddLabels(ctx context.Context) context.Context {
 // GetLabels gets the CSM peer labels from the metadata in the context.
 // Returns nil if not present?
 func (cpo *csmPluginOption) GetLabels(ctx context.Context) map[string]string /*should I return labels to then add or what? or have it stick it in the context too*/ {
+	labels := make(map[string]string)
+	unknownLabels := map[string]string{ // Remote labels if type is unknown (i.e. unset or error processing x-envoy-peer-metadata)
+		"csm.remote_workload_type": "unknown",
+		"csm.remote_workload_canonical_service": "unknown",
+	}
 	// in server handler:
 
 	// metadata.FromIncomingContext() // MD, Bool
@@ -92,22 +103,35 @@ func (cpo *csmPluginOption) GetLabels(ctx context.Context) map[string]string /*s
 	md, ok := metadata.FromIncomingContext(ctx) // incoming or outgoing? guess you can get headers on both flows?
 	if !ok {
 		// don't record any?
+		return unknownLabels
 	}
 
 	val := md.Get("x-envoy-metadata") // []string...also what happens if more than one value for metadata
-	val // []string, how is this related to protobuf.Struct?
-	val[0] // is it this...and then you unmarshal into proto struct? after you unmarshal read the keys below
+	// val // []string, how is this related to protobuf.Struct?
+	// val[0] // is it this...and then you unmarshal into proto struct? after you unmarshal read the keys below
 	// this is what me and Eric were going back and forth wrt validation etc. if can only be one
 	// read the first one
 	// string -> base64 decode into a proto wire format
+	protoWireFormat, err := base64.RawStdEncoding.DecodeString(val[0]) // guaranteed it's the zero...? See authority RBAC thingy for how exactly to process...
+	if err != nil {
+		// need to do this for all top level errors including at init
+		// time...unknown for all equivalent of unknown for all labels...but
+		// just the labels that are processed if unknown type...
+
+		// options:
+		// 1. hardcode something like the map to return yeah this is cleaner
+
+		// 2. set empty fields, skip processing up until fields, and let bottom handle it 1 is cleaner...
+		return unknownLabels
+	}
+
 	// proto wire format seems to be string, decode that into a proto.Struct
 	spb := &structpb.Struct{}
 	// protojson...proto wire format? into above
-	proto.Unmarshal([]byte(val[0]), spb) // unmarshal parses the wire-format message in b and places result in m
+	if err := proto.Unmarshal(protoWireFormat, spb); err != nil {
+		return unknownLabels
+	} // unmarshal parses the wire-format message in b and places result in m
 	// byte...do I need to typecast the sending side to byte
-
-	// no ordering anyway...
-	labels/*ToRet*/ := make(map[string]string)
 	// could make this all be "unknown"
 	// fixed amount of information you read off the wire...
 
@@ -122,6 +146,12 @@ func (cpo *csmPluginOption) GetLabels(ctx context.Context) map[string]string /*s
 	/*if val, ok := fields["type"]; ok {
 		val.String() // doesn't explicitly need to be a string, if it does unknown
 	}*/
+	// "Server records unknown if not received"
+	// The value of “csm.remote_workload_canonical_service” comes from
+	// MetadataExchange with the key “canonical_service”. (Note that this should
+	// be read even if the remote type is unknown.)
+	appendToLabelsFromMetadata(labels, "csm.remote_workload_canonical_service", "canonical_service", fields)
+
 	// same structure as reading this...
 	typeVal := labels["csm.remote_workload_type"]
 	if typeVal != "gcp_kubernetes_engine" && typeVal != "gcp_compute_engine" {
@@ -166,8 +196,18 @@ func (cpo *csmPluginOption) GetLabels(ctx context.Context) map[string]string /*s
 
 	// what to return - optional labels to record?
 } // caller loops through returned map[string]string and sets attributes...
+// caller loops through returned map[string]string and adds it to labels scoped to attempt? call? info
+// which also gets appended to from the GetLabels context mechanism from cluster_impl
+
 
 // ServerOption empty
+
+// Two concepts unrelated to the stats handler calling this in it's lifecycle...
+// from static init time building out the global data structures (local and proto struct)
+// to send on the wire... (local labels stored as a map, metadata exchange stored as a base64 encoded struct...)
+
+//
+
 
 // simply Mark as experimental
 type pluginOption interface { // also need to plumb this into OTel constructor options
@@ -205,7 +245,7 @@ type pluginOption interface { // also need to plumb this into OTel constructor o
 // a bit per channel
 
 
-metadata.MD // map[string][]string
+// metadata.MD // map[string][]string
 // can use this or inline
 
 // I think a lot of these just mutate inline...
@@ -225,8 +265,10 @@ func appendToLabelsFromMetadata(labels map[string]string, labelKey string, metad
 // string value, the string value otherwise.
 func appendToLabelsFromResource(labels map[string]string, labelKey string, resourceKey attribute.Key, set *attribute.Set) { // do I need to return a map I don't think so I think it's mutable...
 	labelVal := "unknown"
-	if resourceVal, ok := set.Value(resourceKey); ok && resourceVal.Type() == attribute.STRING {
-		labelVal = resourceVal.AsString()
+	if set != nil {
+		if resourceVal, ok := set.Value(resourceKey); ok && resourceVal.Type() == attribute.STRING {
+			labelVal = resourceVal.AsString()
+		}
 	}
 	labels[labelKey] = labelVal
 } // for precedence could use this by seeing if unknown or not...
@@ -259,29 +301,36 @@ func setMetadataFromEnv() { // map[string]string...is this automatically encoded
 	// resource.Detect()
 	// go/otel-gcp-resource-detection (maybe in OTel, or observability), doesn't impact the gRPC module
 
-	// what to if init fails (see gcp/observability) custom lb is logger a fatal
+	// what to if init fails (see gcp/observability) custom lb is logger a fatal - should I scope it with a context timeout?
+	// I think so...
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
 	defer cancel() // might not need, do I need this operation to timeout vvv
-	r, err := resource.New(context.Background(), resource.WithDetectors(gcp.NewDetector()) /*do I need options here...*/) // can create one or detect one
+	r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()) /*do I need options here...*/) // can create one or detect one
 	// this resource is part of sdk...
 	// resource.WithTelemetrySDK() I don't think you need this
 	if err != nil {
+		// fail or just unknown?
+		// log an error so user knows, unknown labels for local and for metadata exchange...
 		// error handle in init...?
-		// logger.Error as in example...
+		// logger.Error as in example...log x-envoy-peer-metadata error too? I don't think you need this for md recv but maybe for this?
 	}
-	set := r.Set()
+	var set *attribute.Set
+	if r != nil { // if error reading resource, simply record unknown for labels for unknown type.
+		set = r.Set()
+	}
 	labels := make(map[string]string)
 
 	// Equivalent to:
 	appendToLabelsFromResource(labels, "type", "cloud.platform", set) // this can't error so you're good here
 	// ***
-	cloudPlatformVal := "unknown"
+	/*cloudPlatformVal := "unknown"
 	if val, ok := set.Value("cloud.platform"); ok && val.Type() == attribute.STRING {
 		// same value as context timeout error?
 		cloudPlatformVal = val.AsString()
-	} // some of these get converted to "unknown" - there's behavior if no cloud type is present at build time...
+	}*/ // some of these get converted to "unknown" - there's behavior if no cloud type is present at build time...
 	// not present and !gcp_kubernetes_engine or !gcp_compute_engine no-op? yeah what is the behavior defined here?
 	// ***
+	// but only for csm enabled channels...relevant to google cloud networking...
 
 
 	/*if typ.Type() == attribute.STRING {
@@ -302,13 +351,14 @@ func setMetadataFromEnv() { // map[string]string...is this automatically encoded
 	}
 	labels["canonical_service"] = canonicalServiceVal
 
-
+	cloudPlatformVal := labels["type"]
 	if cloudPlatformVal != "gcp_kubernetes_engine" && cloudPlatformVal != "gcp_compute_engine" {
 		// return early with cloudPlatformVal and canonicalServiceVal set in a map...
-		return labels // wait actually this is all the downstream effects stuff...
+		// return labels // wait actually this is all the downstream effects stuff...
+		initializeLocalAndMetadataLabels(labels) // looks like there's nothing to metadata exchange in this case,
+		return
 	}
 	// build out workload_name
-	// appendToLabelsFromResource(labels, "workload_name", "CSM_WORKLOAD_NAME", set)
 	appendToLabelsFromEnv(labels, "workload_name", "CSM_WORKLOAD_NAME")
 
 	// location - a little more complicated think about how to parameterize this...
@@ -328,30 +378,17 @@ func setMetadataFromEnv() { // map[string]string...is this automatically encoded
 
 	// project_id
 	appendToLabelsFromResource(labels, "project_id", "cloud.account.id", set)
-	if cloudPlatformVal  == "gcp_compute_engine" {
-		// return early with all the above set in a map
-		return labels // wait actually this is all the downstream effects stuff...
+
+	// right here branch...
+	if cloudPlatformVal == "gcp_compute_engine" {
+		initializeLocalAndMetadataLabels(labels)
+		return
 	}
+
 	// build out namespacename
 	appendToLabelsFromResource(labels, "namespace_name", "k8s.namespace.name", set)
-	//
-	namespaceNameVal := "unknown"
-	if val, ok := set.Value("k8s.namespace.name"); ok && val.Type() == attribute.STRING {
-		namespaceNameVal = val.AsString()
-	}
-	//
-
-
-	// helper func would take the map, map key to set, and name to read from attribute set
-
 	// and cluster_name
 	appendToLabelsFromResource(labels, "cluster_name", "k8s.cluster.name", set)
-	//
-	clusterNameVal := "unknown"
-	if val, ok := set.Value("k8s.cluster.name"); ok && val.Type() == attribute.STRING {
-		clusterNameVal = val.AsString()
-	}
-	//
 
 	// I think above is ok here...
 	// now the question is do I want to take the returned map
@@ -364,113 +401,79 @@ func setMetadataFromEnv() { // map[string]string...is this automatically encoded
 
 
 
-
-
-	// also add status and last updated in my design docs...
-
-	// Figure out: how to pull resource from the enviorment (should be somehwere
-	// in google golang client libraries)
-
-
-	// type - "cloud.platform" from resource - ("gcp_kubernetes_engine" for gke, "gcp_compute_engine" for gce)
-
-	// canonical_service - “CSM_CANONICAL_SERVICE_NAME” env var, “unknown” if unset
-	// google cloud libaries for go - they wrote monitored resource to decent
-	if typStr == "gcp_kubernetes_engine" {
-		//      workload_name - “CSM_WORKLOAD_NAME” env var, “unknown” if unset
-
-		// parameterize to return string? <- encoded with logic of not present -> "unknown"
-		// no this reads env var off the enviornment...
-
-		wn, ok := set.Value("CSM_WORKLOAD_NAME") // what do  I do with thing, I think this API is more general purpose
-		if !ok {
-			// unknown, I don't think err case,
-		}
-		// presence check is handled by bool, empty string is valid label so I think just use these as is...
-		wn.Emit()
-
-		//      namespace_name - “k8s.namespace.name” from Resource, “unknown” if unset - see if you can pull these codeblocks out...
-		nn, ok := set.Value("k8s.namespace.name") // is this . strange behavior?
-		if !ok {
-			// unknown - but parameterize?
-		}
-		nn.Emit() // branches across type
-		labels["namespace_name"] = nn.Emit() // could leave as entirely helper...
-
-
-		//      cluster_name - “k8s.cluster.name” from Resource, “unknown” if unset
-
-		cn, ok := set.Value("k8s.cluster.name") // is this . strange behavior?
-		if !ok {
-			// unknown - but parameterize?
-		}
-		nn.Emit() // branches across type - empty string is valid
-		labels["cluster_name"] = cn.Emit() // or do inline map declaration
-
-		//      location - Use following preference order -
-		//      “cloud.availability_zone” from Resource, “cloud.region” from
-		//      Resource , “unknown”
-		caz, ok := set.Value("cloud.availability_zone")
-		if !ok {
-			// try here...
-			if cr, ok := set.Value("cloud.region"); ok {
-
-			} else {
-				// unknown
-			} // two options for coding here...ok or !ok in conditional
-		} // switch or else if
-
-
-
-		//      project_id - “cloud.account.id” from Resource, “unknown” if unset
-		cai, ok := set.Value("cloud.account.id") // is this . strange behavior?
-		if !ok {
-			// unknown - but parameterize?
-		}
-		nn.Emit() // branches across type
-
-
-
-	} else if typStr == "gcp_compute_engine" { // switch makes sense for this else if
-		// same as above except only workload_name, location, and project_id
-	} else {
-		// not present or wrong value? Can I merge into one codeblock?
-	}
-
-	// env vars etc.
-
-	// what data structure to build out/what to send out...
-	map[string]string
-
-
-
-	// append or emit key value pairs
-	// No error condition - can emit unconditionally...
-
-	// set these maps below, can't error so no problem there
-
 	// what do I persist at static init time?
 	// One Labels list, split out into both? (Is local labels part of this env) what local labels?
 
 	// can I persist a static protobuf.Struct encoded thingy? What gets sent out
 	// on the wire and how is it encoded?
 
-	spb := structpb.Struct{
-		Fields: ,
+	// also persist the local labels...
+
+
+	initializeLocalAndMetadataLabels(labels)
+	// instead of return labels call into a helper that does this...
+	/*pbLabels := &structpb.Struct{ // metadata exchange
+		Fields: map[string]*structpb.Value{},
 	}
+	// three sets of how many to record...do conversion with a for each, doesn't depend on logic above...
+	for k, v := range labels {
+		pbLabels.Fields[k] = structpb.NewStringValue(v)
+	} // yeah I think you send all across the wire unconditionally...
+	// makesure this bytestring works, I guess e2e tests will show if it does or not
+	metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString([]byte(pbLabels.String()))*/ // or marshal to json
+	// store above as a global, and then appendtooutgoingcontext(x-envoy-peer-metadata, above)
+	// make x-envoy-peer-metadata a global...
+
+
+
+
+
 	// what I need is the proto wire format of this metadata thing...
 	// then I base 64 encode...
-	spb.String() // it's like a bin header...
+	/*spb.String() // it's like a bin header...
 	// MessageStringOf returns the message value as a string,
 	// which is the message serialized in the protobuf text format.
 
 	// Is that what I want? ^^^
 	// I think I base 64 encoded something in OpenCensus
-	val := base64.RawStdEncoding.EncodeToString(/*[]bytestirng, I think spb.String() is bytestring?*/)
-	metadata.AppendToOutgoingContext(ctx, "x-envoy-peer-metadata", val)
+	val := base64.RawStdEncoding.EncodeToString(/*[]bytestirng, I think spb.String() is bytestring?)
+	metadata.AppendToOutgoingContext(ctx, "x-envoy-peer-metadata", val)*/
 } // this can construct some global const at init time after partioning into the different label buckets?
 
-// used in setMetadata
+// what happens in error in init?
+func initializeLocalAndMetadataLabels(labels map[string]string) { // put labels from mesh id (takes dependency on xDS) into this labels struct
+	// Local labels:
+
+	// The value of “csm.workload_canonical_service” comes from
+	// “CSM_CANONICAL_SERVICE_NAME” env var, “unknown” if unset.
+	val := labels["canonical_service"]
+	// record on csm.workload_canonical_service
+	// localLabels := make(map[string]string)
+	// initialize the global map directly...
+	localLabels["csm.workload_canonical_service"] = val // maybe empty, will always be set...
+
+	// Also need to get csm.mesh_id from bootstrap...
+	/*
+		The value of “csm.mesh_id” is derived from the id field in node from the xDS bootstrap (generated by gRPC’s TD xDS bootstrap generator).
+
+		The format of this field is -
+		projects/[GCP Project number]/networks/mesh:[Mesh ID]/nodes/[UUID]
+		// so is it just this mesh id part?
+	*/
+	localLabels["csm.mesh_id"] = a  /*^^^ mesh id from above...how to plumb read it here*/
+	// "unknown" if error
+	pbLabels := &structpb.Struct{ // metadata exchange
+		Fields: map[string]*structpb.Value{},
+	}
+	for k, v := range labels {
+		pbLabels.Fields[k] = structpb.NewStringValue(v)
+	}
+	metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString([]byte(pbLabels.String())) // will see if this encoding works e2e
+}
+
+// Clean this up and then get to example...
+
+// used in setMetadata and emitted from get (localLabels)
 
 // on the recv side (from headers passed in from application or from the md in context)
 // "x-envoy-peer-metadata": blob
@@ -480,7 +483,7 @@ func setMetadataFromEnv() { // map[string]string...is this automatically encoded
 
 // localLabels are the labels that identify the local enviorment a binary is run
 // in.
-const localLabels map[string]string // passed to OTel somehow? Records local labels about enviornment...
+var localLabels map[string]string // passed to OTel somehow? Records local labels about enviornment...
 // the local labels are: diff of full labels - labels sent over metadata
 // canonical service name - local "csm.workload.service", "csm.remote_workload"
 // mesh id
@@ -498,67 +501,25 @@ const localLabels map[string]string // passed to OTel somehow? Records local lab
 // of metadata exchange, as the proto encoded value struct for key
 // "x-envoy-peer-metadata"
 
-// I think same for client and server
-const metadataExchangeLabels map[string]string // sent to peer through x-envoy-peer-metadata
+// I think same for client and server - I don't think we need this var
+// const metadataExchangeLabels map[string]string // sent to peer through x-envoy-peer-metadata
 // statically read once at beginning of binary - use for lifetime of binary
 // don't expect env vars to change, deployed once in an env...
 
+// local labels above from mesh id etc.
+// Also received from CDS which then gets appended to local labels...and metadata exchange labels and these labels
 
-// ordering doesn't matter - OTel loses ordering
+// metadataExchangeLabelsBase64 encoded (not a bin header so not on every header to send out)
 
+const metadataExchangeKey = "x-envoy-peer-metadata"
+// whether it's a client or server in this process send this thing below back and forward...
+
+// metadataExchangeLabelsEncoded are the metadata exchange labels to be sent in
+// proto wire format and base 64 encoded. This gets sent out from all the
+// clients and servers running in this process.
+var metadataExchangeLabelsEncoded string // Document only write at init time...
 
 // CSM Layer around OTel behavior uses this plugin option...
-
-/*
-CSM OTelPluginOption Behavior
-On the client-side, for each RPC attempt on a CSM channel, the CSM plugin option will insert the header x-envoy-peer-metadata in the request headers based on the configured environment metadata.
-From the response header (x-envoy-peer-metadata), it will decode the server’s metadata and use it as labels for metrics.
-
-On the server-side, analogous to the client, from each RPC’s request headers
-(received on a CSM enabled server), the CSM plugin option will decode the
-client’s metadata (from x-envoy-peer-metadata headers or baggage header) and use
-it as labels for metrics. In the response headers, it will insert the header
-x-envoy-peer-metadata based on the configured environment metadata.
-
-Metadata Exchange Key
-Value Fetching mechanism
-type
-“cloud.platform” from Resource (“gcp_kubernetes_engine” for GKE, “gcp_compute_engine” for GCE)
-canonical_service
-“CSM_CANONICAL_SERVICE_NAME” env var, “unknown” if unset
-
-GKE specific metadata exchange (when type is “gcp_kubernetes_engine”) -
-Metadata Exchange Key
-Value Fetching mechanism
-workload_name
-“CSM_WORKLOAD_NAME” env var, “unknown” if unset
-namespace_name
-“k8s.namespace.name” from Resource, “unknown” if unset
-cluster_name
-“k8s.cluster.name” from Resource, “unknown” if unset
-location
-Use following preference order -
-“cloud.availability_zone” from Resource
-“cloud.region” from Resource
-“unknown”
-project_id
-“cloud.account.id” from Resource, “unknown” if unset
-
-GCE specific metadata exchange (when type is “gcp_compute_engine”) -
-Metadata Exchange Key
-Value Fetching mechanism
-workload_name
-“CSM_WORKLOAD_NAME” env var, “unknown” if unset
-location
-Use following preference order -
-“cloud.availability_zone” from Resource
-“cloud.region” from Resource
-“unknown”
-project_id
-“cloud.account.id” from Resource, “unknown” if unset
-*/
-
-// where it gets labels from ^^^, this can be static (for local labels and those that you send across)
 
 // should it be on the object...how to combine these metadata labels and the
 // labels from xDS...helper in context or something?
@@ -571,6 +532,8 @@ type csmPluginOption struct {} // unexported? Keep internal to OpenTelemetry?
 
 // determineClientConnCSM determines whether the Client Conn is enabled for CSM Metrics.
 // This is determined the rules:
+
+// How will this actually get called? determineClientConnCSM? how will this get plumbed with apply?
 
 // move server docstring to function body? or document in top lebel docstring
 
@@ -618,83 +581,15 @@ func (cpo *csmPluginOption) determineClientConnCSM(target string/*cc grpc.Client
 	return false
 } // get a bit that the dial option can then return which plugin?
 
-// Problem solving ^^^ how to get authority above, how to determine if xDS Server below
-// discussed offline, have an idea of how this will work...
+// Problem solving ^^^ how to get authority above, how to determine if xDS
+// Server below discussed offline, have an idea of how this will
+// work...unconditionally set (add a global option only for xDS Servers)
+// unknown if no labels...but still records for every server...
 
-// determineServerCSM determines whether the provided gRPC Server is enabled for
-// CSM Metrics. This treats any xDS Enabled Server as enabled for CSM Metrics.
-// Thus, metrics on connections established to xDS Server even if received from
-// off mesh will get additional CSM Labels.
-func (cpo *csmPluginOption) determineServerCSM(server grpc.Server) bool { // does the user of this get this bool back and use that to determine recording extra labels or not, or does it happen under the hood and the plugin option doesn't emit labels...
-	// Yash/C++ send down an attribute option that determines if xDS enabled or
-	// not.
+// set a global option only for xDS Servers to pick up with this OTel configured
 
-	// On the server-side, all connections received by an xDS enabled server are
-	// considered enabled for CSM metrics even if they were to come from off-mesh.
-
-	// Only thing you need to encode here is if xDS Server conditional...
-	// Figure out xDS conditional
-
-	server, err := xds.NewGRPCServer(/*server options*/) // xds.GRPCServer on the left...
-
-	// maybe not a typecast - but it needs to determine if it's xDS Enabled
-	// server somehow
-	if _, ok := server.(*xds.GRPCServer); !ok { // is this the typecast? What do I pass in to have this typecast work
-		return true
-	}
-
-
-	// Servers should only perform MetadataExchange if the client has sent
-	// MetadataExchange labels. (this last sentence) (I think if not sent labels
-	// can do this logic in OTel server handler, specific to side)
-	// presence check on incoming headers?
-
-
-} // Eric doesn't think I can grab a ref and then typecast...attach channel arg, to see if can read, attribute...maybe can add a server option
-
-
-// if users unset, default
-
-// easily add and subtract from the set - taking default set and subtract
-
-// clear - have a constructor add a b c, start with builder and have to have default set, so needs to clear...
-
-// provide a list of metrics
-
-// no metrics, default
-// empty, none
-
-// default.Remove.Add
-
-// constructor(), var args for enable or disable
-
-// new constructor()
-
-// if nil (explicit or just unset get default, or can pass exported default in)...
-// scale up and down default metrics....
-
-
-
-
-
-// Two questions for Yash:
-// This protobuf struct encoded value thingy, how does this work. There's proto encoding and also compression etc.
-
-// How does this target filter thing work? It's a global dial option that reads
-// the target, which can change as you process the list of dial options.
-
-// c++: point after client creation (channel), where you figure out if target is intrested in channel
-
-// maybe call into dial option after channel is created
-// order that global dial option at the very end...global
-// dial option after, persists bit in OTel struct...
-
-// if it's impratical can just users to not do that and undefined behavior
-
-// http2 spec - not allowed random binary characters, want it to be base 64 encoded
-// md, protobuf struct, when I encode, output in binary, http2 doens't allow wire encoding
 // base 64 encode,     on server side base 64 decode it
-// http2 hpack and huffman - gRPC
+// http2 hpack and huffman - gRPC takes care of it
 
 // raw proto, populate metadata
 // turn that into the proto wire format
@@ -703,4 +598,11 @@ func (cpo *csmPluginOption) determineServerCSM(server grpc.Server) bool { // doe
 
 // it's a fixed flow
 // can do all of this fixed after creating fixed labels to send/bucketing them...
-// play around with it, see if I should do it at init time...
+// play around with it, see if I should do it at init time...yup at init time...
+
+// for the race condition...
+// simply add a lock around the map write...maybe needed for hedging
+
+// attempt scoped for the thing you stick in context + pick
+// stats handler called in same thread as pick?
+

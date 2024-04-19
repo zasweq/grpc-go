@@ -1,8 +1,11 @@
 module google.golang.org/grpc
 
-go 1.19
+go 1.21
+
+toolchain go1.22.2
 
 require (
+	contrib.go.opencensus.io/exporter/stackdriver v0.13.14
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/cncf/xds/go v0.0.0-20240318125728-8a4994d93e50
 	github.com/envoyproxy/go-control-plane v0.12.0
@@ -10,6 +13,8 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
+	go.opentelemetry.io/contrib/detectors/gcp v1.25.0
+	go.opentelemetry.io/otel/sdk v1.25.0
 	golang.org/x/net v0.22.0
 	golang.org/x/oauth2 v0.18.0
 	golang.org/x/sync v0.6.0
@@ -21,8 +26,14 @@ require (
 require (
 	cloud.google.com/go/compute v1.25.1 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
+	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.22.0 // indirect
 	github.com/census-instrumentation/opencensus-proto v0.4.1 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.0.4 // indirect
+	github.com/go-logr/logr v1.4.1 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
+	go.opentelemetry.io/otel v1.25.0 // indirect
+	go.opentelemetry.io/otel/metric v1.25.0 // indirect
+	go.opentelemetry.io/otel/trace v1.25.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237 // indirect

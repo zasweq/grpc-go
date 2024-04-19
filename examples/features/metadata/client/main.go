@@ -44,7 +44,7 @@ func unaryCallWithMetadata(c pb.EchoClient, message string) {
 	fmt.Printf("--- unary ---\n")
 	// Create metadata and context.
 	md := metadata.Pairs("timestamp", time.Now().Format(timestampFormat))
-	ctx := metadata.NewOutgoingContext(context.Background(), md)
+	ctx := metadata.NewOutgoingContext(context.Background(), md) // looks like if I get it in context it Tag should make it's way to the wire...
 
 	// Make RPC using the context with the metadata.
 	var header, trailer metadata.MD
