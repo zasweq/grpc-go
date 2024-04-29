@@ -123,7 +123,7 @@ func (s *ClientStatusDiscoveryServer) buildClientStatusRespForReq(req *v3statusp
 	ret := &v3statuspb.ClientStatusResponse{
 		Config: []*v3statuspb.ClientConfig{
 			{
-				Node:              s.xdsClient.BootstrapConfig().NodeProto,
+				Node:              s.xdsClient.BootstrapConfig().NodeProto, // NodeProto.GetId()...read here I think I need to parse it
 				GenericXdsConfigs: dumpToGenericXdsConfig(dump),
 			},
 		},

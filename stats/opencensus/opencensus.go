@@ -122,7 +122,16 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 	err := invoker(ctx, method, req, reply, cc, opts...)
 	perCallTracesAndMetrics(err, span, startTime, method)
 	return err
+
+	// how you get headers and trailers is to use the call option,
+	// does this happen after invoker? I thinkkk so
+
 }
+
+
+// For streaming:
+// During the RPC, just call trailers and headers in operations...
+// something triggers a GetLabels call GetLabels(md) what triggers this?
 
 // streamInterceptor handles per RPC context management. It also handles per RPC
 // tracing and stats by creating a top level call span and recording the latency

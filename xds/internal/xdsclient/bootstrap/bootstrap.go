@@ -443,15 +443,20 @@ func bootstrapConfigFromEnvVariable() ([]byte, error) {
 // the presence of the errors) and may return a Config object with certain
 // fields left unspecified, in which case the caller should use some sane
 // defaults.
-func NewConfig() (*Config, error) {
+func NewConfig() (*Config, error) { // Can I just move this to xds/internal...ok with taking dependency
 	// Examples of the bootstrap json can be found in the generator tests
 	// https://github.com/GoogleCloudPlatform/traffic-director-grpc-bootstrap/blob/master/main_test.go.
-	data, err := bootstrapConfigFromEnvVariable()
+	data, err := bootstrapConfigFromEnvVariable() // reads raw JSON here...
 	if err != nil {
 		return nil, fmt.Errorf("xds: Failed to read bootstrap config: %v", err)
 	}
-	return newConfigFromContents(data)
-}
+	return newConfigFromContents(data) // this gets data...
+} // override bootstrap, singleton bootstrap is fine in that case, move it and make it accesible node proto...
+// use it for client and server...I don't agree with overriding bootstrap
+
+// example compiles so verifies but doesn't need to be a full e2e system,
+// just something that shows how to do it (once I add bounds, add it to e2e test and see if it works,
+// for one override it should)
 
 // NewConfigFromContents returns a new Config using the specified
 // bootstrap file contents instead of reading the environment variable.
@@ -472,7 +477,7 @@ func newConfigFromContents(data []byte) (*Config, error) {
 	for k, v := range jsonData {
 		switch k {
 		case "node":
-			node = &v3corepb.Node{}
+			node = &v3corepb.Node{} // this rihgt here is what gets parsed...so yeah this whole thing and all usages need to be moved...
 			if err := opts.Unmarshal(v, node); err != nil {
 				return nil, fmt.Errorf("xds: protojson.Unmarshal(%v) for field %q failed during bootstrap: %v", string(v), k, err)
 			}
@@ -571,3 +576,5 @@ func newConfigFromContents(data []byte) (*Config, error) {
 	logger.Debugf("Bootstrap config for creating xds-client: %v", pretty.ToJSON(config))
 	return config, nil
 }
+
+// Share global bootstrap...rather than one helper
