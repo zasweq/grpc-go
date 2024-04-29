@@ -45,6 +45,14 @@ import (
 
 var logger = grpclog.Component("csm-observability-plugin")
 
+func init() {
+	// Document this sets local labels and metadata exchange labels...
+	/*if err := setMetadataFromEnv(); err != nil {
+
+	}*/ // can't fail just sets unknown just like error reading
+	setMetadataFromEnv() // this runs before tests right so this is serial?
+}
+
 // This OpenTelemetryPluginOption type should be an opaque type (or equivalent),
 // and an API to create a CsmOpenTelemetryPluginOption should be provided
 // through a separate CSM library, that the user can set on the gRPC
@@ -83,25 +91,16 @@ func (cpo *csmPluginOption) AddLabels(ctx context.Context) context.Context {
 	// decodes the metadata and also inserts a value into type
 	// x-envoy-peer-metadata decodes on header recv, stuck in context scope like
 	// the stuff we record at End.
-} // populates x-envoy-peer-metadata with data read from enviornment as outlined below...
-// https://github.com/istio/proxy/blob/b3d3072f51d03558c2c582eb17eb5fa753c8dd9e/extensions/common/proto_util.cc#L125
-// google::protobuf::Struct metadata
-// metadata->mutable_fields()[key] = "value" the struct itself is metadata, the proto wire format is the struct returned?
-// do I need do anything with the proto if a declare it inline to get it into wire format or do I
-// just send it to the wire...?
+}
 
-// called on every RPC, I think return it rather than stick it in context
-// map[string]string if ordering doesn't matter
-// []Labels if ordering does matter
-
-// GetLabels gets the CSM peer labels from the metadata in the context. It
-// returns "unknown" for labels not found. Labels returned depend on the remote
-// type. Additionally, local labels are appended to labels returned.
+// GetLabels gets the CSM peer labels from the metadata provided. It returns
+// "unknown" for labels not found. Labels returned depend on the remote type.
+// Additionally, local labels are appended to labels returned.
 func (cpo *csmPluginOption) GetLabels(md metadata.MD) map[string]string {
 	labels := map[string]string{ // Remote labels if type is unknown (i.e. unset or error processing x-envoy-peer-metadata)
 		"csm.remote_workload_type": "unknown",
 		"csm.remote_workload_canonical_service": "unknown",
-	} // Test this code with *unit tests* - define sceanrios (and make sure they're correct - input and output), and test those scenarios
+	} // Test this code with *unit tests* - define scenarios (and make sure they're correct - input and output), and test those scenarios
 	// Append the local labels.
 	for k, v := range localLabels { // local labels not set either - oh need to call into it at init...from this package I guess
 		labels[k] = v
@@ -155,6 +154,7 @@ func (cpo *csmPluginOption) GetLabels(md metadata.MD) map[string]string {
 		return labels
 	}
 
+	// GKE only labels.
 	appendToLabelsFromMetadata(labels, "csm.remote_workload_cluster_name", "cluster_name", fields)
 	appendToLabelsFromMetadata(labels, "csm.remote_workload_namespace_name", "namespace_name", fields)
 	return labels
@@ -163,19 +163,19 @@ func (cpo *csmPluginOption) GetLabels(md metadata.MD) map[string]string {
 // which also gets appended to from the GetLabels context mechanism from cluster_impl...which in Tag should
 // set something that gets labels *for the call*
 
-// Two concepts unrelated to the stats handler calling this in it's lifecycle...
-// from static init time building out the global data structures (local and proto struct)
-// to send on the wire... (local labels stored as a map, metadata exchange stored as a base64 encoded struct...)
+// Called in *sh* callouts, ClientHeader server side, ServerHeader or ServerTrailer from server whichever comes first
 // how are these read and used? and also unit test
 
 
 // simply Mark as experimental
-// pluinOption, how does OpenTelemetry actually call the function on this?
-type pluginOption interface { // also need to plumb this into OTel constructor options
+// pluinOption, how does OpenTelemetry actually call the function on this? Unreleased?
 
-	// OTel stats handler calls these...
+// pluginOption is the interface
+type pluginOption interface { // also need to plumb this into OTel constructor options somehow, for the next PR...
+
+	// OTel stats handler calls these...in interceptor/stats handler see Doug 1:1 notes
 	AddLabels(context.Context) context.Context // need to return context, md is immutable so when you add it returns a new context...sets it for the one value for the unique key
-	GetLabels(metadata.MD) map[string]string // pointer? I think not already a pointer
+	GetLabels(metadata.MD) map[string]string
 
 	// the other thing to figure out is when in the RPC lifecycle/stats handler
 	// plugin to call these exposed methods...?
@@ -191,18 +191,22 @@ type pluginOption interface { // also need to plumb this into OTel constructor o
 	// is this what you even call into?
 	determineTargetCSM(grpc.ClientConn) bool
 	// should this be on target()...how will the channel options relate to instantiation?
+
+	// late applied
 }
 
 // for client and server side determining same method
 // client:
 // late apply after DialOptions can change target, call that with the target,
 // gets whatever OTel is at the end....
-// global options *just for xds*
+// global options *for every server*
 
-// a bit per channel instantiate it each time?
+// a bit per channel instantiate it each time? or return whole created object (in flight thread to discuss this)
+// or do it per call play around with it...
 
-
-
+// appendToLabelsFromMetadata appends to the labels map passed in. It sets
+// "unknown" if the metadata is not found in the struct proto, or if the value
+// is not a string value.
 func appendToLabelsFromMetadata(labels map[string]string, labelKey string, metadataKey string, metadata map[string]*structpb.Value) {
 	labelVal := "unknown"
 	if metadata != nil {
@@ -253,14 +257,17 @@ func setMetadataFromEnv() {
 	// I think so...
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
 	defer cancel()
+	// This resource call is probably would have to be mocked...
 	r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()) /*do I need options here...*/)
+	// ... return your own resource that does stuff
+
 	if err != nil {
 		// logger.Error as in example...log x-envoy-peer-metadata error too? I don't think you need this for md recv but maybe for this?
 		// or maybe add logger at high verbosity label that it's not present...
 		logger.Errorf("error reading OpenTelemetry resource: %v", err) // does this fail test or the bin?
 	}
 	var set *attribute.Set
-	if r != nil { // if error reading resource, simply record unknown for labels for unknown type, and trigger CSM Observability
+	if r != nil { // if error reading resource, simply record unknown for labels for unknown type, and trigger CSM Observability (send empty if proto marshaling fails...)
 		set = r.Set()
 	}
 	labels := make(map[string]string)
@@ -286,12 +293,8 @@ func setMetadataFromEnv() {
 	}
 	appendToLabelsFromEnv(labels, "workload_name", "CSM_WORKLOAD_NAME")
 
-	/*
-	Use following preference order -
-	“cloud.availability_zone” from Resource
-	“cloud.region” from Resource
-	“unknown”
-	*/
+
+	// How to mock/inject this resource?
 	locationVal := "unknown"
 	if resourceVal, ok := set.Value("cloud.availability_zone"); ok && resourceVal.Type() == attribute.STRING {
 		locationVal = resourceVal.AsString()
@@ -307,17 +310,11 @@ func setMetadataFromEnv() {
 		return
 	}
 
-	// gke only labels...
+	// GKE specific labels:
 	appendToLabelsFromResource(labels, "namespace_name", "k8s.namespace.name", set)
 	appendToLabelsFromResource(labels, "cluster_name", "k8s.cluster.name", set)
 
-
-
-
-
 	initializeLocalAndMetadataLabels(labels)
-	// makesure this bytestring works, I guess e2e tests will show if it does or not
-
 }
 
 // minimum amount needed is to parse it from env?
@@ -344,6 +341,8 @@ func parseMeshIDFromNodeID(nodeID string) string {
 	}
 	return meshID // should empty string become unknown? I think this is fine...
 } // need to read off env var and get mesh ID then hit this thing...
+
+// just leave bootstrap code untested?
 
 // For Yash:
 // gets raw json from bootstrap hierarchy (move to internal/xds...need a separate PR like )
@@ -404,13 +403,16 @@ func initializeLocalAndMetadataLabels(labels map[string]string) { // put labels 
 
 	// The value of “csm.workload_canonical_service” comes from
 	// “CSM_CANONICAL_SERVICE_NAME” env var, “unknown” if unset.
-	val := labels["canonical_service"]
-	// record on csm.workload_canonical_service
+	val := labels["canonical_service"] // I could test env var by mocking the setting of them...
 	// localLabels := make(map[string]string)
 	// initialize the global map directly...
+	localLabels = make(map[string]string) // can I do this at init time?
 	localLabels["csm.workload_canonical_service"] = val
+	// Get the CSM Mesh ID from the bootstrap generator used to configure this
+	// file.
 	nodeID := getNodeID()
 	localLabels["csm.mesh_id"] = parseMeshIDFromNodeID(nodeID)
+
 	// Metadata exchange labels - can go ahead and encode at init time.
 	pbLabels := &structpb.Struct{
 		Fields: map[string]*structpb.Value{},
@@ -419,7 +421,17 @@ func initializeLocalAndMetadataLabels(labels map[string]string) { // put labels 
 		pbLabels.Fields[k] = structpb.NewStringValue(v)
 	}
 	protoWireFormat, err := proto.Marshal(pbLabels)
-	if err != nil {
+	if err != nil { // but this is an error from the unknown thing, I think this should fail, tries to marshal both unknown labels...maybe send out nothing?
+		// This behavior triggers server side to reply (if sent from a gRPC
+		// Client within this binary) with the metadata exchange labels. Even if
+		// client side has a problem marshaling proto into wire format, it can
+		// still use server labels so send an empty string as the value of
+		// x-envoy-peer-metadata, but do send metadata exchange key.
+
+		// server side unconditionally does logic.
+		print("error marshaling proto, will send empty val for metadata exchange")
+		metadataExchangeLabelsEncoded = ""
+
 		// what to do in error case here...shouldn't happen but still
 		// send an empty blob I'm assuming...idk how this will be linked in. I guess this stuff is global others aren't...
 	}
@@ -428,13 +440,13 @@ func initializeLocalAndMetadataLabels(labels map[string]string) { // put labels 
 
 
 // getNodeID gets the Node ID from the bootstrap data.
-func getNodeID() string { // all "" become unknown? Unit test for this alongside the full e2e style tests?
+func getNodeID() string {
 	rawBootstrap, err := bootstrapConfigFromEnvVariable()
 	if err != nil {
 		return ""
 	}
 	nodeID, err := nodeIDFromContents(rawBootstrap)
-	if err != nil { // or return unknown?
+	if err != nil {
 		return ""
 	}
 	return nodeID
@@ -483,30 +495,23 @@ func nodeIDFromContents(data []byte) (string, error) { // unknown if error set, 
 	for k, v := range jsonData {
 		switch k {
 		case "node":
-			node = &v3corepb.Node{} // this rihgt here is what gets parsed...so yeah this whole thing and all usages need to be moved...
+			node = &v3corepb.Node{} // this right here is what gets parsed...so yeah this whole thing and all usages need to be moved...
 			if err := opts.Unmarshal(v, node); err != nil {
 				return "", fmt.Errorf("xds: protojson.Unmarshal(%v) for field %q failed during bootstrap: %v", string(v), k, err)
 			}
-			// empty string valid id? I guess not could be unknown
+			// empty string valid id? I guess not could be unknown Arvind says it won't show up so trust him...
 			return node.GetId(), nil // sends empty string for unset, is empty valid then should not return unknown but no way to distinguish
 		default:
 		}
 	}
-	return "", fmt.Errorf("no node specified") // behavior is to log unknown for log id...
-}
-
-
-
-
-// Clean this up and then get to example...
-
+	// convert all "" to "unknown"? No need for error case here...
+	return "", fmt.Errorf("no node specified") // behavior is to log unknown for log id...yeah because it'll hit empty
+} // figure out how to inject bootstrap generator...need to convert all "" to unknown
 
 // localLabels are the labels that identify the local environment a binary is
 // run in, and will be added to certain metrics recorded on the CSM Plugin
 // Option. This is not thread safe, and should only be written to at init time.
-var localLabels map[string]string // passed to OTel somehow? Records local labels about environment...
-// I think I should emit these alongside GetLabels...
-// GetLabels will be called on header receive, and need to be CSM, I think just add this to those...
+var localLabels map[string]string // passed to OTel somehow? Records local labels about environment...yeah passed by calling into GetMetadata...do I want to add more types of labels to this?
 
 // one from env and one from bootstrap - so needs to wait for xDS
 // bootstrap is at global from env var so maybe can do that here, need to plumb
@@ -522,18 +527,13 @@ var localLabels map[string]string // passed to OTel somehow? Records local label
 // "x-envoy-peer-metadata"
 
 // I think same for client and server - I don't think we need this var
-// const metadataExchangeLabels map[string]string // sent to peer through x-envoy-peer-metadata
-// statically read once at beginning of binary - use for lifetime of binary
-// don't expect env vars to change, deployed once in an env...
 
 // local labels above from mesh id etc.
 // Also received from CDS which then gets appended to local labels...and metadata exchange labels and these labels
-
-// metadataExchangeLabelsBase64 encoded (not a bin header so not on every header to send out)
+// where do I get these local labels I think from context...
 
 // metadataExchangeKey is the key for HTTP metadata exchange.
 const metadataExchangeKey = "x-envoy-peer-metadata"
-// whether it's a client or server in this process send this thing below back and forward...
 
 // metadataExchangeLabelsEncoded are the metadata exchange labels to be sent in
 // proto wire format and base 64 encoded. This gets sent out from all the
@@ -541,27 +541,38 @@ const metadataExchangeKey = "x-envoy-peer-metadata"
 // safe, and should only be set at init time.
 var metadataExchangeLabelsEncoded string
 
-// CSM Layer around OTel behavior uses this plugin option...
+// CSM Layer around OTel behavior uses this plugin option...no configured
+// uncondtionally on a global plugin, plumb a per call bit that determines
+// whether to use...
+
 
 // should it be on the object...how to combine these metadata labels and the
-// labels from xDS...helper in context or something?
+// labels from xDS...helper in context or something? Done in OTel? TagRPC and
+// set it on the attempt scoped context?
 
 // csmPluginOption adds CSM Labels for relevant channels and servers...
 type csmPluginOption struct {} // unexported? Keep internal to OpenTelemetry?
 
 // Think about intended usages of these API's too...including the merging of
-// labels received from xDS into this thing.
+// labels received from xDS into this thing. Get it from context and add it to attempt scoped context
+// mutex for atomic read, shouldn't slow down RPC right...
 
 // determineClientConnCSM determines whether the Client Conn is enabled for CSM Metrics.
 // This is determined the rules:
 
-// How will this actually get called? determineClientConnCSM? how will this get plumbed with apply?
+// How will this actually get called? determineClientConnCSM? how will this get
+// plumbed with apply? send the target on each call (or a cc pointer something
+// more general)
 
 // move server docstring to function body? or document in top level docstring
 
 // after Dial Option for apply...
+
+// exported helper that doesn't need to be on the object...
+// could just punt this and bootstrap with helper just to test it and add a todo
 func (cpo *csmPluginOption) determineTargetCSM(target string/*cc grpc.ClientConn*/) bool { // put this in interface to - mark as experimental so if you change than break you'll be ok
-	// cc.CanonicalTarget() should I use the canonical target or the normal target?
+	// cc.CanonicalTarget() should I use the canonical target or the normal target? callsite can determine this,
+	// create a cc with target inside
 
 	// On the client-side, the channel target is used to determine if a channel is a
 	// CSM channel or not. CSM channels need to have an “xds” scheme and a
@@ -578,7 +589,7 @@ func (cpo *csmPluginOption) determineTargetCSM(target string/*cc grpc.ClientConn
 	func (t Target) String() string {
 		return t.URL.Scheme + "://" + t.URL.Host + "/" + t.Endpoint()
 	}
-	*/ // what is the authority...host or something like that
+	*/ // what is the authority...host or something like that looks like it...
 
 	// canonicalTarget := cc.CanonicalTarget() // string - it calls resolver.parsedTarget string(), is there a way to reconstruct the target from this?
 	// target := cc.Target() // string
@@ -587,46 +598,35 @@ func (cpo *csmPluginOption) determineTargetCSM(target string/*cc grpc.ClientConn
 	// processing*, canonical target... can also pass ParsedTarget()
 
 	// "parse" it from target, after, so could this take a url.URL
+
+	// does this like cc so could pass cc for target...would that race with anything?
 	parsedTarget, err := url.Parse(target) // either take target here or pass in parsed target in after...what can logically affect target (either pass in a parsed or not, either way same type)
 	if err != nil {
 		// what to do in the error case?
+		// log something here that target passed in was wrong?
+		return false
 	}
+	// authority on target string...can change over dial but shouldn't use authority hierarchy?
 
 	// only ref is client conn, or pass it parsed url
 	if parsedTarget.Scheme == "xds" { // either parse this from cc or pass in a parsed url...
 		if parsedTarget.Host == "" { // what is an unset authority? is host authority? is empty string "unset"?
 			return true // "In the cases where no authority is mentioned, the authority is assumed to be csm"
-		}
-		// need to have a traffic director authority
-		// if authority is set...
+		} // is host 1:1 with authority...
 		// is parsedTarget.Host authority?
-		return parsedTarget.Host == "traffic-director-global.xds.googleapis.com" // authority is not "traffic-director-global-google.xds.googleapis.com"
+		return parsedTarget.Host == "traffic-director-global.xds.googleapis.com"
 	}
 	return false
-} // get a bit that the dial option can then return which plugin?
+} // get a bit that the dial option can then return which plugin? pass it in per call
 
-// Problem solving ^^^ how to get authority above, how to determine if xDS
-// Server below discussed offline, have an idea of how this will
-// work...unconditionally set (add a global option only for xDS Servers)
-// unknown if no labels...but still records for every server...
+// Problem solving ^^^ how to get authority above, for all servers unknown if no
+// labels...but still records for every server...
 
-// set a global option only for xDS Servers to pick up with this OTel configured
+// set a global option for all Servers to pick up with this OTel with CSM configured
 
-// base 64 encode,     on server side base 64 decode it
-// http2 hpack and huffman - gRPC takes care of it
-
-// raw proto, populate metadata
-// turn that into the proto wire format
-// then base 64 encode that wire format since http2 doesn't allow the raw proto wire format...
-// then write to the wire, gRPC takes care of hpack/huffman encoding
-
-// it's a fixed flow
-// can do all of this fixed after creating fixed labels to send/bucketing them...
-// play around with it, see if I should do it at init time...yup at init time...
-
-// for the race condition...
-// simply add a lock around the map write...maybe needed for hedging do I need this...?
+// for the race condition...for the function to set picker labels...
+// simply add a lock around the map write for labels...maybe needed for hedging do I need this...?
+// I think I still need this but Doug argued this is serial...
 
 // attempt scoped for the thing you stick in context + pick
 // stats handler called in same thread as pick?
-
