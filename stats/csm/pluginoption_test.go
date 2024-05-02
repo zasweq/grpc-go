@@ -23,8 +23,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"go.opentelemetry.io/otel/attribute"
-	"google.golang.org/grpc/internal/envconfig"
-	"os"
 	"testing"
 	"time"
 
@@ -96,7 +94,7 @@ func setupLocalLabels() {
 }*/
 
 func (s) TestGetLabels(t *testing.T) {
-	cpo := &csmPluginOption{}
+	cpo := NewCSMPluginOption()
 	// local labels (need to set this up, this should be appended to all labels emitted...)
 
 
@@ -256,7 +254,7 @@ func (s) TestGetLabels(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Error marshaling proto: %v", err)
 			}
-			metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString(protoWireFormat)
+			metadataExchangeLabelsEncoded := base64.RawStdEncoding.EncodeToString(protoWireFormat)
 			md := metadata.New(map[string]string{
 				"x-envoy-peer-metadata": metadataExchangeLabelsEncoded,
 			})
@@ -305,7 +303,7 @@ func (s) TestAddLabels(t *testing.T) { // this tests global flow which is fine..
 
 	// AddLabels as a snapshot seems like you could just pull out the context
 	// to not have to be e2e
-	cpo := &csmPluginOption{}
+	cpo := NewCSMPluginOption() // two labels should be set...
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
 	defer cancel()
 	ctx = cpo.AddLabels(ctx) // appends to outgoing, should work in streaming and unary interceptor...
@@ -493,6 +491,7 @@ func (s) TestBootstrapLocalLabel(t *testing.T) {
 // plugin the env var but then when global singleton won't be malleable if you read it from there since only takes snapshot once...
 // 2. mock the resource,
 // 3. and inject env vars...
+/*
 func (s) TestSetLabels(t *testing.T) {
 	origSet := set
 	set = func() *attribute.Set{
@@ -503,7 +502,7 @@ func (s) TestSetLabels(t *testing.T) {
 		return attribute.NewSet(attribute.String("cloud.platform", "gce/gke")) // how do I make this variable like with a t-test or something?
 	}
 	defer func() {set = origSet}()
-}
+}*/
 // Move this to OTel so keeps the go.mod...
 
 // figure out how to inject env vars too...
@@ -527,8 +526,8 @@ func (s) TestSetLabels(t *testing.T) {
 			},
 			// smoke test make unknown and see if it works...
 			localLabelsWant: map[string]string{ // Have knobs so these are no longer variable...
-				"csm.workload_canonical_service": , // dependent on env so...oh right this ends up in md exchange and local labels...
-				"csm.mesh_id": , // dependent on bootstrap so figure out if var
+				"csm.workload_canonical_service": "unknown", // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.mesh_id": "unknown", // dependent on bootstrap so figure out if var
 			},
 			metadataExchangeLabelsWant: map[string]string{
 				"type": "unknown",
@@ -542,14 +541,37 @@ func (s) TestSetLabels(t *testing.T) {
 				// csm workload name is an env var
 				"cloud.availability_zone": "something",
 				"cloud.region": "should-be-ignored", // cloud.availability_zone takes precedence
-				"cloud.account.id": "something",
+				"cloud.account.id": "something1",
 			},
 			localLabelsWant: map[string]string{
-				"csm.workload_canonical_service": , // dependent on env so...oh right this ends up in md exchange and local labels...
-				"csm.mesh_id": , // dependent on bootstrap so figure out if var
+				"csm.workload_canonical_service": "unknown", // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.mesh_id": "unknown", // dependent on bootstrap so figure out if var
 			},
 			metadataExchangeLabelsWant: map[string]string{
-
+				"type": "gcp_compute_engine",
+				"canonical_service": "unknown",
+				"location": "something",
+				"project_id": "something1",
+			},
+		},
+		{
+			name: "gce-half-unset",
+			resourceKeyValues: map[string]string{
+				"cloud.platform": "gcp_compute_engine",
+				// csm workload name is an env var
+				"cloud.availability_zone": "something",
+				"cloud.region": "should-be-ignored", // cloud.availability_zone takes precedence
+				// "cloud.account.id": "something1",
+			},
+			localLabelsWant: map[string]string{
+				"csm.workload_canonical_service": "unknown", // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.mesh_id": "unknown", // dependent on bootstrap so figure out if var
+			},
+			metadataExchangeLabelsWant: map[string]string{
+				"type": "gcp_compute_engine",
+				"canonical_service": "unknown",
+				"location": "something",
+				"project_id": "unknown",
 			},
 		},
 		{
@@ -558,16 +580,44 @@ func (s) TestSetLabels(t *testing.T) {
 				"cloud.platform": "gcp_kubernetes_engine",
 				// csm workload name is an env var
 				"cloud.region": "something", // set cloud.region to something...should get picked up since availability_zone isn't present...
-				"cloud.account.id": "something",
-				"k8s.namespace.name": "something",
-				"k8s.cluster.name": "something",
+				"cloud.account.id": "something1",
+				"k8s.namespace.name": "something2",
+				"k8s.cluster.name": "something3",
 			},
 			localLabelsWant: map[string]string{
-				"csm.workload_canonical_service": , // dependent on env so...oh right this ends up in md exchange and local labels...
-				"csm.mesh_id": , // dependent on bootstrap so figure out if var
-			},
+				"csm.workload_canonical_service": "unknown", // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.mesh_id": "unknown", // dependent on bootstrap so figure out if var
+			}, // until I figure out how to plumb bootstrap in...
 			metadataExchangeLabelsWant: map[string]string{
-
+				"type": "gcp_kubernetes_engine",
+				"canonical_service": "unknown",
+				"location": "something",
+				"project_id": "something1",
+				"namespace_name": "something2",
+				"cluster_name": "something3",
+			},
+		},
+		{
+			name: "gke-half-unset",
+			resourceKeyValues: map[string]string{ // unset should become unknown
+				"cloud.platform": "gcp_kubernetes_engine",
+				// csm workload name is an env var
+				"cloud.region": "something", // set cloud.region to something...should get picked up since availability_zone isn't present...
+				// "cloud.account.id": "something1",
+				"k8s.namespace.name": "something2",
+				// "k8s.cluster.name": "something3",
+			},
+			localLabelsWant: map[string]string{
+				"csm.workload_canonical_service": "unknown", // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.mesh_id": "unknown", // dependent on bootstrap so figure out if var
+			}, // until I figure out how to plumb bootstrap in...
+			metadataExchangeLabelsWant: map[string]string{
+				"type": "gcp_kubernetes_engine",
+				"canonical_service": "unknown",
+				"location": "something",
+				"project_id": "unknown",
+				"namespace_name": "something2",
+				"cluster_name": "unknown",
 			},
 		},
 	}
@@ -596,7 +646,7 @@ func (s) TestSetLabels(t *testing.T) {
 
 				localLabelsGot, mdEncoded := constructMetadataFromEnv()
 				if diff := cmp.Diff(localLabelsGot, test.localLabelsWant/*I'm sure you need options here...nothing should be empty though...*/); diff != "" {
-					t.Fatalf("constructMetadataFromEnv() want: %v, got %v", localLabelsGot, test.localLabelsWant)
+					t.Fatalf("constructMetadataFromEnv() want: %v, got %v", test.localLabelsWant, localLabelsGot)
 				}
 
 				verifyMetadataExchangeLabels(mdEncoded, test.metadataExchangeLabelsWant)
@@ -648,12 +698,14 @@ func verifyMetadataExchangeLabels(mdEncoded string, mdLabelsWant map[string]stri
 				return fmt.Errorf("struct value for key %v should be string type", k)
 			}
 			if val.GetStringValue() != v {
-				return fmt.Errorf("struct value for key %v got: %v, want %v", val.GetStringValue(), v)
+				return fmt.Errorf("struct value for key %v got: %v, want %v", k, val.GetStringValue(), v)
 			}
 		}
 	}
+	return nil
 }
 
+// this comes after
 // this will test bootstrap as well...
 // mock bootstrap test here...
 func (s) TestInjectBootstrap(t *testing.T) { // Both bootstrap and normal env vars (two of them, so three total go through same mechanics, I can figure out a way to add to t-test)
@@ -664,9 +716,9 @@ func (s) TestInjectBootstrap(t *testing.T) { // Both bootstrap and normal env va
 
 	// parse then mock a layer that reaches into global singleton...
 	// set a raw json in env, how to make this mock a singleton?
-
+	/*
 	os.Unsetenv(envconfig.XDSBootstrapFileContentEnv) // I guess it's ok to reac into internal env vars...
-	os.Setenv(envconfig.XDSBootstrapFileContent, /*workable bootstrap here...*/) // set the bootstrap env var - see elsewhere in the codebase for a concrete bootstrap example...
+	os.Setenv(envconfig.XDSBootstrapFileContent, /*workable bootstrap here...) // set the bootstrap env var - see elsewhere in the codebase for a concrete bootstrap example...
 	// label for label env vars should show up as above (os std lib package)
 
 
@@ -677,7 +729,7 @@ func (s) TestInjectBootstrap(t *testing.T) { // Both bootstrap and normal env va
 	// CSM_WORKLOAD_NAME
 	os.Setenv("CSM_WORKLOAD_NAME", ) // make this a const?
 	// CSM_CANONICAL_SERVICE_NAME
-	os.Setenv("CSM_CANONICAL_SERVICE_NAME")
+	os.Setenv("CSM_CANONICAL_SERVICE_NAME")*/
 	/*
 
 	The value of “csm.mesh_id” is derived from the id field in node from the xDS
@@ -729,3 +781,4 @@ func (s) TestInjectBootstrap(t *testing.T) { // Both bootstrap and normal env va
 
 // test can now just be instantiate cpo and see what labels or keep helper
 
+// cleanup, then bootstrap/env vars then send out...:)

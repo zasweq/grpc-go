@@ -31,25 +31,19 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal/envconfig"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/grpc/metadata"
 
+	"go.opentelemetry.io/contrib/detectors/gcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
-	"go.opentelemetry.io/contrib/detectors/gcp"
 
 	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
 var logger = grpclog.Component("csm-observability-plugin")
-
-func init() {
-	// Set local labels to record and metadata exchange labels to send across
-	// wire.
-	localLabels, metadataExchangeLabelsEncoded = constructMetadataFromEnv() // this runs before tests right so this is serial? Important because of bootstrap config...
-}
 
 // This OpenTelemetryPluginOption type should be an opaque type (or equivalent),
 // and an API to create a CsmOpenTelemetryPluginOption should be provided
@@ -62,13 +56,13 @@ func (cpo *csmPluginOption) AddLabels(ctx context.Context) context.Context {
 
 	// Talk to Doug about making this whole plugin option internal only...
 
-	return metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, metadataExchangeLabelsEncoded)
+	return metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, cpo.metadataExchangeLabelsEncoded)
 } // Client side - in interceptors can simply AddLabels in Unary/Streaming...
 
 // called at construction time in interceptor so...
 func (cpo *csmPluginOption) NewLabelsMD() metadata.MD { // doesn't need to be on cpo...could be global? but Yash sets his on discrete object so maybe I need this...
 	return metadata.New(map[string]string{
-		metadataExchangeKey: metadataExchangeLabelsEncoded,
+		metadataExchangeKey: cpo.metadataExchangeLabelsEncoded,
 	})
 } // md the plugin option wants to emit...(mention extensible?)
 
@@ -88,7 +82,7 @@ func (cpo *csmPluginOption) AddLabelsMD(md metadata.MD) /*metadata.MD*/ { // ser
 
 	// Pulls from the global set in this package...hook into this package, since it's a different mechanical way
 	// to append to key values sent on the wire...
-	md.Append(metadataExchangeKey, metadataExchangeLabelsEncoded) // can I write to this concurrently, does this not race?
+	md.Append(metadataExchangeKey, cpo.metadataExchangeLabelsEncoded) // can I write to this concurrently, does this not race?
 } // Unit test this? I think this is better then exposing the blob directly...indirectly set as interceptors intend to...
 
 // GetLabels gets the CSM peer labels from the metadata provided. It returns
@@ -101,7 +95,7 @@ func (cpo *csmPluginOption) GetLabels(md metadata.MD) map[string]string {
 		"csm.remote_workload_canonical_service": "unknown",
 	} // Test this code with *unit tests* - define scenarios (and make sure they're correct - input and output), and test those scenarios
 	// Append the local labels.
-	for k, v := range localLabels {
+	for k, v := range cpo.localLabels {
 		labels[k] = v
 	}
 
@@ -266,7 +260,7 @@ func appendToLabelsFromEnv(labels map[string]string, labelKey string, envvar str
 // I think below applies, once you switch to singleton can just read from singleton
 
 // based on the bootstrap at the time - will need to be reworked once a singleton
-func bootstrapDetermineMeshID() string { // function above calls this to set bootstrap local labels...
+/*func bootstrapDetermineMeshID() string { // function above calls this to set bootstrap local labels...
 
 	// ***
 	// read bootstrap from env
@@ -276,7 +270,7 @@ func bootstrapDetermineMeshID() string { // function above calls this to set boo
 
 
 	// pass node id to parser - get mesh id to record back
-}
+}*/
 
 var (
 	// These functions will be overriden in unit tests.
@@ -456,8 +450,10 @@ func initializeLocalAndMetadataLabels(labels map[string]string) (map[string]stri
 
 
 		// server side unconditionally does logic.
-		print("error marshaling proto, will send empty val for metadata exchange") // now the opposite conditional...
+		// print("error marshaling proto: %v, will send empty val for metadata exchange") // now the opposite conditional...
 		metadataExchangeLabelsEncodedRet = base64.RawStdEncoding.EncodeToString(protoWireFormat)
+	} else {
+		print("error marshaling proto: %v, will send empty val for metadata exchange")
 	}
 	// metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString(protoWireFormat) // will see if this encoding works e2e
 	return localLabelsRet, metadataExchangeLabelsEncodedRet
@@ -538,20 +534,8 @@ func nodeIDFromContents(data []byte) (string, error) { // unknown if error set, 
 	return "", fmt.Errorf("no node specified") // behavior is to log unknown for log id...yeah because it'll hit empty
 } // figure out how to inject bootstrap generator...need to convert all "" to unknown
 
-// localLabels are the labels that identify the local environment a binary is
-// run in, and will be emitted from the CSM Plugin Option. This is not thread
-// safe, and should only be written to at init time.
-var localLabels map[string]string
-
 // metadataExchangeKey is the key for HTTP metadata exchange.
 const metadataExchangeKey = "x-envoy-peer-metadata"
-
-// metadataExchangeLabelsEncoded are the metadata exchange labels to be sent as
-// the value of metadata key "x-envoy-peer-metadata" in proto wire format and
-// base 64 encoded. This gets sent out from all the servers running in this
-// process and for csm channels. This is not thread safe, and should only be set
-// at init time.
-var metadataExchangeLabelsEncoded string
 
 // CSM Layer around OTel behavior uses this plugin option...no configured
 // unconditionally on a global plugin, plumb a per call bit that determines
@@ -563,7 +547,32 @@ var metadataExchangeLabelsEncoded string
 
 // csmPluginOption emits CSM Labels from the environment and metadata exchange
 // for csm channels and all servers.
-type csmPluginOption struct {} // unexported? Keep internal to OpenTelemetry?
+//
+// Do not use this directly; use NewCSMPluginOption instead.
+type csmPluginOption struct { // export everything, how will it get a ref if it's holding onto an interface, return the actual type, no doesn't need access to these fields accessed through interface...
+	// localLabels are the labels that identify the local environment a binary
+	// is run in, and will be emitted from the CSM Plugin Option.
+	localLabels map[string]string
+	// metadataExchangeLabelsEncoded are the metadata exchange labels to be sent
+	// as the value of metadata key "x-envoy-peer-metadata" in proto wire format
+	// and base 64 encoded. This gets sent out from all the servers running in
+	// this process and for csm channels.
+	metadataExchangeLabelsEncoded string
+} // unexported? Keep internal to OpenTelemetry?
+// Scope fields to above...
+// return this type as an interface?
+
+// return an interface right?
+func NewCSMPluginOption() *csmPluginOption { // Invoke this at CSMPluginOption call site, lazily initiated
+	localLabels, metadataExchangeLabelsEncoded := constructMetadataFromEnv() // need this for refs in local vars...
+
+	return &csmPluginOption{
+		localLabels: localLabels,
+		metadataExchangeLabelsEncoded: metadataExchangeLabelsEncoded, // then calls into interface
+	}
+}
+
+
 
 // Think about intended usages of these API's too...including the merging of
 // labels received from xDS into this thing. Get it from context and add it to attempt scoped context
@@ -635,3 +644,7 @@ func (cpo *csmPluginOption) determineTargetCSM(target string) bool { // put this
 // can't implement if it internal
 // internal for xDS Bootstrap config or not
 
+// once I move xDS bootstrap, will need to write a full working config
+// can get tests in this package working orthogonal to bootstrap config changes...
+
+// psm bootstrap semantically...rather than xds bootstrap
