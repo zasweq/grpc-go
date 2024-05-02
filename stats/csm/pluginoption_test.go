@@ -21,6 +21,10 @@ package csm
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"go.opentelemetry.io/otel/attribute"
+	"google.golang.org/grpc/internal/envconfig"
+	"os"
 	"testing"
 	"time"
 
@@ -292,7 +296,7 @@ func (s) TestGetLabels(t *testing.T) {
 // certain labels are expected to be sent? The metadata exchange labels should
 // be able to be successfully base 64 decoded, then unmarshaled from proto wire
 // format, and the expected labels should be present.
-func (s) TestAddLabels(t *testing.T) {
+func (s) TestAddLabels(t *testing.T) { // this tests global flow which is fine...and also md flow
 
 	// Doesn't trigger stuff in init... that might discover a failing codepath
 	// works so far...only for further processing if gce or gke...
@@ -482,3 +486,246 @@ func (s) TestBootstrapLocalLabel(t *testing.T) {
 // And then send this out once I hit scenarios above...
 
 // this lives in OTel/internal to keep it the same module
+
+// This structure should be ready to test...
+// Just need to figure out how to:
+// 1. inject bootstrap config
+// plugin the env var but then when global singleton won't be malleable if you read it from there since only takes snapshot once...
+// 2. mock the resource,
+// 3. and inject env vars...
+func (s) TestSetLabels(t *testing.T) {
+	origSet := set
+	set = func() *attribute.Set{
+		// return something here
+		// how do I create an attribute.Set?
+		attrSet := attribute.NewSet()
+		return &attrSet
+		return attribute.NewSet(attribute.String("cloud.platform", "gce/gke")) // how do I make this variable like with a t-test or something?
+	}
+	defer func() {set = origSet}()
+}
+// Move this to OTel so keeps the go.mod...
+
+// figure out how to inject env vars too...
+
+func (s) TestSetLabels(t *testing.T) {
+	tests := []struct {
+		name string
+
+		// bootstrap/env vars can be knobs, test the different permutations of
+		// these too?
+
+		resourceKeyValues map[string]string
+		// env vars are also a variable...
+		localLabelsWant map[string]string
+		metadataExchangeLabelsWant map[string]string
+	}{
+		{
+			name: "no-type",
+			resourceKeyValues: map[string]string{
+				// nothing...
+			},
+			// smoke test make unknown and see if it works...
+			localLabelsWant: map[string]string{ // Have knobs so these are no longer variable...
+				"csm.workload_canonical_service": , // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.mesh_id": , // dependent on bootstrap so figure out if var
+			},
+			metadataExchangeLabelsWant: map[string]string{
+				"type": "unknown",
+				"canonical_service": "unknown", // This is dependent on env var, so if change env var this could change...
+			},
+		},
+		{
+			name: "gce",
+			resourceKeyValues: map[string]string{
+				"cloud.platform": "gcp_compute_engine",
+				// csm workload name is an env var
+				"cloud.availability_zone": "something",
+				"cloud.region": "should-be-ignored", // cloud.availability_zone takes precedence
+				"cloud.account.id": "something",
+			},
+			localLabelsWant: map[string]string{
+				"csm.workload_canonical_service": , // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.mesh_id": , // dependent on bootstrap so figure out if var
+			},
+			metadataExchangeLabelsWant: map[string]string{
+
+			},
+		},
+		{
+			name: "gke",
+			resourceKeyValues: map[string]string{
+				"cloud.platform": "gcp_kubernetes_engine",
+				// csm workload name is an env var
+				"cloud.region": "something", // set cloud.region to something...should get picked up since availability_zone isn't present...
+				"cloud.account.id": "something",
+				"k8s.namespace.name": "something",
+				"k8s.cluster.name": "something",
+			},
+			localLabelsWant: map[string]string{
+				"csm.workload_canonical_service": , // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.mesh_id": , // dependent on bootstrap so figure out if var
+			},
+			metadataExchangeLabelsWant: map[string]string{
+
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			func() {
+				var attributes []attribute.KeyValue
+				for k, v := range test.resourceKeyValues {
+					attributes = append(attributes, attribute.String(k, v))
+				}
+				attrSet := attribute.NewSet(attributes...)
+				// Need to figure out how to return above from mock...
+				// []...
+
+				// overwrite function *per t-test*
+
+				// Overwrite resource detection
+				origSet := set // how to make sure this doesn't race...
+				set = func() *attribute.Set{
+					return &attrSet
+				}
+				defer func() {set = origSet}()
+
+				// see below - bootstrap and env var toggle still up in air...
+
+
+				localLabelsGot, mdEncoded := constructMetadataFromEnv()
+				if diff := cmp.Diff(localLabelsGot, test.localLabelsWant/*I'm sure you need options here...nothing should be empty though...*/); diff != "" {
+					t.Fatalf("constructMetadataFromEnv() want: %v, got %v", localLabelsGot, test.localLabelsWant)
+				}
+
+				verifyMetadataExchangeLabels(mdEncoded, test.metadataExchangeLabelsWant)
+			}()
+			/*test.resourceKeyValues // map[string]string
+			// convert to
+			attribute.String("cloud.platform", "gce/gke")
+
+			// overwrite the func for each t-test, or return a variable...which
+			// you write to per test...Doug doesn't like mutable state...
+
+			//attributes := make([]attribute.KeyValue, 0)
+			var attributes []attribute.KeyValue
+			for k, v := range test.resourceKeyValues {
+				attributes = append(attributes, attribute.String(k, v))
+			}
+			attrSet := attribute.NewSet(attributes...)
+			&attrSet
+			// Need to figure out how to return above from mock...
+			// []...
+
+			// overwrite function *per t-test*
+			localLabelsGot, mdEncoded := constructMetadataFromEnv()
+			if diff := cmp.Diff(localLabelsGot, test.localLabelsWant/*I'm sure you need options here...nothing should be empty though...); diff != "" {
+				t.Fatalf("constructMetadataFromEnv() want: %v, got %v", localLabelsGot, test.localLabelsWant)
+			}
+
+			verifyMetadataExchangeLabels(mdEncoded, test.metadataExchangeLabelsWant)*/
+		})
+	}
+} // get test working without bootstrap config...
+
+func verifyMetadataExchangeLabels(mdEncoded string, mdLabelsWant map[string]string) error { // Return bool?
+	protoWireFormat, err := base64.RawStdEncoding.DecodeString(mdEncoded)
+	if err != nil {
+		return fmt.Errorf("error base 64 decoding metadata val: %v", err)
+	}
+	spb := &structpb.Struct{}
+	if err := proto.Unmarshal(protoWireFormat, spb); err != nil {
+		return fmt.Errorf("error unmarshaling proto wire format: %v", err)
+	}
+	fields := spb.GetFields() // map[string]*Value
+	// how to cmp.Diff with test.wantMDLabels, could declare a fields struct inline...
+	// "unknown"...
+	for k, v := range mdLabelsWant {
+		if val, ok := fields[k]; !ok { // fields can have extra...
+			// ... assert something here ... like unmarshal cds...
+			if _, ok := val.GetKind().(*structpb.Value_StringValue); !ok {
+				return fmt.Errorf("struct value for key %v should be string type", k)
+			}
+			if val.GetStringValue() != v {
+				return fmt.Errorf("struct value for key %v got: %v, want %v", val.GetStringValue(), v)
+			}
+		}
+	}
+}
+
+// this will test bootstrap as well...
+// mock bootstrap test here...
+func (s) TestInjectBootstrap(t *testing.T) { // Both bootstrap and normal env vars (two of them, so three total go through same mechanics, I can figure out a way to add to t-test)
+	// How do I inject a bootstrap?
+
+	// Once I do inject a bootstrap, this is per helper snapshot, so could make
+	// it scoped to the t-test above...
+
+	// parse then mock a layer that reaches into global singleton...
+	// set a raw json in env, how to make this mock a singleton?
+
+	os.Unsetenv(envconfig.XDSBootstrapFileContentEnv) // I guess it's ok to reac into internal env vars...
+	os.Setenv(envconfig.XDSBootstrapFileContent, /*workable bootstrap here...*/) // set the bootstrap env var - see elsewhere in the codebase for a concrete bootstrap example...
+	// label for label env vars should show up as above (os std lib package)
+
+
+	os.Unsetenv() // this clears the env var...
+	// labels related to this should become "unknown"
+
+	// Two env vars: (maybe set one and unset the other, the other should go "unknown"...do I really need to test all this?)
+	// CSM_WORKLOAD_NAME
+	os.Setenv("CSM_WORKLOAD_NAME", ) // make this a const?
+	// CSM_CANONICAL_SERVICE_NAME
+	os.Setenv("CSM_CANONICAL_SERVICE_NAME")
+	/*
+
+	The value of “csm.mesh_id” is derived from the id field in node from the xDS
+	bootstrap (generated by gRPC’s TD xDS bootstrap generator).
+
+	The format of this field is -
+	projects/[GCP Project number]/networks/mesh:[Mesh ID]/nodes/[UUID]
+	*/
+
+	// Maybe move bootstrap generator to unmarshal into a map? Also Eric
+	// manually verifies the other part of the node id - "doesn't matter", could
+	// leave to xDS parsing...
+	// {"node": <JSON form of Node proto>}, just map["node"]->["field-in-node-proto-strongly-defined"]
+
+	// How to plumb the permutations of env vars, there's really only
+	// the two that become labels and also the bootstrap config...
+	// Plumb in either a full bootstrap config, or lightweight with just a mesh id...
+	// need to test permutations of bootstrap that become unknown?
+
+	// or a path to file but just do it inline env var
+
+}
+
+// Eric had a blob for getting the env vars...maybe I could do something like that
+
+// could unit test the unknown for the parsing based on Eric's assertions, Eric and Yash both had assertions
+
+// two layered JSON for node id...figure out structure...write something inline that will trigger it to be parsed
+
+// Eric discussion:
+// Plugin option interface in OTel package
+// Since env vars/unknown from resource go through same helper, can have three test cases and
+// see whether the unknowns work, and if they do let it work
+
+
+// Tell Richard: grossly underestimated effort, L5 with tons of experience effort...
+
+// create the labels *once you create the csm plugin option*
+// lazily...once it's created...for the whole binary
+// lifetime scoped to just the plugin option
+
+// Eric/Doug discussion:
+// 1. xds/internal/xdsclient/bootstrap -> internal/xds/bootstrap, move tls creds (separate pr)
+// to that own package, expose the helper that will be called
+//    either call twice, or wrap in a sync.Once and set a global singleton (second part is P2)
+
+// 2. Instantiate the labels at plugin option creation time, and store it in the plugin option
+
+
+// test can now just be instantiate cpo and see what labels or keep helper
+

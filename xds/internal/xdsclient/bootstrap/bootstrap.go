@@ -446,7 +446,7 @@ func bootstrapConfigFromEnvVariable() ([]byte, error) {
 func NewConfig() (*Config, error) {
 	// Examples of the bootstrap json can be found in the generator tests
 	// https://github.com/GoogleCloudPlatform/traffic-director-grpc-bootstrap/blob/master/main_test.go.
-	data, err := bootstrapConfigFromEnvVariable()
+	data, err := bootstrapConfigFromEnvVariable() // gets from env var
 	if err != nil {
 		return nil, fmt.Errorf("xds: Failed to read bootstrap config: %v", err)
 	}
@@ -456,8 +456,10 @@ func NewConfig() (*Config, error) {
 // NewConfigFromContents returns a new Config using the specified
 // bootstrap file contents instead of reading the environment variable.
 func NewConfigFromContents(data []byte) (*Config, error) {
-	return newConfigFromContents(data)
+	return newConfigFromContents(data) // rather than env var passes it directly...
 }
+
+// read the env var ether...
 
 func newConfigFromContents(data []byte) (*Config, error) {
 	config := &Config{}

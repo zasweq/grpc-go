@@ -48,7 +48,7 @@ var logger = grpclog.Component("csm-observability-plugin")
 func init() {
 	// Set local labels to record and metadata exchange labels to send across
 	// wire.
-	setMetadataFromEnv() // this runs before tests right so this is serial? Important because of bootstrap config...
+	localLabels, metadataExchangeLabelsEncoded = constructMetadataFromEnv() // this runs before tests right so this is serial? Important because of bootstrap config...
 }
 
 // This OpenTelemetryPluginOption type should be an opaque type (or equivalent),
@@ -248,20 +248,66 @@ func appendToLabelsFromEnv(labels map[string]string, labelKey string, envvar str
 	labels[labelKey] = envvarVal
 }
 
-// setMetadataFromEnv sets the global consts of local labels and labels to send
-// to the peer using metadata exchange. (write to global var make sure nothing
-// can write to it after constructing it) or can I do global const = local var
-// built out? I don't think so at init time maybe ask Doug?
+// name return - localLabels, metadataExchangeLabelsEncoded...can unit test this helper now
+/*func snapshotOfEnv() (map[string]string, string)/*returns the things you can set as global... { // unit test
 
-// NOTE: this function must only be called during initialization time (i.e. in
-// an init() function), and is not thread-safe (write this comment for global labels...)
+	// helper operation maybe to populate all these fields?, maybe returns the
+	// labels object to prepare local and md exchange labels...
 
-func setMetadataFromEnv() {
+	localLabelsRet := make(map[string]string)
+
+
+	localLabels // caller sets these
+	metadataExchangeLabelsEncoded // need to marshal all the proto stuff
+}*/
+
+// function with some functionality, can easily rework it to use
+// global singleton...
+// I think below applies, once you switch to singleton can just read from singleton
+
+// based on the bootstrap at the time - will need to be reworked once a singleton
+func bootstrapDetermineMeshID() string { // function above calls this to set bootstrap local labels...
+
+	// ***
+	// read bootstrap from env
+	// get node id from bootstrap
+	// *** these operations can become read from singleton, called once in snapshot helper...
+
+
+
+	// pass node id to parser - get mesh id to record back
+}
+
+var (
+	// These functions will be overriden in unit tests.
+	set = func() *attribute.Set {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
+		defer cancel()
+		r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()) /*do I need options here...*/)
+		// ... return your own resource that does stuff
+
+		if err != nil {
+			// logger.Error as in example...log x-envoy-peer-metadata error too? I don't think you need this for md recv but maybe for this?
+			// or maybe add logger at high verbosity label that it's not present...
+			logger.Errorf("error reading OpenTelemetry resource: %v", err)
+		}
+		var set *attribute.Set
+		if r != nil {
+			set = r.Set()
+		}
+		return set
+	}
+)
+
+// init - can still leave unit test
+// localLabels, metadataExchangeLabelsEncoded := snapshotOfEnv()
+// change the setter above to create and return ^^^
+// call this snapshot in unit tests...
+/*
+func set() *attribute.Set { // override this function
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
 	defer cancel()
-	// how to test this actually works?
-	// This resource call is probably would have to be mocked...
-	r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()) /*do I need options here...*/)
+	r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()))
 	// ... return your own resource that does stuff
 
 	if err != nil {
@@ -273,8 +319,38 @@ func setMetadataFromEnv() {
 	if r != nil {
 		set = r.Set()
 	}
-	labels := make(map[string]string)
+	return set
+}*/
 
+// constructMetadataFromEnv sets the global consts of local labels and labels to send
+// to the peer using metadata exchange. (write to global var make sure nothing
+// can write to it after constructing it) or can I do global const = local var
+// built out? I don't think so at init time maybe ask Doug?
+
+// NOTE: this function must only be called during initialization time (i.e. in
+// an init() function), and is not thread-safe (write this comment for global labels...)
+
+func constructMetadataFromEnv() (map[string]string, string) {
+	// **** Mock this whole call...
+	// how to test this actually works?
+	// This resource call is probably would have to be mocked...
+	/*r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()) /*do I need options here...)
+	// ... return your own resource that does stuff
+
+	if err != nil {
+		// logger.Error as in example...log x-envoy-peer-metadata error too? I don't think you need this for md recv but maybe for this?
+		// or maybe add logger at high verbosity label that it's not present...
+		logger.Errorf("error reading OpenTelemetry resource: %v", err)
+	}
+	var set *attribute.Set
+	if r != nil {
+		set = r.Set()
+	}*/
+	// *** End mock this whole call...
+	set := set()
+
+
+	labels := make(map[string]string)
 	appendToLabelsFromResource(labels, "type", "cloud.platform", set)
 	appendToLabelsFromEnv(labels, "canonical_service", "CSM_CANONICAL_SERVICE_NAME")
 
@@ -282,14 +358,13 @@ func setMetadataFromEnv() {
 	// "canonical_service".
 	cloudPlatformVal := labels["type"]
 	if cloudPlatformVal != "gcp_kubernetes_engine" && cloudPlatformVal != "gcp_compute_engine" {
-		initializeLocalAndMetadataLabels(labels)
-		return
+		return initializeLocalAndMetadataLabels(labels)
 	}
 
 	// GCE and GKE labels:
-	appendToLabelsFromEnv(labels, "workload_name", "CSM_WORKLOAD_NAME")
+	appendToLabelsFromEnv(labels, "workload_name", "CSM_WORKLOAD_NAME") // Should I make these env vars consts?
 
-	locationVal := "unknown"
+	locationVal := "unknown" // Do I really need to test this precdence ordering?
 	if resourceVal, ok := set.Value("cloud.availability_zone"); ok && resourceVal.Type() == attribute.STRING {
 		locationVal = resourceVal.AsString()
 	} else if resourceVal, ok = set.Value("cloud.region"); ok && resourceVal.Type() == attribute.STRING {
@@ -300,15 +375,14 @@ func setMetadataFromEnv() {
 	appendToLabelsFromResource(labels, "project_id", "cloud.account.id", set)
 
 	if cloudPlatformVal == "gcp_compute_engine" {
-		initializeLocalAndMetadataLabels(labels)
-		return
+		return initializeLocalAndMetadataLabels(labels)
 	}
 
 	// GKE specific labels:
 	appendToLabelsFromResource(labels, "namespace_name", "k8s.namespace.name", set)
 	appendToLabelsFromResource(labels, "cluster_name", "k8s.cluster.name", set)
 
-	initializeLocalAndMetadataLabels(labels)
+	return initializeLocalAndMetadataLabels(labels)
 }
 
 // need this helper irresepctive of making bootstrap singleton...
@@ -349,20 +423,18 @@ func parseMeshIDFromNodeID(nodeID string) string {
 // this binary to record. It also builds out a base 64 encoded protobuf.Struct
 // containing the metadata exchange labels to be sent as part of metadata
 // exchange from this binary.
-func initializeLocalAndMetadataLabels(labels map[string]string) { // put labels from mesh id (takes dependency on xDS) into this labels struct
+func initializeLocalAndMetadataLabels(labels map[string]string) (map[string]string, string) { // put labels from mesh id (takes dependency on xDS) into this labels struct
 	// Local labels:
 
 	// The value of “csm.workload_canonical_service” comes from
 	// “CSM_CANONICAL_SERVICE_NAME” env var, “unknown” if unset.
 	val := labels["canonical_service"] // I could test env var by mocking the setting of them...
-	// localLabels := make(map[string]string)
-	// initialize the global map directly...
-	localLabels = make(map[string]string) // can I do this at init time?
-	localLabels["csm.workload_canonical_service"] = val
+	localLabelsRet := make(map[string]string) // can I do this at init time?
+	localLabelsRet["csm.workload_canonical_service"] = val
 	// Get the CSM Mesh ID from the bootstrap generator used to configure this
 	// file.
-	nodeID := getNodeID()
-	localLabels["csm.mesh_id"] = parseMeshIDFromNodeID(nodeID)
+	nodeID := getNodeID() // already a snapshot you can configure between test case iterations...
+	localLabelsRet["csm.mesh_id"] = parseMeshIDFromNodeID(nodeID)
 
 	// Metadata exchange labels - can go ahead and encode at init time.
 	pbLabels := &structpb.Struct{
@@ -372,7 +444,8 @@ func initializeLocalAndMetadataLabels(labels map[string]string) { // put labels 
 		pbLabels.Fields[k] = structpb.NewStringValue(v)
 	}
 	protoWireFormat, err := proto.Marshal(pbLabels)
-	if err != nil { // but this is an error from the unknown thing, I think this should fail, tries to marshal both unknown labels...maybe send out nothing?
+	metadataExchangeLabelsEncodedRet := ""
+	if err == nil { // but this is an error from the unknown thing, I think this should fail, tries to marshal both unknown labels...maybe send out nothing?
 
 		// This behavior triggers server side to reply (if sent from a gRPC
 		// Client within this binary) with the metadata exchange labels. Even if
@@ -383,16 +456,19 @@ func initializeLocalAndMetadataLabels(labels map[string]string) { // put labels 
 
 
 		// server side unconditionally does logic.
-		print("error marshaling proto, will send empty val for metadata exchange")
-		metadataExchangeLabelsEncoded = ""
-		return
+		print("error marshaling proto, will send empty val for metadata exchange") // now the opposite conditional...
+		metadataExchangeLabelsEncodedRet = base64.RawStdEncoding.EncodeToString(protoWireFormat)
 	}
-	metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString(protoWireFormat) // will see if this encoding works e2e
+	// metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString(protoWireFormat) // will see if this encoding works e2e
+	return localLabelsRet, metadataExchangeLabelsEncodedRet
 } // once set up with env I can test this e2e...
 
 
 // getNodeID gets the Node ID from the bootstrap data.
 func getNodeID() string {
+
+	// *** As mused about above, once I switch to singleton I can make this one operation which is to read
+	// the bootstrap singleton, write a TODO about this...
 	rawBootstrap, err := bootstrapConfigFromEnvVariable()
 	if err != nil {
 		return ""
@@ -401,6 +477,8 @@ func getNodeID() string {
 	if err != nil {
 		return ""
 	}
+	// ***
+
 	return nodeID
 }
 

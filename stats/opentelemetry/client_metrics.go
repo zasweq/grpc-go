@@ -29,8 +29,29 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-type clientStatsHandler struct {
+// also, for trailers only, need to read x-envoy-peer-metadata if no headers at
+// the OTel layer client side... Done in sh, are we guaranteed the calls are
+// correct here? If not present just "unknown" for unknown type right like
+// server side
+
+// can get rid of target filtering on underlying plugin...
+
+// client can get it from headers and trailers - logic on this side in sh
+// whichever comes first server from headers or trailers, sh determines, maybe
+// with atomic bool
+
+// atomic bool in wrapped stream...maybe not since comes in sync besides recv/send msg
+
+type clientStatsHandler struct { // add a csm plugin option, this needs to be internal only...
 	o Options
+
+	// options:
+	// one global created on heap passed pointer to cc or target and makes determination from that...
+	// two globals that late dial option returns or not one configured with csm plugin option one without...
+
+	csmpo /*internal interface - only configured through externally visible CSM Plugin Option...*/
+	// csh.csmpo.AddLabels()...bootstrap happens under the hood...
+	// csh.csmpo.GetLabels()...based on atomic bool from sh operations
 
 	clientMetrics clientMetrics
 }
