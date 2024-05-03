@@ -114,7 +114,7 @@ func (c2pResolverBuilder) Build(t resolver.Target, cc resolver.ClientConn, opts 
 		"client_default_listener_resource_name_template": "%%s",
 		"authorities": %s,
 		"node": %s
-	}`, xdsServerCfg, authoritiesCfg, nodeCfg)))
+	}`, xdsServerCfg, authoritiesCfg, nodeCfg))) // whatever is needed to get it working - see if I can find a helper (or write one) to plumb node id into it
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to build bootstrap configuration: %v", err)

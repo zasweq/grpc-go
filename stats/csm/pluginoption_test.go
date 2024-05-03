@@ -22,13 +22,15 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"go.opentelemetry.io/otel/attribute"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/metadata"
+
+	"go.opentelemetry.io/otel/attribute"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -42,43 +44,14 @@ func Test(t *testing.T) {
 	grpctest.RunSubTests(t, s{})
 }
 
-// what scope of tests for this PR...
-// local e2e tests - provide a resource itself...fake gce/gke unknown
-// setup env vars
-// enable csm - injecting labels you want...
-// rpc and verify labels
-// mock xDS enabled channel...xDS plumbs labels so could test it with
-// that...interop can verify no need for tests, but should get some sanity
-// checks...
-
-// OTel is what calls into this and emits labels, so that is what needs to be
-// configured... so this is full e2e and needs the outer layer...
-
-
-// Unit tests:
-// Behavior of adds labels - send it blob of data, local labels, what labels it generates
-// no metadata - local + unknown
-// get gce env
-// get gke env - need to mock resource detector...
-// blob has unknown, or random
-
-// blob creation, same code...
-// ignoring network add two local labels
-// in test doesn't set it
-
 // send a pr to move bootstrap too
 
-// could add a separate layer that passes in local so you can get just the metadat emissions or just
-// don't set bootstrap set env var to {} and expect local labels and
-
-
+// need a full working bootstrap in this case...
 // maybe for bootstrap stuff I don't need to move everything and just rewrite
 // the env var parsing and handling...and just unmarshal it without all the
 // extra logic we do from json -> internal struct
 
-
-// unknown at init time for all labels...
-// test init time with fake runtime?
+// csm plugin option creation time is when it takes snapshot...
 /*
 func setupLocalLabels() {
 	// The value of “csm.workload_canonical_service” comes from
@@ -93,16 +66,21 @@ func setupLocalLabels() {
 	// c. ignore local labels...well will get emitted regardless so yeah
 }*/
 
+func setupLocalLabels() {
+	// bootstrap turn off in get and just test getMeshID/getNodeID flow?
+
+	// the other two two bools alongside...also think of better names than "something"/"something2"
+}
+
 func (s) TestGetLabels(t *testing.T) {
 	cpo := NewCSMPluginOption()
-	// local labels (need to set this up, this should be appended to all labels emitted...)
 
 
 	tests := []struct{
 		name string
 		metadataExchangeLabels map[string]string
 		labelsWant map[string]string
-	}{ // Need to append local labels to this now. Can the unknowns be messed up by something set in the env...make deterministic or what?
+	}{ // Local Labels: Can the unknowns be messed up by something set in the env...make deterministic or what? Also applies to others...
 		{
 			name: "metadata-not-set-only-local-labels",
 			metadataExchangeLabels: nil,
@@ -269,23 +247,7 @@ func (s) TestGetLabels(t *testing.T) {
 }
 
 // send out what I have...mock certain types in e2e? Since then can test full flow
-// yeah for mock should I do unit or e2e?
-
-// I also need to figure out a way to inject bootstrap config...maybe that's why
-// there's testing only functions...
-// Inject bootstrap config *before* init, since it reads it once, how do I even test this
-// leave as hardcoded blob for now so Doug can review PR...
-
-// there's a lot of methods on this, how do I mock the resource detector? I
-// could mock what it returns...
-
-// type mockResourceDetector struct {}
-
-// func (mrd *mockResourceDetector) {} // there's a lottt of methods on this resource type, what to do here?
-
-
-// Maybe have no resource, unknown for both local labels...and assert on length and presence for all the headers you want out
-// only way this happens is if you run in env
+// yeah for mock should I do unit or e2e? Mock same way in e2e I'm assuming
 
 
 // TestAddLabels tests the AddLabels function on the csm plugin option. This
@@ -300,10 +262,7 @@ func (s) TestAddLabels(t *testing.T) { // this tests global flow which is fine..
 	// works so far...only for further processing if gce or gke...
 
 	// This tests flow of the blob, could also test NewLabelsMD somehow...
-
-	// AddLabels as a snapshot seems like you could just pull out the context
-	// to not have to be e2e
-	cpo := NewCSMPluginOption() // two labels should be set...
+	cpo := NewCSMPluginOption() // Two metadata exchange labels should be prepared for this (assuming clear env)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
 	defer cancel()
 	ctx = cpo.AddLabels(ctx) // appends to outgoing, should work in streaming and unary interceptor...
@@ -358,13 +317,6 @@ func (s) TestAddLabels(t *testing.T) { // this tests global flow which is fine..
 	}
 
 
-
-	// If I figure out to inject a mock resource reader...
-	// I should do gce labels, and gke labels, and make sure there's a distinction
-	// t-test?
-	// gce/gke are tested in GetLabels by different ways of populating context...
-
-
 	// could assert fields all have value unknown...
 	// or too much properties
 	// def at the least the 4 values come in hardcoded, the only way this doesn't work is this test is deployed on gce,
@@ -374,9 +326,10 @@ func (s) TestAddLabels(t *testing.T) { // this tests global flow which is fine..
 // determineCSM(target/cc ref)...called once call option specifies to, and calls into OTel with this string...
 
 // I think can still take string target here...
-// Even if you give it the whole cc, just deref it like cc.Target to pass the string...
+// Even if you give it the whole cc, just deref it like cc.Target to pass the string...yeah because giving the full OTel plugin pointer
+// so can deref before calling into plugin option, plus this is experimental so we can iterate
 
-// Remove target filtering from underlying target filter...
+// Remove target filtering from underlying target filter...in base OTel plugin
 
 // TestDetermineTargetCSM tests the helper function that determines whether a
 // target is relevant to CSM or not, based off the rules outlined in design.
@@ -505,8 +458,50 @@ func (s) TestSetLabels(t *testing.T) {
 }*/
 // Move this to OTel so keeps the go.mod...
 
-// figure out how to inject env vars too...
+func createBootstrap(nodeID string) []byte {
+	/* From C2P:
+	[]byte(fmt.Sprintf(`
+	{
+		"xds_servers": [%s],
+		"client_default_listener_resource_name_template": "%%s",
+		"authorities": %s,
+		"node": %s
+	}`, xdsServerCfg, authoritiesCfg, nodeCfg))
+	*/
 
+	// return a boostrap config that passes the validations, but with node plumbed in...
+}
+
+func (s) TestBootstrap(t *testing.T) {
+	tests := []struct {
+		name string
+		nodeID string
+		meshIDWant string // format and also test the different unknown cases...
+	}{
+
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// could either call top level helper or helper "nested"
+			createBootstrap(test.nodeID) // could be too heavyweight, could just take nodeID and pass it to helper
+			// set the env...
+			// see if gets the node id, I like this because tests the whole bootstrap flow
+			getNodeID() test.nodeID // Although both of these are strings...assert the same
+			// pass the node ID to mesh ID, make sure it's the desired mesh ID
+		})
+	}
+}
+
+func clearEnv() {
+	// defer to original
+	// or just do like Eric and mock the env var calls...
+}
+
+// TestSetLabels tests the setting of labels, which snapshots the resource and
+// environment. It mocks the resource and environment, and then calls into
+// labels creation. It verifies to local labels created and metadata exchange
+// labels emitted from the setLabels function.
 func (s) TestSetLabels(t *testing.T) {
 	tests := []struct {
 		name string
@@ -515,27 +510,32 @@ func (s) TestSetLabels(t *testing.T) {
 		// these too?
 
 		resourceKeyValues map[string]string
-		// env vars are also a variable...
+		// env vars are also a variable...if issue of prepopulated explicitly set it off in say GetLabels tests...
+		csmCanonicalServiceNamePopulated bool
+		csmWorkloadNamePopulated bool
+		// boostrapGeneratorPopulated bool - if set then hardcoded bootstrap present, helper
 		localLabelsWant map[string]string
 		metadataExchangeLabelsWant map[string]string
 	}{
 		{
 			name: "no-type",
+			csmCanonicalServiceNamePopulated: true,
 			resourceKeyValues: map[string]string{
 				// nothing...
 			},
 			// smoke test make unknown and see if it works...
 			localLabelsWant: map[string]string{ // Have knobs so these are no longer variable...
-				"csm.workload_canonical_service": "unknown", // dependent on env so...oh right this ends up in md exchange and local labels...
+				"csm.workload_canonical_service": "canonical_service_name_val", // dependent on env so...oh right this ends up in md exchange and local labels...
 				"csm.mesh_id": "unknown", // dependent on bootstrap so figure out if var
 			},
 			metadataExchangeLabelsWant: map[string]string{
 				"type": "unknown",
-				"canonical_service": "unknown", // This is dependent on env var, so if change env var this could change...
+				"canonical_service": "canonical_service_name_val", // This is dependent on env var, so if change env var this could change...
 			},
 		},
 		{
 			name: "gce",
+			csmWorkloadNamePopulated: true,
 			resourceKeyValues: map[string]string{
 				"cloud.platform": "gcp_compute_engine",
 				// csm workload name is an env var
@@ -550,6 +550,7 @@ func (s) TestSetLabels(t *testing.T) {
 			metadataExchangeLabelsWant: map[string]string{
 				"type": "gcp_compute_engine",
 				"canonical_service": "unknown",
+				"workload_name": "workload_name_val",
 				"location": "something",
 				"project_id": "something1",
 			},
@@ -570,6 +571,7 @@ func (s) TestSetLabels(t *testing.T) {
 			metadataExchangeLabelsWant: map[string]string{
 				"type": "gcp_compute_engine",
 				"canonical_service": "unknown",
+				"workload_name": "unknown",
 				"location": "something",
 				"project_id": "unknown",
 			},
@@ -591,6 +593,7 @@ func (s) TestSetLabels(t *testing.T) {
 			metadataExchangeLabelsWant: map[string]string{
 				"type": "gcp_kubernetes_engine",
 				"canonical_service": "unknown",
+				"workload_name": "unknown",
 				"location": "something",
 				"project_id": "something1",
 				"namespace_name": "something2",
@@ -614,6 +617,7 @@ func (s) TestSetLabels(t *testing.T) {
 			metadataExchangeLabelsWant: map[string]string{
 				"type": "gcp_kubernetes_engine",
 				"canonical_service": "unknown",
+				"workload_name": "unknown",
 				"location": "something",
 				"project_id": "unknown",
 				"namespace_name": "something2",
@@ -624,6 +628,14 @@ func (s) TestSetLabels(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			func() {
+				if test.csmCanonicalServiceNamePopulated {
+					os.Setenv("CSM_CANONICAL_SERVICE_NAME", "canonical_service_name_val")
+					defer os.Unsetenv("CSM_CANONICAL_SERVICE_NAME")
+				}
+				if test.csmWorkloadNamePopulated { // If can't assume clean env clear out bootstrap config and these two (resource detection I'll always mock)
+					os.Setenv("CSM_WORKLOAD_NAME", "workload_name_val")
+					defer os.Unsetenv("CSM_WORKLOAD_NAME")
+				}
 				var attributes []attribute.KeyValue
 				for k, v := range test.resourceKeyValues {
 					attributes = append(attributes, attribute.String(k, v))

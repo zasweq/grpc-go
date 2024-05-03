@@ -21,8 +21,6 @@ package csm
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -30,17 +28,13 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
-	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"go.opentelemetry.io/contrib/detectors/gcp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
-
-	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
 var logger = grpclog.Component("csm-observability-plugin")
@@ -53,9 +47,6 @@ var logger = grpclog.Component("csm-observability-plugin")
 // AddLabels adds CSM labels to the provided context's metadata, as a encoded
 // protobuf Struct as the value of x-envoy-metadata.
 func (cpo *csmPluginOption) AddLabels(ctx context.Context) context.Context {
-
-	// Talk to Doug about making this whole plugin option internal only...
-
 	return metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, cpo.metadataExchangeLabelsEncoded)
 } // Client side - in interceptors can simply AddLabels in Unary/Streaming...
 
@@ -188,7 +179,7 @@ type pluginOption interface { // expose and move to otel/internal/ to be a part 
 	// determine yes or not and store that away to when you do record metrics,
 	// decide to add mesh attributes or not
 
-	// is this what you even call into?
+	// is this what you even call into?, call option gets set by global dial option, interceptor/stats handler sees it...
 
 	// for extensibility: determineApplicable(cc (and read target)), can change this in future *note in PR or to Doug*
 	determineTargetCSM(grpc.ClientConn) bool // called from lateapply dial option or pass it target and make determination per call...permutation of plugin option types...
@@ -221,7 +212,7 @@ func appendToLabelsFromMetadata(labels map[string]string, labelKey string, metad
 // appendToLabelsFromResource appends to the labels map passed in. It sets
 // "unknown" if the resourceKey is not found in the attribute set or is not a
 // string value, the string value otherwise.
-func appendToLabelsFromResource(labels map[string]string, labelKey string, resourceKey attribute.Key, set *attribute.Set) { // do I need to return a map I don't think so I think it's mutable...will get caught in unit tests
+func appendToLabelsFromResource(labels map[string]string, labelKey string, resourceKey attribute.Key, set *attribute.Set) {
 	labelVal := "unknown"
 	if set != nil {
 		if resourceVal, ok := set.Value(resourceKey); ok && resourceVal.Type() == attribute.STRING {
@@ -242,43 +233,12 @@ func appendToLabelsFromEnv(labels map[string]string, labelKey string, envvar str
 	labels[labelKey] = envvarVal
 }
 
-// name return - localLabels, metadataExchangeLabelsEncoded...can unit test this helper now
-/*func snapshotOfEnv() (map[string]string, string)/*returns the things you can set as global... { // unit test
-
-	// helper operation maybe to populate all these fields?, maybe returns the
-	// labels object to prepare local and md exchange labels...
-
-	localLabelsRet := make(map[string]string)
-
-
-	localLabels // caller sets these
-	metadataExchangeLabelsEncoded // need to marshal all the proto stuff
-}*/
-
-// function with some functionality, can easily rework it to use
-// global singleton...
-// I think below applies, once you switch to singleton can just read from singleton
-
-// based on the bootstrap at the time - will need to be reworked once a singleton
-/*func bootstrapDetermineMeshID() string { // function above calls this to set bootstrap local labels...
-
-	// ***
-	// read bootstrap from env
-	// get node id from bootstrap
-	// *** these operations can become read from singleton, called once in snapshot helper...
-
-
-
-	// pass node id to parser - get mesh id to record back
-}*/
-
 var (
-	// These functions will be overriden in unit tests.
+	// This function will be overriden in unit tests.
 	set = func() *attribute.Set {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
 		defer cancel()
-		r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()) /*do I need options here...*/)
-		// ... return your own resource that does stuff
+		r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()))
 
 		if err != nil {
 			// logger.Error as in example...log x-envoy-peer-metadata error too? I don't think you need this for md recv but maybe for this?
@@ -356,9 +316,9 @@ func constructMetadataFromEnv() (map[string]string, string) {
 	}
 
 	// GCE and GKE labels:
-	appendToLabelsFromEnv(labels, "workload_name", "CSM_WORKLOAD_NAME") // Should I make these env vars consts?
+	appendToLabelsFromEnv(labels, "workload_name", "CSM_WORKLOAD_NAME")
 
-	locationVal := "unknown" // Do I really need to test this precdence ordering?
+	locationVal := "unknown"
 	if resourceVal, ok := set.Value("cloud.availability_zone"); ok && resourceVal.Type() == attribute.STRING {
 		locationVal = resourceVal.AsString()
 	} else if resourceVal, ok = set.Value("cloud.region"); ok && resourceVal.Type() == attribute.STRING {
@@ -379,56 +339,39 @@ func constructMetadataFromEnv() (map[string]string, string) {
 	return initializeLocalAndMetadataLabels(labels)
 }
 
-// need this helper irresepctive of making bootstrap singleton...
 // parseMeshIDString parses the mesh id from the node id according to the format
-// "projects/[GCP Project number]/networks/mesh:[Mesh ID]/nodes/[UUID]".
+// "projects/[GCP Project number]/networks/mesh:[Mesh ID]/nodes/[UUID]". Returns
+// "unknown" if there is a syntax error in the node ID.
 func parseMeshIDFromNodeID(nodeID string) string {
-	// projects/[GCP Project number]/networks/mesh:[Mesh ID]/nodes/[UUID]
-	// Is the ID guaranteed...no "unknown" if error
-	// parse until it hits substring of /mesh:(... regex for anything)/nodes?
-
 	meshSplit := strings.Split(nodeID, "/")
 	if len(meshSplit) != 6 {
 		return "unknown"
 	}
-	meshID, ok := strings.CutPrefix(meshSplit[3], "mesh:")
-	if !ok {
+	if meshSplit[0] != "projects" || meshSplit[2] != "networks" || meshSplit[4] != "nodes" {
 		return "unknown"
 	}
-	return meshID // should empty string become unknown? I think this is fine...
+	meshID, ok := strings.CutPrefix(meshSplit[3], "mesh:")
+	if !ok { // errors become "unknown"
+		return "unknown"
+	}
+	return meshID
 }
-
-// just leave bootstrap code untested?
-
-// For Yash:
-// gets raw json from bootstrap hierarchy (move to internal/xds...need a separate PR like )
-
-// json -> internal bootstrap config parsing
-
-
-// "needs to take dependency on xDS to read the mesh ID right"
-
-// sort of...move to internal/xds...and make a global bootstrap singleton (fallback might need this?)
-
-// what happens in error in init? Yash said to just use unknown yup chose to
-// just use "unknown" for stuff...
 
 // initializeLocalAndMetadataLabels initializes the global csm local labels for
 // this binary to record. It also builds out a base 64 encoded protobuf.Struct
 // containing the metadata exchange labels to be sent as part of metadata
 // exchange from this binary.
-func initializeLocalAndMetadataLabels(labels map[string]string) (map[string]string, string) { // put labels from mesh id (takes dependency on xDS) into this labels struct
+func initializeLocalAndMetadataLabels(labels map[string]string) (map[string]string, string) {
 	// Local labels:
 
 	// The value of “csm.workload_canonical_service” comes from
 	// “CSM_CANONICAL_SERVICE_NAME” env var, “unknown” if unset.
-	val := labels["canonical_service"] // I could test env var by mocking the setting of them...
-	localLabelsRet := make(map[string]string) // can I do this at init time?
-	localLabelsRet["csm.workload_canonical_service"] = val
-	// Get the CSM Mesh ID from the bootstrap generator used to configure this
-	// file.
+	val := labels["canonical_service"]     // I could test env var by mocking the setting of them...
+	localLabels := make(map[string]string)
+	localLabels["csm.workload_canonical_service"] = val
+	// Get the CSM Mesh ID from the bootstrap file. // unknown or error...error becomes unknown probably (rebase onto that)
 	nodeID := getNodeID() // already a snapshot you can configure between test case iterations...
-	localLabelsRet["csm.mesh_id"] = parseMeshIDFromNodeID(nodeID)
+	localLabels["csm.mesh_id"] = parseMeshIDFromNodeID(nodeID)
 
 	// Metadata exchange labels - can go ahead and encode at init time.
 	pbLabels := &structpb.Struct{
@@ -438,26 +381,20 @@ func initializeLocalAndMetadataLabels(labels map[string]string) (map[string]stri
 		pbLabels.Fields[k] = structpb.NewStringValue(v)
 	}
 	protoWireFormat, err := proto.Marshal(pbLabels)
-	metadataExchangeLabelsEncodedRet := ""
-	if err == nil { // but this is an error from the unknown thing, I think this should fail, tries to marshal both unknown labels...maybe send out nothing?
-
+	metadataExchangeLabelsEncoded := ""
+	if err == nil {
+		metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString(protoWireFormat)
+	} else {
 		// This behavior triggers server side to reply (if sent from a gRPC
 		// Client within this binary) with the metadata exchange labels. Even if
 		// client side has a problem marshaling proto into wire format, it can
 		// still use server labels so send an empty string as the value of
 		// x-envoy-peer-metadata. The presence of this metadata exchange header
 		// will cause server side to respond with metadata exchange labels.
-
-
-		// server side unconditionally does logic.
-		// print("error marshaling proto: %v, will send empty val for metadata exchange") // now the opposite conditional...
-		metadataExchangeLabelsEncodedRet = base64.RawStdEncoding.EncodeToString(protoWireFormat)
-	} else {
 		print("error marshaling proto: %v, will send empty val for metadata exchange")
 	}
-	// metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString(protoWireFormat) // will see if this encoding works e2e
-	return localLabelsRet, metadataExchangeLabelsEncodedRet
-} // once set up with env I can test this e2e...
+	return localLabels, metadataExchangeLabelsEncoded
+}
 
 
 // getNodeID gets the Node ID from the bootstrap data.
@@ -465,74 +402,22 @@ func getNodeID() string {
 
 	// *** As mused about above, once I switch to singleton I can make this one operation which is to read
 	// the bootstrap singleton, write a TODO about this...
-	rawBootstrap, err := bootstrapConfigFromEnvVariable()
+	/*rawBootstrap, err := bootstrapConfigFromEnvVariable()
 	if err != nil {
 		return ""
 	}
 	nodeID, err := nodeIDFromContents(rawBootstrap)
 	if err != nil {
 		return ""
-	}
+	}*/
 	// ***
+	// config := bootstrap.ParseConfig()
+	// return config.node.id...this needs the PR in flight to be merged...
 
-	return nodeID
+	// If not present or any error, becomes unknown
+
+	return "unknown"
 }
-
-// For overriding in unit tests.
-var bootstrapFileReadFunc = os.ReadFile
-
-func bootstrapConfigFromEnvVariable() ([]byte, error) { // shows Doug what this is going for...
-	fName := envconfig.XDSBootstrapFileName
-	fContent := envconfig.XDSBootstrapFileContent
-
-	// Bootstrap file name has higher priority than bootstrap content.
-	if fName != "" {
-		// If file name is set
-		// - If file not found (or other errors), fail
-		// - Otherwise, use the content.
-		//
-		// Note that even if the content is invalid, we don't failover to the
-		// file content env variable.
-		// we're going to make this a singleton anyway...
-		// logger.Debugf("Using bootstrap file with name %q", fName) // Do I want a global logger here?
-		return bootstrapFileReadFunc(fName)
-	}
-
-	if fContent != "" {
-		return []byte(fContent), nil
-	}
-
-	return nil, fmt.Errorf("none of the bootstrap environment variables (%q or %q) defined",
-		envconfig.XDSBootstrapFileNameEnv, envconfig.XDSBootstrapFileContentEnv)
-} // get what is returned from this, and pass to func below...
-
-// you shouldn't see it - so ok to go to unknown
-// you take this string and pass it to
-// parser, so empty and not set become string, which go to unknown, which is fine
-
-func nodeIDFromContents(data []byte) (string, error) { // unknown if error set, represent that in application...
-	var jsonData map[string]json.RawMessage
-	if err := json.Unmarshal(data, &jsonData); err != nil {
-		return "", fmt.Errorf("xds: failed to parse bootstrap config: %v", err)
-	}
-
-	var node *v3corepb.Node
-	opts := protojson.UnmarshalOptions{DiscardUnknown: true}
-	for k, v := range jsonData {
-		switch k {
-		case "node":
-			node = &v3corepb.Node{} // this right here is what gets parsed...so yeah this whole thing and all usages need to be moved...
-			if err := opts.Unmarshal(v, node); err != nil {
-				return "", fmt.Errorf("xds: protojson.Unmarshal(%v) for field %q failed during bootstrap: %v", string(v), k, err)
-			}
-			// empty string valid id? I guess not could be unknown Arvind says it won't show up so trust him...
-			return node.GetId(), nil // sends empty string for unset, is empty valid then should not return unknown but no way to distinguish
-		default:
-		}
-	}
-	// convert all "" to "unknown"? No need for error case here...
-	return "", fmt.Errorf("no node specified") // behavior is to log unknown for log id...yeah because it'll hit empty
-} // figure out how to inject bootstrap generator...need to convert all "" to unknown
 
 // metadataExchangeKey is the key for HTTP metadata exchange.
 const metadataExchangeKey = "x-envoy-peer-metadata"
@@ -559,10 +444,10 @@ type csmPluginOption struct { // export everything, how will it get a ref if it'
 	// this process and for csm channels.
 	metadataExchangeLabelsEncoded string
 } // unexported? Keep internal to OpenTelemetry?
-// Scope fields to above...
-// return this type as an interface?
 
-// return an interface right?
+// return this type as an interface?
+// return an interface right? of OTel package...(interface in OTel package)
+
 func NewCSMPluginOption() *csmPluginOption { // Invoke this at CSMPluginOption call site, lazily initiated
 	localLabels, metadataExchangeLabelsEncoded := constructMetadataFromEnv() // need this for refs in local vars...
 
