@@ -32,6 +32,9 @@ import (
 type clientStatsHandler struct {
 	o Options
 
+	// how do I plumb in this optional type?
+	pluginOption pluginOption
+
 	clientMetrics clientMetrics
 }
 

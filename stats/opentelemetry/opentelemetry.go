@@ -20,6 +20,7 @@ package opentelemetry
 
 import (
 	"context"
+	"google.golang.org/grpc/metadata"
 	"strings"
 	"time"
 
@@ -117,7 +118,7 @@ type MetricsOptions struct {
 	// channel and returns a bool representing whether to use target as a label
 	// value or use the string "other". If unset, will use the target string as
 	// is. This only applies for client side metrics.
-	TargetAttributeFilter func(string) bool
+	TargetAttributeFilter func(string) bool // Get rid of this...
 
 	// MethodAttributeFilter is to record the method name of RPCs handled by
 	// grpc.UnknownServiceHandler, but take care to limit the values allowed, as
@@ -126,6 +127,57 @@ type MetricsOptions struct {
 	// grpc.StaticMethodCallOption as a call option into Invoke or NewStream.
 	// This only applies for server side metrics.
 	MethodAttributeFilter func(string) bool
+}
+
+// How will the global thingy set this plugin option?
+
+// pluginOption is the interface which represents a plugin option for the
+// OpenTelemetry instrumentation component. This plugin option emits labels from
+// metadata and also sets labels in different forms of metadata. These labels
+// are intended to be added to applicable OpenTelemetry metrics recorded in the
+// OpenTelemetry instrumentation component.
+//
+// This API is experimental. In the future, we hope to stabilize and expose this
+// API to allow pluggable plugin options to allow users to inject labels of
+// their choosing into metrics recorded.
+type pluginOption interface { // expose and move to otel/internal/ to be a part of otel but not expose, go.mod same, internal interface, how to configure through CSM layer/global thingy users will call?
+	// AddLabels adds metadata exchange labels to the outgoing metadata of the
+	// context.
+	AddLabels(context.Context) context.Context // need to return context, md is immutable so when you add it returns a new context...sets it for the one value for the unique key
+	// NewLabelsMD creates metadata exchange labels as a new MD.
+	NewLabelsMD() metadata.MD
+
+	// GetLabels emits relevant labels from the metadata provided and the
+	// optional labels provided, alongside any relevant labels.
+	GetLabels(metadata.MD, map[string]string) map[string]string // document behavior somewhere? I guess documented in document
+
+	// the other thing to figure out is when in the RPC lifecycle/stats handler
+	// plugin to call these exposed methods...? Detailed in 1:1 doc with Doug...
+
+	// global dial/server option with otel gets set for channel and server. For
+	// non-CSM channels and servers, metrics are recorded without mesh
+	// attributes.
+
+	// sometime in RPC flow? creation time no it's global need to call these to
+	// determine yes or not and store that away to when you do record metrics,
+	// decide to add mesh attributes or not
+
+	// is this what you even call into?, call option gets set by global dial option, interceptor/stats handler sees it...
+
+	// for extensibility: determineApplicable(cc (and read target)), can change this in future *note in PR or to Doug*
+	DetermineApplicable(grpc.ClientConn) bool // called from lateapply dial option or pass it target and make determination per call...permutation of plugin option types...
+} // pass a canonical target string, construction
+
+// otel/internal/pluginOption...internal, exported from internal
+// call only
+
+
+// type options struct {
+// }
+
+
+func (csh *clientStatsHandler) createCSMPluginOption { // only csm calls this, part of this package?
+	// csh.pluginOption
 }
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation

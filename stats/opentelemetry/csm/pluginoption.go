@@ -48,50 +48,47 @@ var logger = grpclog.Component("csm-observability-plugin")
 
 // AddLabels adds CSM labels to the provided context's metadata, as a encoded
 // protobuf Struct as the value of x-envoy-metadata.
-func (cpo *csmPluginOption) AddLabels(ctx context.Context) context.Context {
+func (cpo *CSMPluginOption) AddLabels(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, cpo.metadataExchangeLabelsEncoded)
 } // Client side - in interceptors can simply AddLabels in Unary/Streaming...
 
 // called at construction time in interceptor so...
-func (cpo *csmPluginOption) NewLabelsMD() metadata.MD { // doesn't need to be on cpo...could be global? but Yash sets his on discrete object so maybe I need this...
+func (cpo *CSMPluginOption) NewLabelsMD() metadata.MD {
 	return metadata.New(map[string]string{
 		metadataExchangeKey: cpo.metadataExchangeLabelsEncoded,
 	})
-} // md the plugin option wants to emit...(mention extensible?)
-
-// Try to get above or below which one is better for extensibility? Which one is
-// better (need to test)...extensibility is interesting but I guess a new concern
+} // md the plugin option wants to emit...(mention extensible for the top level plugin option?)
 
 // OTel -> interface where you can plug in different interfaces in case someone
 // wants to do something different
 
-func (cpo *csmPluginOption) AddLabelsMD(md metadata.MD) /*metadata.MD*/ { // server calls this as the data structure it deals with is trailers...
-	// if this is racey (I think only other thing that would be using stream is
-	// application), Copy() and then Append() and return that?
+// How will this mechanically get called server side?
 
-	// might not be because it seems like constraints on stream prevent this
-	// from racing since only operation that can race with it writing is
-	// recvMsg, which won't write (or read) document not thread safe perhaps?
+// don't require md to be there, create a new thing to persist in wrapped stream
+// to intercept operations downward
 
-	// Pulls from the global set in this package...hook into this package, since it's a different mechanical way
-	// to append to key values sent on the wire...
-	md.Append(metadataExchangeKey, cpo.metadataExchangeLabelsEncoded) // can I write to this concurrently, does this not race?
-} // Unit test this? I think this is better then exposing the blob directly...indirectly set as interceptors intend to...
 
 // GetLabels gets the CSM peer labels from the metadata provided. It returns
 // "unknown" for labels not found. Labels returned depend on the remote type.
 // Additionally, local labels determined at initialization time are appended to
-// labels returned.
-func (cpo *csmPluginOption) GetLabels(md metadata.MD) map[string]string {
+// labels returned, in addition to the optionalLabels provided.
+func (cpo *CSMPluginOption) GetLabels(md metadata.MD, optionalLabels map[string]string) map[string]string { // also take optional labels - this is mechanically how it'll get xDS labels and gcs metrics...this should be part of API
 	labels := map[string]string{ // Remote labels if type is unknown (i.e. unset or error processing x-envoy-peer-metadata)
 		"csm.remote_workload_type": "unknown",
 		"csm.remote_workload_canonical_service": "unknown",
-	} // Test this code with *unit tests* - define scenarios (and make sure they're correct - input and output), and test those scenarios
+	}
 	// Append the local labels.
 	for k, v := range cpo.localLabels {
 		labels[k] = v
 	}
 
+	// Append the optional labels. To avoid string comparisons, assume the
+	// caller only passes in two potential xDS Optional Labels: service_name and
+	// service_namespace.
+	for k, v := range optionalLabels {
+		labels[k] = v
+	}
+	// Do I need to log any of these errors? or maybe add logger at high verbosity label that it's not present...
 	val := md.Get("x-envoy-peer-metadata")
 	// This can't happen if corresponding csm client because of proto wire
 	// format encoding, but since it is arbitrary off the wire be safe.
@@ -100,7 +97,6 @@ func (cpo *csmPluginOption) GetLabels(md metadata.MD) map[string]string {
 		return labels
 	}
 
-	// Send something that has two values or is a broken blob and should still emit the 4
 	protoWireFormat, err := base64.RawStdEncoding.DecodeString(val[0])
 	if err != nil {
 		print("decoding from base 64 doesn't work...")
@@ -142,57 +138,6 @@ func (cpo *csmPluginOption) GetLabels(md metadata.MD) map[string]string {
 	return labels
 }
 
-// caller loops through returned map[string]string and adds it to labels scoped
-// to attempt? call? info client/server side, which will be read at the end when
-// metrics are recorded, no race conditions wrt md exchange from recv since
-// metrics are added at end, I'm sure someone will call that out otherwise...
-
-// which also gets appended to from the GetLabels context mechanism from cluster_impl...which in Tag should
-// set something that gets labels *for the call*
-
-// Called in *sh* callouts, ClientHeader server side, ServerHeader or ServerTrailer from server whichever comes first
-// how are these read and used? and also unit test
-
-
-// pluginOption is the interface which represents a plugin option for the
-// OpenTelemetry instrumentation component. This plugin option emits labels from
-// metadata and also sets labels in different forms of metadata. These labels
-// are intended to be added to applicable OpenTelemetry metrics recorded in the
-// OpenTelemetry instrumentation component.
-//
-// This API is experimental. In the future, we hope to stabilize and expose this
-// API to allow pluggable plugin options to allow users to inject labels of
-// their choosing into metrics recorded.
-type pluginOption interface { // expose and move to otel/internal/ to be a part of otel but not expose, go.mod same, internal interface, how to configure through CSM layer/global thingy users will call?
-	// AddLabels adds metadata exchange labels to the outgoing metadata of the
-	// context.
-	AddLabels(context.Context) context.Context // need to return context, md is immutable so when you add it returns a new context...sets it for the one value for the unique key
-	// GetLabels gets the metadata exchange labels from the metadata provided.
-	GetLabels(metadata.MD) map[string]string // document behavior somewhere? I guess documented in document
-
-	// the other thing to figure out is when in the RPC lifecycle/stats handler
-	// plugin to call these exposed methods...? Detailed in 1:1 doc with Doug...
-
-	// global dial/server option with otel gets set for channel and server. For
-	// non-CSM channels and servers, metrics are recorded without mesh
-	// attributes.
-
-	// sometime in RPC flow? creation time no it's global need to call these to
-	// determine yes or not and store that away to when you do record metrics,
-	// decide to add mesh attributes or not
-
-	// is this what you even call into?, call option gets set by global dial option, interceptor/stats handler sees it...
-
-	// for extensibility: determineApplicable(cc (and read target)), can change this in future *note in PR or to Doug*
-	determineTargetCSM(grpc.ClientConn) bool // called from lateapply dial option or pass it target and make determination per call...permutation of plugin option types...
-}
-
-// for client and server side determining same method
-// client:
-// late apply after DialOptions can change target, pass cc ref to OTel,
-// pass target to plugin option, "properties about channel that plugin option is interested in"
-// global options *for every server*
-
 // appendToLabelsFromMetadata appends to the labels map passed in. It sets
 // "unknown" if the metadata is not found in the struct proto, or if the value
 // is not a string value.
@@ -209,7 +154,7 @@ func appendToLabelsFromMetadata(labels map[string]string, labelKey string, metad
 }
 
 // appendToLabelsFromResource appends to the labels map passed in. It sets
-// "unknown" if the resourceKey is not found in the attribute set or is not a
+// "unknown" if the resourceKey is not found in the attribute getAttrSetFromResourceDetector or is not a
 // string value, the string value otherwise.
 func appendToLabelsFromResource(labels map[string]string, labelKey string, resourceKey attribute.Key, set *attribute.Set) {
 	labelVal := "unknown"
@@ -234,14 +179,12 @@ func appendToLabelsFromEnv(labels map[string]string, labelKey string, envvar str
 
 var (
 	// This function will be overriden in unit tests.
-	set = func() *attribute.Set {
+	getAttrSetFromResourceDetector = func() *attribute.Set {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
 		defer cancel()
 		r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()))
 
 		if err != nil {
-			// logger.Error as in example...log x-envoy-peer-metadata error too? I don't think you need this for md recv but maybe for this?
-			// or maybe add logger at high verbosity label that it's not present...
 			logger.Errorf("error reading OpenTelemetry resource: %v", err)
 		}
 		var set *attribute.Set
@@ -252,17 +195,11 @@ var (
 	}
 )
 
-// constructMetadataFromEnv sets the global consts of local labels and labels to send
-// to the peer using metadata exchange. (write to global var make sure nothing
-// can write to it after constructing it) or can I do global const = local var
-// built out? I don't think so at init time maybe ask Doug?
-
-// NOTE: this function must only be called during initialization time (i.e. in
-// an init() function), and is not thread-safe (write this comment for global labels...)
-
+// constructMetadataFromEnv creates local labels and labels to send to the peer
+// using metadata exchange based off resource detection and enviornment
+// variables.
 func constructMetadataFromEnv() (map[string]string, string) {
-	set := set()
-
+	set := getAttrSetFromResourceDetector()
 
 	labels := make(map[string]string)
 	appendToLabelsFromResource(labels, "type", "cloud.platform", set)
@@ -320,7 +257,7 @@ func parseMeshIDFromNodeID(nodeID string) string {
 // initializeLocalAndMetadataLabels initializes the global csm local labels for
 // this binary to record. It also builds out a base 64 encoded protobuf.Struct
 // containing the metadata exchange labels to be sent as part of metadata
-// exchange from this binary.
+// exchange from a plugin option.
 func initializeLocalAndMetadataLabels(labels map[string]string) (map[string]string, string) {
 	// The value of “csm.workload_canonical_service” comes from
 	// “CSM_CANONICAL_SERVICE_NAME” env var, “unknown” if unset.
@@ -360,11 +297,9 @@ func initializeLocalAndMetadataLabels(labels map[string]string) (map[string]stri
 func getNodeID() string {
 	cfg, err := bootstrap.NewConfig()
 	if err != nil {
-		print("error: ", err.Error())
 		return "" // will become "unknown"
 	}
 	if cfg.NodeProto == nil {
-		print("node proto is nil")
 		return ""
 	}
 	return cfg.NodeProto.GetId()
@@ -375,19 +310,11 @@ func getNodeID() string {
 // metadataExchangeKey is the key for HTTP metadata exchange.
 const metadataExchangeKey = "x-envoy-peer-metadata"
 
-// CSM Layer around OTel behavior uses this plugin option...no configured
-// unconditionally on a global plugin, plumb a per call bit that determines
-// whether to use...Doug mentioned WithDefaultCallOption that determines...alright
-
-// should it be on the object...how to combine these metadata labels and the
-// labels from xDS...helper in context or something? Done in OTel? TagRPC and
-// set it on the attempt scoped context?
-
-// csmPluginOption emits CSM Labels from the environment and metadata exchange
+// CSMPluginOption emits CSM Labels from the environment and metadata exchange
 // for csm channels and all servers.
 //
 // Do not use this directly; use NewCSMPluginOption instead.
-type csmPluginOption struct { // export everything, how will it get a ref if it's holding onto an interface, return the actual type, no doesn't need access to these fields accessed through interface...
+type CSMPluginOption struct { // export everything, how will it get a ref if it's holding onto an interface, return the actual type, no doesn't need access to these fields accessed through interface...
 	// localLabels are the labels that identify the local environment a binary
 	// is run in, and will be emitted from the CSM Plugin Option.
 	localLabels map[string]string
@@ -398,64 +325,122 @@ type csmPluginOption struct { // export everything, how will it get a ref if it'
 	metadataExchangeLabelsEncoded string
 } // unexported? Keep internal to OpenTelemetry?
 
+// TODO: Figure out this interface stuff, finish the clearing of env (or leave up to Doug), and also
+// make it's own go.mod, cleanup?
+
 // return this type as an interface?
 // return an interface right? of OTel package...(interface in OTel package)
 
-func NewCSMPluginOption() *csmPluginOption { // Invoke this at CSMPluginOption call site, lazily initiated
-	localLabels, metadataExchangeLabelsEncoded := constructMetadataFromEnv() // need this for refs in local vars...
+func NewCSMPluginOption() *CSMPluginOption { // export the type? and then caller can set it as interface (when does it convert from concrete type to interface?)
+	localLabels, metadataExchangeLabelsEncoded := constructMetadataFromEnv()
 
-	return &csmPluginOption{
+	return &CSMPluginOption{
 		localLabels: localLabels,
-		metadataExchangeLabelsEncoded: metadataExchangeLabelsEncoded, // then calls into interface
+		metadataExchangeLabelsEncoded: metadataExchangeLabelsEncoded,
 	}
 }
 
 
 
-// Think about intended usages of these API's too...including the merging of
-// labels received from xDS into this thing. Get it from context and add it to attempt scoped context
-// mutex for atomic read, shouldn't slow down RPC right...
 
-// determineClientConnCSM determines whether the Client Conn is enabled for CSM Metrics.
-// This is determined the rules:
 
-// How will this actually get called? determineClientConnCSM? how will this get
-// plumbed with apply? send the target on each call (or a cc pointer something
-// more general)
 
+
+// CSMObservability(OTel options) (csm||!notcsm)
+
+// internal/csm
+
+// csm - everything in OTel directory
+
+// Separate package csm, plumb everything through internal,
+// but one module...but API internal (plugin option), can set
+// through internal, calls internal type
+
+// csm -> imports otel
+// but not otel -> csm
+
+// csm creates OTel plugin with itself...
+
+
+// csm creates itself with itself or without, it internally makes the decision
+// (lives in the ether), on the plugin option, when it is not, csm determines
+// whether it's composed
+
+// this prevents having to instantiate per channel
+// (otel with csm) (otel without csm) - Eric same thing
+// csm layer -> determines applicable...
+
+
+// internal not part of requirements, mallable in the future...
+// Eric same thing
+
+
+
+
+
+// global helper
+// calls the operation and sets internal object on OTel by calling constructor...
 
 // after Dial Option for late apply...pass in target per call or do this...
 
-// exported helper that doesn't need to be on the object...
-// could just punt this and bootstrap with helper just to test it and add a todo
+// CSM -> O11y
+// o11y !-> CSM
 
-// for extensibility could change this in the future...take a cc but I think this is fine for now
+// CSM Global exposed to users
+
+// CSM late apply dial option determines whether it's applicable or not, so
+// determineTargetCSM pull out to the ether (and returns either instantiated instance)
+// Plumb in an internal unxported field...
+
+// csm instantiates two OTel instances: one with plugin option one without (mechanically how does it do this?)
+// late dial option returns this...
+
+// all this in internal/csm?
+// csm -> otel, uses it and configures it, plugin option unexported there
+// otel !-> csm
+
+// this rests in internal/csm, external csm/ will actually configure this
+
+// and so pull determineTarget() out into the csm package ether
+// late apply calls this...
+
+// Java has headache because apply doesn't know mutated target string...
+
+
+
+// CSMPluginOption lives in internal/...same with type
+
+// exported calls constructor, and sets OTel with it...two global instances...
+
+
+
+
+
 
 // pass canonical target or cc.Target() target after processing...or can honestly determine target from cc *after
 // processing*
+func (cpo *CSMPluginOption) DetermineApplicable(cc *grpc.ClientConn) bool { // We don't need a dial option now, there's a ref to cc and pass that to interceptor, Set this on the call...
+	return cpo.determineTargetCSM(cc.CanonicalTarget())
+}
 
-// if pass in cc be careful of race conditions...
-func (cpo *csmPluginOption) determineTargetCSM(target string) bool { // put this in interface to - mark as experimental so if you change than break you'll be ok it's internal so you're fine
+// if pass in cc be careful of race conditions on the read of cc...but this is
+// in interceptor so should never be read.
+func (cpo *CSMPluginOption) determineTargetCSM(target string) bool {
 	// On the client-side, the channel target is used to determine if a channel is a
 	// CSM channel or not. CSM channels need to have an “xds” scheme and a
 	// "traffic-director-global.xds.googleapis.com" authority. In the cases where no
 	// authority is mentioned, the authority is assumed to be CSM. MetadataExchange
 	// is performed only for CSM channels. Non-metadata exchange labels are detected
 	// as described below.
-	//
-	// So do non csm channels get any csm labels I don't think so?
-
-	parsedTarget, err := url.Parse(target) // either take target here or pass in parsed target in after...what can logically affect target (either pass in a parsed or not, either way same type)
+	parsedTarget, err := url.Parse(target)
 	if err != nil {
 		// Shouldn't happen as Dial would fail if target couldn't be parsed, but
-		// log just in case.
-		// logger.Errorf(passed in target is wrong format)
-
+		// log just in case to inform user.
+		logger.Errorf("passed in target %v failed to parse: %v", parsedTarget, err)
 		return false
-	} // but what target do you actually pass to this...the canonical target? yeah after dial options process you need to pass something over here...
+	}
 
-	// only ref is client conn, or pass it parsed url, can change this...
-	if parsedTarget.Scheme == "xds" { // either parse this from cc or pass in a parsed url...pass the canonical target I'm assuming or call channel.Target()
+	if parsedTarget.Scheme == "xds" {
 		if parsedTarget.Host == "" {
 			return true // "In the cases where no authority is mentioned, the authority is assumed to be csm"
 		}
