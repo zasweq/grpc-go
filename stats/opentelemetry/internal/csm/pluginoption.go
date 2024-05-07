@@ -162,7 +162,7 @@ func appendToLabelsFromEnv(labels map[string]string, labelKey string, envvar str
 }
 
 var (
-	// This function will be overriden in unit tests.
+	// This function will be overridden in unit tests.
 	getAttrSetFromResourceDetector = func() *attribute.Set {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer cancel()
