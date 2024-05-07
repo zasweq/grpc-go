@@ -21,6 +21,7 @@ package opentelemetry
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -186,7 +187,7 @@ func getCallInfo(ctx context.Context) *callInfo {
 
 // rpcInfo is RPC information scoped to the RPC attempt life span client side,
 // and the RPC life span server side.
-type rpcInfo struct {
+type rpcInfo struct { // attempt or call...I think you can do it on the attempt, I don't think it'll affect correctness
 	mi *metricsInfo
 }
 
@@ -220,6 +221,11 @@ type metricsInfo struct {
 
 	startTime time.Time
 	method    string
+
+	// since these are logically for Metrics...
+	labelsReceived atomic.Bool // set unconditionally?
+	labels map[string]string // labels to attach to metrics emitted...trailers handling should go through these...
+	xDSLabels map[string]string
 }
 
 type clientMetrics struct {

@@ -18,6 +18,9 @@ package opentelemetry
 
 import (
 	"context"
+	stats2 "google.golang.org/grpc/internal/stats"
+	"google.golang.org/grpc/stats/opentelemetry/internal"
+	"google.golang.org/grpc/stats/opentelemetry/internal/csm"
 	"sync/atomic"
 	"time"
 
@@ -30,7 +33,9 @@ import (
 )
 
 type clientStatsHandler struct {
-	o Options
+	o Options // in this thing?
+
+	pluginOption internal.PluginOption // internal only, unexported so I'm fine here?
 
 	clientMetrics clientMetrics
 }
@@ -62,6 +67,9 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 		method: csh.determineMethod(method, opts...),
 	}
 	ctx = setCallInfo(ctx, ci)
+
+	// How do I even get a ref
+	ctx = csh.pluginOption.AddLabels(ctx) // or do it on options? how will this actually be set...on server side wrap stream and add this in wrapped stream operations...
 
 	startTime := time.Now()
 	err := invoker(ctx, method, req, reply, cc, opts...)
@@ -98,6 +106,10 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 		method: csh.determineMethod(method, opts...),
 	}
 	ctx = setCallInfo(ctx, ci)
+
+	csh.pluginOption = csm.NewPluginOption() // Takes snapshot of all labels here...helper on csh to trigger this? How does global trigger this?
+	ctx = csh.pluginOption.AddLabels(ctx) // created with NewPluginOption
+
 	startTime := time.Now()
 
 	callback := func(err error) {
@@ -123,8 +135,13 @@ func (csh *clientStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 
 // TagRPC implements per RPC attempt context management.
 func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	xDSLabels := make(map[string]string)
+	if labels := stats2.GetLabels(ctx); labels != nil { // TODO: can this race with the write in picker updated esp for hedging...assume synchronous when maybe not
+		xDSLabels = labels.TelemetryLabels
+	}
 	mi := &metricsInfo{ // populates information about RPC start.
 		startTime: time.Now(),
+		xDSLabels: xDSLabels, // concurrent per hedging, this is an attempt...
 	}
 	ri := &rpcInfo{
 		mi: mi,
@@ -157,7 +174,20 @@ func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCS
 		atomic.AddInt64(&mi.recvCompressedBytes, int64(st.CompressedLength))
 	case *stats.End:
 		csh.processRPCEnd(ctx, mi, st)
-	default:
+	case *stats.InHeader: // these can't race right just the sends and recvs...
+		if labelsReceived := mi.labelsReceived.Swap(true); !labelsReceived { // this might not even need to be atomic...ins and outs, wb for hedging?
+			mi.labels = csh.pluginOption.GetLabels(st.Header, mi.xDSLabels)
+		}
+	case *stats.InTrailer: // comes before end, or else this wouldn't work
+		if labelsReceived := mi.labelsReceived.Swap(true); !labelsReceived { // this might not even need to be atomic...ins and outs, wb for hedging?
+			mi.labels = csh.pluginOption.GetLabels(st.Trailer, mi.xDSLabels)
+		}
+
+		// server doesn't have xDS labels...just does this logic in in header and trailer, only hard part is trailers only...
+
+	default: // Scale this up to headers and trailers, this is per call on the whole attempt so need the bool per attempt, store away labels in attempt scope to record at the end (if not present just range over it and it'll be done)
+
+
 	}
 }
 
@@ -174,11 +204,21 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		st = canonicalString(s.Code())
 	}
 
-	clientAttributeOption := metric.WithAttributes(attribute.String("grpc.method", ci.method), attribute.String("grpc.target", ci.target), attribute.String("grpc.status", st))
+	attributes := []attribute.KeyValue{
+		attribute.String("grpc.method", ci.method),
+		attribute.String("grpc.target", ci.target),
+		attribute.String("grpc.status", st),
+	}
+
+	for k, v := range mi.labels {
+		attributes = append(attributes, attribute.String(k, v))
+	}
+
+	clientAttributeOption := metric.WithAttributes(attributes...)
 	csh.clientMetrics.attemptDuration.Record(ctx, latency, clientAttributeOption)
 	csh.clientMetrics.attemptSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), clientAttributeOption)
 	csh.clientMetrics.attemptRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), clientAttributeOption)
-}
+} // 1:1 with Doug: maybe this trailers only thing and also design the late apply thing...I have testing under control...
 
 const (
 	// ClientAttemptStarted is the number of client call attempts started.

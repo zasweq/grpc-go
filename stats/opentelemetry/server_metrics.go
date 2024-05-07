@@ -18,6 +18,7 @@ package opentelemetry
 
 import (
 	"context"
+	internal2 "google.golang.org/grpc/stats/opentelemetry/internal"
 	"sync/atomic"
 	"time"
 
@@ -31,7 +32,9 @@ import (
 )
 
 type serverStatsHandler struct {
-	o Options
+	o Options // I could put it in this thing, then users can't set it, the call into csm/ exposed to users sets this...
+
+	pluginOption internal2.PluginOption
 
 	serverMetrics serverMetrics
 }
@@ -102,10 +105,16 @@ func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats)
 	ssh.processRPCData(ctx, rs, ri.mi)
 }
 
+// How to configure this? (i.e. plumb the plugin option)
+
 func (ssh *serverStatsHandler) processRPCData(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
 	switch st := s.(type) {
 	case *stats.InHeader:
 		ssh.serverMetrics.callStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", mi.method)))
+	// Only read the first headers?
+		if labelsReceived := mi.labelsReceived.Swap(true); !labelsReceived { // this might not even need to be atomic...ins and outs, wb for hedging?
+			mi.labels = ssh.pluginOption.GetLabels(st.Header, nil) // no xDS Labels server side
+		}
 	case *stats.OutPayload:
 		atomic.AddInt64(&mi.sentCompressedBytes, int64(st.CompressedLength))
 	case *stats.InPayload:
@@ -123,12 +132,24 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		s, _ := status.FromError(e.Error)
 		st = canonicalString(s.Code())
 	}
-	serverAttributeOption := metric.WithAttributes(attribute.String("grpc.method", mi.method), attribute.String("grpc.status", st))
-
+	attributes := []attribute.KeyValue{
+		attribute.String("grpc.method", mi.method),
+		attribute.String("grpc.status", st),
+	}
+	for k, v := range mi.labels { // How do I even test this?
+		attributes = append(attributes, attribute.String(k, v))
+	}
+	serverAttributeOption := metric.WithAttributes(attributes...)
 	ssh.serverMetrics.callDuration.Record(ctx, latency, serverAttributeOption)
 	ssh.serverMetrics.callSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), serverAttributeOption)
 	ssh.serverMetrics.callRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), serverAttributeOption)
-}
+} // wrapping stream server side...once you mechanically wrap from client it's same operations...
+// testing, and also how to configure it
+
+// csm: configureOTElWithCSM(OTelOptions) {
+//     wrap options by writing to unexported field? Or does it need to export to this package just an internal interface?
+// }
+
 
 const (
 	// ServerCallStarted is the number of server calls started.
