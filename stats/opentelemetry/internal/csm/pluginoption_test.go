@@ -21,13 +21,15 @@ package csm
 import (
 	"encoding/base64"
 	"fmt"
-	"github.com/google/go-cmp/cmp"
-	"google.golang.org/grpc/internal/grpctest"
-	"google.golang.org/grpc/internal/testutils/xds/bootstrap"
-	"google.golang.org/grpc/metadata"
 	"os"
 	"testing"
 
+	"google.golang.org/grpc/internal/envconfig"
+	"google.golang.org/grpc/internal/grpctest"
+	"google.golang.org/grpc/internal/testutils/xds/bootstrap"
+	"google.golang.org/grpc/metadata"
+
+	"github.com/google/go-cmp/cmp"
 	"go.opentelemetry.io/otel/attribute"
 
 	"google.golang.org/protobuf/proto"
@@ -42,24 +44,21 @@ func Test(t *testing.T) {
 	grpctest.RunSubTests(t, s{})
 }
 
-// have the plugin option interface (which can change over time) defined in
-// OTel...figure out how to do this
-
 func (s) TestGetLabels(t *testing.T) {
-	// Clear the ENV VAR...
-
-	cpo := NewCSMPluginOption()
+	clearEnv()
+	cpo := NewPluginOption()
 
 	tests := []struct{
 		name string
+		unsetHeader bool // Should trigger "unknown" labels
+		twoValues bool // Should trigger "unknown" labels
 		metadataExchangeLabels map[string]string
 		labelsWant map[string]string
-	}{ // Local Labels: Can the unknowns be messed up by something set in the env...make deterministic or what? Also applies to others...
+	}{
 		{
-			name: "metadata-not-set-only-local-labels",
+			name: "unset-labels",
 			metadataExchangeLabels: nil,
 			labelsWant: map[string]string{
-				// Local labels: (need to clear env before so these all become unknown)
 				"csm.workload_canonical_service": "unknown",
 				"csm.mesh_id": "unknown",
 
@@ -173,6 +172,46 @@ func (s) TestGetLabels(t *testing.T) {
 				"csm.remote_workload_name":	"unknown",
 			},
 		},
+		{
+			name: "unset-header",
+			metadataExchangeLabels: map[string]string{
+			"type": "gcp_kubernetes_engine",
+			"canonical_service": "canonical_service_val",
+			"project_id": "unique-id",
+			"namespace_name": "namespace_name_val",
+			"cluster_name": "cluster_name_val",
+			"location": "us-east",
+			"workload_name": "workload_name_val",
+		},
+			unsetHeader: true,
+			labelsWant: map[string]string{
+				"csm.workload_canonical_service": "unknown",
+				"csm.mesh_id": "unknown",
+
+				"csm.remote_workload_type": "unknown",
+				"csm.remote_workload_canonical_service": "unknown",
+			},
+		},
+		{
+			name: "two-header-values",
+			metadataExchangeLabels: map[string]string{
+				"type": "gcp_kubernetes_engine",
+				"canonical_service": "canonical_service_val",
+				"project_id": "unique-id",
+				"namespace_name": "namespace_name_val",
+				"cluster_name": "cluster_name_val",
+				"location": "us-east",
+				"workload_name": "workload_name_val",
+			},
+			twoValues: true,
+			labelsWant: map[string]string{
+				"csm.workload_canonical_service": "unknown",
+				"csm.mesh_id": "unknown",
+
+				"csm.remote_workload_type": "unknown",
+				"csm.remote_workload_canonical_service": "unknown",
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -188,11 +227,16 @@ func (s) TestGetLabels(t *testing.T) {
 			}
 			metadataExchangeLabelsEncoded := base64.RawStdEncoding.EncodeToString(protoWireFormat)
 			md := metadata.New(map[string]string{
-				"x-envoy-peer-metadata": metadataExchangeLabelsEncoded,
+				metadataExchangeKey: metadataExchangeLabelsEncoded,
 			})
+			if test.unsetHeader {
+				md.Delete(metadataExchangeKey)
+			}
+			if test.twoValues {
+				md.Append(metadataExchangeKey, "extra-val")
+			}
 
 			labelsGot := cpo.GetLabels(md, nil)
-
 			if diff := cmp.Diff(labelsGot, test.labelsWant); diff != "" {
 				t.Fatalf("cpo.GetLabels returned unexpected value (-got, +want): %v", diff)
 			}
@@ -200,36 +244,9 @@ func (s) TestGetLabels(t *testing.T) {
 	}
 }
 
-// error cases/edge cases like two md just make everything unknown, perhaps a const for the full struct for above too maybe just inline?
-
-// stuff like numerous metadata values etc. error conditions which
-// trigger unknown as like the first test case
-// maybe unhappy case below with invalid syntax?
-// If I do add busted proto inputs, I need to
-// do another test because this successfully marshals the protos...
-
-// Error cases: just do these in separate test...
-// 1. wrong proto type/syntax
-// 2. two values (append)
-
-// TestGetLabelsUnknown conditions tests sceanrios that cause "unknown" labels
-// to be emitted. These scenarios are no metadata present, error in base64
-// encoding, error in proto marshaling, and two values for
-// x-envoy-peer-metadata.
-func (s) TestGetLabelsUnknownConditions(t *testing.T) {
-	// 1. wrong proto type, just marshal some random bits lol or random string
-
-	// 2. two values for x-envoy-peer-metadata
-
-	// expect unknown
-} // need to scale up get labels to take optional labels to do it one operation - what optional labels am I interested in (don't do string comparisons in plugin option)
-
-// Remove target filtering from underlying target filter...in base OTel plugin
-
 // TestDetermineTargetCSM tests the helper function that determines whether a
 // target is relevant to CSM or not, based off the rules outlined in design.
 func (s) TestDetermineTargetCSM(t *testing.T) {
-	cpo := &CSMPluginOption{}
 	tests := []struct{
 		name string
 		target string
@@ -257,28 +274,13 @@ func (s) TestDetermineTargetCSM(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) { // more extensible comes later so if this is internal we can always iterate
-			if got := cpo.determineTargetCSM(test.target); got != test.targetCSM {
+		t.Run(test.name, func(t *testing.T) {
+			if got := determineTargetCSM(test.target); got != test.targetCSM {
 				t.Fatalf("cpo.determineTargetCSM(%v): got %v, want %v", test.target, got, test.targetCSM)
 			}
 		})
 	}
 }
-
-// pass either a bit or something that determines a bit like target to stats handler...
-// stats handler chooses per call whether to add CSM labels or not...
-
-// with csm enabled make sure retries work...
-// Do it by the ordering of stream operations...
-// as you intercept them and can handle it that way
-
-
-
-// deterministically set env before? It really should never hit unless deployed
-// on borg or something...
-
-// clear bootstrap in others...
-// ok label will just go to "unknown"
 
 func (s) TestBootstrap(t *testing.T) {
 	tests := []struct {
@@ -331,28 +333,22 @@ func (s) TestBootstrap(t *testing.T) {
 	}
 }
 
-// if you unset env it'll all go to unknown anyway so you'll be fine wrt test unset vs. empty doesn't matter for testing env
+// clearEnv unsets all the environment variables relevant to the csm
+// PluginOption.
+func clearEnv() {
+	os.Unsetenv(envconfig.XDSBootstrapFileContentEnv)
+	os.Unsetenv(envconfig.XDSBootstrapFileNameEnv)
 
-// Implement this, do two failing tests for GetLabels,
-// and then declare interface then cleanup then you're good...
-
-
-func clearEnv() { // only invoke for tests that need this...in the beginning of the tests...
-	// defer to original
-	// or just do like Eric and mock the env var calls...
-
-	// os.UnsetEnv?
-
-	// return cleanup func that defers all 3 to original...like other tests
-
-} // or just see what Doug said...
+	os.Unsetenv("CSM_CANONICAL_SERVICE_NAME")
+	os.Unsetenv("CSM_WORKLOAD_NAME")
+}
 
 // TestSetLabels tests the setting of labels, which snapshots the resource and
 // environment. It mocks the resource and environment, and then calls into
 // labels creation. It verifies to local labels created and metadata exchange
 // labels emitted from the setLabels function.
 func (s) TestSetLabels(t *testing.T) {
-	// Clear env...and defer it?
+	clearEnv()
 	tests := []struct {
 		name string
 		resourceKeyValues map[string]string
@@ -523,7 +519,7 @@ func verifyMetadataExchangeLabels(mdEncoded string, mdLabelsWant map[string]stri
 	}
 	fields := spb.GetFields()
 	for k, v := range mdLabelsWant {
-		if val, ok := fields[k]; !ok { // fields can have extra...len check if you want this...guarantees 1:1
+		if val, ok := fields[k]; !ok {
 			if _, ok := val.GetKind().(*structpb.Value_StringValue); !ok {
 				return fmt.Errorf("struct value for key %v should be string type", k)
 			}
@@ -531,6 +527,9 @@ func verifyMetadataExchangeLabels(mdEncoded string, mdLabelsWant map[string]stri
 				return fmt.Errorf("struct value for key %v got: %v, want %v", k, val.GetStringValue(), v)
 			}
 		}
+	}
+	if len(mdLabelsWant) != len(fields) {
+		return fmt.Errorf("len(mdLabelsWant) = %v, len(mdLabelsGot) = %v", len(mdLabelsWant), len(fields))
 	}
 	return nil
 }

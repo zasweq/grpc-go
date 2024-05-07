@@ -16,6 +16,7 @@
  *
  */
 
+// package csm contains the implementation of the CSM Plugin Option.
 package csm
 
 import (
@@ -26,10 +27,10 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal/xds/bootstrap"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/stats/opentelemetry/internal"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -48,31 +49,23 @@ var logger = grpclog.Component("csm-observability-plugin")
 
 // AddLabels adds CSM labels to the provided context's metadata, as a encoded
 // protobuf Struct as the value of x-envoy-metadata.
-func (cpo *CSMPluginOption) AddLabels(ctx context.Context) context.Context {
+func (cpo *PluginOption) AddLabels(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, cpo.metadataExchangeLabelsEncoded)
-} // Client side - in interceptors can simply AddLabels in Unary/Streaming...
+}
 
-// called at construction time in interceptor so...
-func (cpo *CSMPluginOption) NewLabelsMD() metadata.MD {
+// NewLabelsMD returns a metadata.MD with the CSM labels as a encoded protobuf
+// Struct as the value of x-envoy-metadata.
+func (cpo *PluginOption) NewLabelsMD() metadata.MD {
 	return metadata.New(map[string]string{
 		metadataExchangeKey: cpo.metadataExchangeLabelsEncoded,
 	})
-} // md the plugin option wants to emit...(mention extensible for the top level plugin option?)
-
-// OTel -> interface where you can plug in different interfaces in case someone
-// wants to do something different
-
-// How will this mechanically get called server side?
-
-// don't require md to be there, create a new thing to persist in wrapped stream
-// to intercept operations downward
-
+}
 
 // GetLabels gets the CSM peer labels from the metadata provided. It returns
 // "unknown" for labels not found. Labels returned depend on the remote type.
 // Additionally, local labels determined at initialization time are appended to
 // labels returned, in addition to the optionalLabels provided.
-func (cpo *CSMPluginOption) GetLabels(md metadata.MD, optionalLabels map[string]string) map[string]string { // also take optional labels - this is mechanically how it'll get xDS labels and gcs metrics...this should be part of API
+func (cpo *PluginOption) GetLabels(md metadata.MD, optionalLabels map[string]string) map[string]string { // also take optional labels - this is mechanically how it'll get xDS labels and gcs metrics...this should be part of API
 	labels := map[string]string{ // Remote labels if type is unknown (i.e. unset or error processing x-envoy-peer-metadata)
 		"csm.remote_workload_type": "unknown",
 		"csm.remote_workload_canonical_service": "unknown",
@@ -303,18 +296,16 @@ func getNodeID() string {
 		return ""
 	}
 	return cfg.NodeProto.GetId()
-
-	return "unknown"
 }
 
 // metadataExchangeKey is the key for HTTP metadata exchange.
 const metadataExchangeKey = "x-envoy-peer-metadata"
 
-// CSMPluginOption emits CSM Labels from the environment and metadata exchange
+// PluginOption emits CSM Labels from the environment and metadata exchange
 // for csm channels and all servers.
 //
-// Do not use this directly; use NewCSMPluginOption instead.
-type CSMPluginOption struct { // export everything, how will it get a ref if it's holding onto an interface, return the actual type, no doesn't need access to these fields accessed through interface...
+// Do not use this directly; use NewPluginOption instead.
+type PluginOption struct {
 	// localLabels are the labels that identify the local environment a binary
 	// is run in, and will be emitted from the CSM Plugin Option.
 	localLabels map[string]string
@@ -323,109 +314,20 @@ type CSMPluginOption struct { // export everything, how will it get a ref if it'
 	// and base 64 encoded. This gets sent out from all the servers running in
 	// this process and for csm channels.
 	metadataExchangeLabelsEncoded string
-} // unexported? Keep internal to OpenTelemetry?
+}
 
-// TODO: Figure out this interface stuff, finish the clearing of env (or leave up to Doug), and also
-// make it's own go.mod, cleanup?
-
-// return this type as an interface?
-// return an interface right? of OTel package...(interface in OTel package)
-
-func NewCSMPluginOption() *CSMPluginOption { // export the type? and then caller can set it as interface (when does it convert from concrete type to interface?)
+// NewPluginOption returns a new PluginOption with local labels and metadata
+// exchange labels derived from the environment.
+func NewPluginOption() internal.PluginOption {
 	localLabels, metadataExchangeLabelsEncoded := constructMetadataFromEnv()
 
-	return &CSMPluginOption{
+	return &PluginOption{
 		localLabels: localLabels,
 		metadataExchangeLabelsEncoded: metadataExchangeLabelsEncoded,
 	}
 }
 
-
-
-
-
-
-
-// CSMObservability(OTel options) (csm||!notcsm)
-
-// internal/csm
-
-// csm - everything in OTel directory
-
-// Separate package csm, plumb everything through internal,
-// but one module...but API internal (plugin option), can set
-// through internal, calls internal type
-
-// csm -> imports otel
-// but not otel -> csm
-
-// csm creates OTel plugin with itself...
-
-
-// csm creates itself with itself or without, it internally makes the decision
-// (lives in the ether), on the plugin option, when it is not, csm determines
-// whether it's composed
-
-// this prevents having to instantiate per channel
-// (otel with csm) (otel without csm) - Eric same thing
-// csm layer -> determines applicable...
-
-
-// internal not part of requirements, mallable in the future...
-// Eric same thing
-
-
-
-
-
-// global helper
-// calls the operation and sets internal object on OTel by calling constructor...
-
-// after Dial Option for late apply...pass in target per call or do this...
-
-// CSM -> O11y
-// o11y !-> CSM
-
-// CSM Global exposed to users
-
-// CSM late apply dial option determines whether it's applicable or not, so
-// determineTargetCSM pull out to the ether (and returns either instantiated instance)
-// Plumb in an internal unxported field...
-
-// csm instantiates two OTel instances: one with plugin option one without (mechanically how does it do this?)
-// late dial option returns this...
-
-// all this in internal/csm?
-// csm -> otel, uses it and configures it, plugin option unexported there
-// otel !-> csm
-
-// this rests in internal/csm, external csm/ will actually configure this
-
-// and so pull determineTarget() out into the csm package ether
-// late apply calls this...
-
-// Java has headache because apply doesn't know mutated target string...
-
-
-
-// CSMPluginOption lives in internal/...same with type
-
-// exported calls constructor, and sets OTel with it...two global instances...
-
-
-
-
-
-
-// pass canonical target or cc.Target() target after processing...or can honestly determine target from cc *after
-// processing*
-func (cpo *CSMPluginOption) DetermineApplicable(cc *grpc.ClientConn) bool { // We don't need a dial option now, there's a ref to cc and pass that to interceptor, Set this on the call...
-	return cpo.determineTargetCSM(cc.CanonicalTarget())
-}
-
-// if pass in cc be careful of race conditions on the read of cc...but this is
-// in interceptor so should never be read.
-func (cpo *CSMPluginOption) determineTargetCSM(target string) bool {
+func determineTargetCSM(target string) bool {
 	// On the client-side, the channel target is used to determine if a channel is a
 	// CSM channel or not. CSM channels need to have an “xds” scheme and a
 	// "traffic-director-global.xds.googleapis.com" authority. In the cases where no
@@ -447,31 +349,4 @@ func (cpo *CSMPluginOption) determineTargetCSM(target string) bool {
 		return parsedTarget.Host == "traffic-director-global.xds.googleapis.com"
 	}
 	return false
-} // Interceptor can always receive cc pointer, deref it to get the canonical target, than pass it to this thing...
-
-// internal only, not a part of OTel...
-
-// Authority parsed from target...
-// Problem solving ^^^ how to get authority above, for all servers unknown if no
-// labels...but still records for every server...
-
-// set a global option for all Servers to pick up with this OTel with CSM configured
-
-// for the race condition...for the function to set picker labels...
-// simply add a lock around the map write for labels...maybe needed for hedging do I need this...?
-// I think I still need this but Doug argued this is serial...
-
-// attempt scoped for the thing you stick in context + pick
-// stats handler called in same thread as pick?
-
-
-// internal/ for all this plugin option stuff...internal interfaces I'm assuming
-// can't implement if it internal
-// internal for xDS Bootstrap config or not
-
-// once I move xDS bootstrap, will need to write a full working config
-// can get tests in this package working orthogonal to bootstrap config changes...
-
-// psm bootstrap semantically...rather than xds bootstrap
-
-// define this interface in OTel...
+}
