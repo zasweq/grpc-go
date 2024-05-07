@@ -42,11 +42,6 @@ import (
 
 var logger = grpclog.Component("csm-observability-plugin")
 
-// This OpenTelemetryPluginOption type should be an opaque type (or equivalent),
-// and an API to create a CsmOpenTelemetryPluginOption should be provided
-// through a separate CSM library, that the user can set on the gRPC
-// OpenTelemetry plugin.
-
 // AddLabels adds CSM labels to the provided context's metadata, as a encoded
 // protobuf Struct as the value of x-envoy-metadata.
 func (cpo *PluginOption) AddLabels(ctx context.Context) context.Context {
@@ -65,9 +60,9 @@ func (cpo *PluginOption) NewLabelsMD() metadata.MD {
 // "unknown" for labels not found. Labels returned depend on the remote type.
 // Additionally, local labels determined at initialization time are appended to
 // labels returned, in addition to the optionalLabels provided.
-func (cpo *PluginOption) GetLabels(md metadata.MD, optionalLabels map[string]string) map[string]string { // also take optional labels - this is mechanically how it'll get xDS labels and gcs metrics...this should be part of API
+func (cpo *PluginOption) GetLabels(md metadata.MD, optionalLabels map[string]string) map[string]string {
 	labels := map[string]string{ // Remote labels if type is unknown (i.e. unset or error processing x-envoy-peer-metadata)
-		"csm.remote_workload_type": "unknown",
+		"csm.remote_workload_type":              "unknown",
 		"csm.remote_workload_canonical_service": "unknown",
 	}
 	// Append the local labels.
@@ -81,24 +76,20 @@ func (cpo *PluginOption) GetLabels(md metadata.MD, optionalLabels map[string]str
 	for k, v := range optionalLabels {
 		labels[k] = v
 	}
-	// Do I need to log any of these errors? or maybe add logger at high verbosity label that it's not present...
 	val := md.Get("x-envoy-peer-metadata")
 	// This can't happen if corresponding csm client because of proto wire
 	// format encoding, but since it is arbitrary off the wire be safe.
 	if len(val) != 1 {
-		print("no x-envoy-peer-metadata")
 		return labels
 	}
 
 	protoWireFormat, err := base64.RawStdEncoding.DecodeString(val[0])
 	if err != nil {
-		print("decoding from base 64 doesn't work...")
 		return labels
 	}
 
 	spb := &structpb.Struct{}
 	if err := proto.Unmarshal(protoWireFormat, spb); err != nil {
-		print("unmarshaling from proto doesn't work")
 		return labels
 	}
 
@@ -147,7 +138,7 @@ func appendToLabelsFromMetadata(labels map[string]string, labelKey string, metad
 }
 
 // appendToLabelsFromResource appends to the labels map passed in. It sets
-// "unknown" if the resourceKey is not found in the attribute getAttrSetFromResourceDetector or is not a
+// "unknown" if the resourceKey is not found in the attribute set or is not a
 // string value, the string value otherwise.
 func appendToLabelsFromResource(labels map[string]string, labelKey string, resourceKey attribute.Key, set *attribute.Set) {
 	labelVal := "unknown"
@@ -159,9 +150,9 @@ func appendToLabelsFromResource(labels map[string]string, labelKey string, resou
 	labels[labelKey] = labelVal
 }
 
-// appendToLabelsFromEnv appends an env var key value pair to the labels passed
-// in. It sets "unknown" if environment variable is unset, the environment
-// variable otherwise.
+// appendToLabelsFromEnv appends an environment variable key value pair to the
+// labels passed in. It sets "unknown" if environment variable is unset, the
+// environment variable otherwise.
 func appendToLabelsFromEnv(labels map[string]string, labelKey string, envvar string) {
 	envvarVal := "unknown"
 	if val, ok := os.LookupEnv(envvar); ok {
@@ -173,7 +164,7 @@ func appendToLabelsFromEnv(labels map[string]string, labelKey string, envvar str
 var (
 	// This function will be overriden in unit tests.
 	getAttrSetFromResourceDetector = func() *attribute.Set {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer cancel()
 		r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()))
 
@@ -189,7 +180,7 @@ var (
 )
 
 // constructMetadataFromEnv creates local labels and labels to send to the peer
-// using metadata exchange based off resource detection and enviornment
+// using metadata exchange based off resource detection and environment
 // variables.
 func constructMetadataFromEnv() (map[string]string, string) {
 	set := getAttrSetFromResourceDetector()
@@ -273,18 +264,16 @@ func initializeLocalAndMetadataLabels(labels map[string]string) (map[string]stri
 	metadataExchangeLabelsEncoded := ""
 	if err == nil {
 		metadataExchangeLabelsEncoded = base64.RawStdEncoding.EncodeToString(protoWireFormat)
-	} else {
-		// This behavior triggers server side to reply (if sent from a gRPC
-		// Client within this binary) with the metadata exchange labels. Even if
-		// client side has a problem marshaling proto into wire format, it can
-		// still use server labels so send an empty string as the value of
-		// x-envoy-peer-metadata. The presence of this metadata exchange header
-		// will cause server side to respond with metadata exchange labels.
-		print("error marshaling proto: %v, will send empty val for metadata exchange")
 	}
+	// else - This behavior triggers server side to reply (if sent from a gRPC
+	// Client within this binary) with the metadata exchange labels. Even if
+	// client side has a problem marshaling proto into wire format, it can
+	// still use server labels so send an empty string as the value of
+	// x-envoy-peer-metadata. The presence of this metadata exchange header
+	// will cause server side to respond with metadata exchange labels.
+
 	return localLabels, metadataExchangeLabelsEncoded
 }
-
 
 // getNodeID gets the Node ID from the bootstrap data.
 func getNodeID() string {
@@ -322,7 +311,7 @@ func NewPluginOption() internal.PluginOption {
 	localLabels, metadataExchangeLabelsEncoded := constructMetadataFromEnv()
 
 	return &PluginOption{
-		localLabels: localLabels,
+		localLabels:                   localLabels,
 		metadataExchangeLabelsEncoded: metadataExchangeLabelsEncoded,
 	}
 }

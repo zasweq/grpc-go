@@ -44,60 +44,70 @@ func Test(t *testing.T) {
 	grpctest.RunSubTests(t, s{})
 }
 
+// clearEnv unsets all the environment variables relevant to the csm
+// PluginOption.
+func clearEnv() {
+	os.Unsetenv(envconfig.XDSBootstrapFileContentEnv)
+	os.Unsetenv(envconfig.XDSBootstrapFileNameEnv)
+
+	os.Unsetenv("CSM_CANONICAL_SERVICE_NAME")
+	os.Unsetenv("CSM_WORKLOAD_NAME")
+}
+
 func (s) TestGetLabels(t *testing.T) {
 	clearEnv()
 	cpo := NewPluginOption()
 
-	tests := []struct{
-		name string
-		unsetHeader bool // Should trigger "unknown" labels
-		twoValues bool // Should trigger "unknown" labels
+	tests := []struct {
+		name                   string
+		unsetHeader            bool // Should trigger "unknown" labels
+		twoValues              bool // Should trigger "unknown" labels
 		metadataExchangeLabels map[string]string
-		labelsWant map[string]string
+		labelsWant             map[string]string
 	}{
 		{
-			name: "unset-labels",
+			name:                   "unset-labels",
 			metadataExchangeLabels: nil,
 			labelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 
-				"csm.remote_workload_type": "unknown",
+				"csm.remote_workload_type":              "unknown",
 				"csm.remote_workload_canonical_service": "unknown",
 			},
 		},
 		{
 			name: "metadata-partially-set",
 			metadataExchangeLabels: map[string]string{
-				"type": "not-gce-or-gke",
+				"type":        "not-gce-or-gke",
 				"ignore-this": "ignore-this",
 			},
 			labelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 
-				"csm.remote_workload_type": "not-gce-or-gke",
+				"csm.remote_workload_type":              "not-gce-or-gke",
 				"csm.remote_workload_canonical_service": "unknown",
 			},
 		},
 		{
 			name: "google-compute-engine",
 			metadataExchangeLabels: map[string]string{ // All of these labels get emitted when type is "gcp_compute_engine".
-				"type": "gcp_compute_engine",
+				"type":              "gcp_compute_engine",
 				"canonical_service": "canonical_service_val",
-				"project_id": "unique-id",
-				"location": "us-east",
-				"workload_name": "workload_name_val",
+				"project_id":        "unique-id",
+				"location":          "us-east",
+				"workload_name":     "workload_name_val",
 			},
 			labelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 
-				"csm.remote_workload_type": "gcp_compute_engine",
+				"csm.remote_workload_type":              "gcp_compute_engine",
 				"csm.remote_workload_canonical_service": "canonical_service_val",
-				"csm.remote_workload_project_id": "unique-id",
-				"csm.remote_workload_location": "us-east",
-				"csm.remote_workload_name":	"workload_name_val",
+				"csm.remote_workload_project_id":        "unique-id",
+				"csm.remote_workload_location":          "us-east",
+				"csm.remote_workload_name":              "workload_name_val",
 			},
 		},
 		// unset should go to unknown, ignore GKE labels that are not relevant
@@ -105,110 +115,110 @@ func (s) TestGetLabels(t *testing.T) {
 		{
 			name: "google-compute-engine-labels-partially-set-with-extra",
 			metadataExchangeLabels: map[string]string{
-				"type": "gcp_compute_engine",
+				"type":              "gcp_compute_engine",
 				"canonical_service": "canonical_service_val",
-				"project_id": "unique-id",
-				"location": "us-east",
+				"project_id":        "unique-id",
+				"location":          "us-east",
 				// "workload_name": "", unset workload name - should become "unknown"
 				"namespace_name": "should-be-ignored",
-				"cluster_name": "should-be-ignored",
+				"cluster_name":   "should-be-ignored",
 			},
 			labelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 
-				"csm.remote_workload_type": "gcp_compute_engine",
+				"csm.remote_workload_type":              "gcp_compute_engine",
 				"csm.remote_workload_canonical_service": "canonical_service_val",
-				"csm.remote_workload_project_id": "unique-id",
-				"csm.remote_workload_location": "us-east",
-				"csm.remote_workload_name":	"unknown",
+				"csm.remote_workload_project_id":        "unique-id",
+				"csm.remote_workload_location":          "us-east",
+				"csm.remote_workload_name":              "unknown",
 			},
 		},
 		{
 			name: "google-kubernetes-engine",
 			metadataExchangeLabels: map[string]string{
-				"type": "gcp_kubernetes_engine",
+				"type":              "gcp_kubernetes_engine",
 				"canonical_service": "canonical_service_val",
-				"project_id": "unique-id",
-				"namespace_name": "namespace_name_val",
-				"cluster_name": "cluster_name_val",
-				"location": "us-east",
-				"workload_name": "workload_name_val",
+				"project_id":        "unique-id",
+				"namespace_name":    "namespace_name_val",
+				"cluster_name":      "cluster_name_val",
+				"location":          "us-east",
+				"workload_name":     "workload_name_val",
 			},
 			labelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 
-				"csm.remote_workload_type": "gcp_kubernetes_engine",
+				"csm.remote_workload_type":              "gcp_kubernetes_engine",
 				"csm.remote_workload_canonical_service": "canonical_service_val",
-				"csm.remote_workload_project_id": "unique-id",
-				"csm.remote_workload_cluster_name": "cluster_name_val",
-				"csm.remote_workload_namespace_name": "namespace_name_val",
-				"csm.remote_workload_location": "us-east",
-				"csm.remote_workload_name":	"workload_name_val",
+				"csm.remote_workload_project_id":        "unique-id",
+				"csm.remote_workload_cluster_name":      "cluster_name_val",
+				"csm.remote_workload_namespace_name":    "namespace_name_val",
+				"csm.remote_workload_location":          "us-east",
+				"csm.remote_workload_name":              "workload_name_val",
 			},
 		},
 		{
 			name: "google-kubernetes-engine-labels-partially-set",
 			metadataExchangeLabels: map[string]string{
-				"type": "gcp_kubernetes_engine",
+				"type":              "gcp_kubernetes_engine",
 				"canonical_service": "canonical_service_val",
-				"project_id": "unique-id",
-				"namespace_name": "namespace_name_val",
+				"project_id":        "unique-id",
+				"namespace_name":    "namespace_name_val",
 				// "cluster_name": "", cluster_name unset, should become "unknown"
 				"location": "us-east",
 				// "workload_name": "", workload_name unset, should become "unknown"
 			},
 			labelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 
-				"csm.remote_workload_type": "gcp_kubernetes_engine",
+				"csm.remote_workload_type":              "gcp_kubernetes_engine",
 				"csm.remote_workload_canonical_service": "canonical_service_val",
-				"csm.remote_workload_project_id": "unique-id",
-				"csm.remote_workload_cluster_name": "unknown",
-				"csm.remote_workload_namespace_name": "namespace_name_val",
-				"csm.remote_workload_location": "us-east",
-				"csm.remote_workload_name":	"unknown",
+				"csm.remote_workload_project_id":        "unique-id",
+				"csm.remote_workload_cluster_name":      "unknown",
+				"csm.remote_workload_namespace_name":    "namespace_name_val",
+				"csm.remote_workload_location":          "us-east",
+				"csm.remote_workload_name":              "unknown",
 			},
 		},
 		{
 			name: "unset-header",
 			metadataExchangeLabels: map[string]string{
-			"type": "gcp_kubernetes_engine",
-			"canonical_service": "canonical_service_val",
-			"project_id": "unique-id",
-			"namespace_name": "namespace_name_val",
-			"cluster_name": "cluster_name_val",
-			"location": "us-east",
-			"workload_name": "workload_name_val",
-		},
+				"type":              "gcp_kubernetes_engine",
+				"canonical_service": "canonical_service_val",
+				"project_id":        "unique-id",
+				"namespace_name":    "namespace_name_val",
+				"cluster_name":      "cluster_name_val",
+				"location":          "us-east",
+				"workload_name":     "workload_name_val",
+			},
 			unsetHeader: true,
 			labelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 
-				"csm.remote_workload_type": "unknown",
+				"csm.remote_workload_type":              "unknown",
 				"csm.remote_workload_canonical_service": "unknown",
 			},
 		},
 		{
 			name: "two-header-values",
 			metadataExchangeLabels: map[string]string{
-				"type": "gcp_kubernetes_engine",
+				"type":              "gcp_kubernetes_engine",
 				"canonical_service": "canonical_service_val",
-				"project_id": "unique-id",
-				"namespace_name": "namespace_name_val",
-				"cluster_name": "cluster_name_val",
-				"location": "us-east",
-				"workload_name": "workload_name_val",
+				"project_id":        "unique-id",
+				"namespace_name":    "namespace_name_val",
+				"cluster_name":      "cluster_name_val",
+				"location":          "us-east",
+				"workload_name":     "workload_name_val",
 			},
 			twoValues: true,
 			labelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 
-				"csm.remote_workload_type": "unknown",
+				"csm.remote_workload_type":              "unknown",
 				"csm.remote_workload_canonical_service": "unknown",
 			},
 		},
@@ -247,29 +257,29 @@ func (s) TestGetLabels(t *testing.T) {
 // TestDetermineTargetCSM tests the helper function that determines whether a
 // target is relevant to CSM or not, based off the rules outlined in design.
 func (s) TestDetermineTargetCSM(t *testing.T) {
-	tests := []struct{
-		name string
-		target string
+	tests := []struct {
+		name      string
+		target    string
 		targetCSM bool
 	}{
 		{
-			name: "dns:///localhost",
-			target: "normal-target-here",
+			name:      "dns:///localhost",
+			target:    "normal-target-here",
 			targetCSM: false,
 		},
 		{
-			name: "xds-no-authority",
-			target: "xds:///localhost",
+			name:      "xds-no-authority",
+			target:    "xds:///localhost",
 			targetCSM: true,
 		},
 		{
-			name: "xds-traffic-director-authority",
-			target: "xds://traffic-director-global.xds.googleapis.com/localhost",
+			name:      "xds-traffic-director-authority",
+			target:    "xds://traffic-director-global.xds.googleapis.com/localhost",
 			targetCSM: true,
 		},
 		{
-			name: "xds-not-traffic-director-authority",
-			target: "xds://not-traffic-director-authority/localhost",
+			name:      "xds-not-traffic-director-authority",
+			target:    "xds://not-traffic-director-authority/localhost",
 			targetCSM: false,
 		},
 	}
@@ -284,28 +294,28 @@ func (s) TestDetermineTargetCSM(t *testing.T) {
 
 func (s) TestBootstrap(t *testing.T) {
 	tests := []struct {
-		name string
-		nodeID string
+		name       string
+		nodeID     string
 		meshIDWant string
 	}{
 		{
-			name: "malformed-node-id-unknown",
-			nodeID: "malformed",
+			name:       "malformed-node-id-unknown",
+			nodeID:     "malformed",
 			meshIDWant: "unknown",
 		},
 		{
-			name: "node-id-parsed",
-			nodeID: "projects/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa",
+			name:       "node-id-parsed",
+			nodeID:     "projects/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa",
 			meshIDWant: "mesh_id",
 		},
 		{
-			name: "wrong-syntax-unknown",
-			nodeID: "wrong-syntax/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa",
+			name:       "wrong-syntax-unknown",
+			nodeID:     "wrong-syntax/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa",
 			meshIDWant: "unknown",
 		},
 		{
-			name: "node-id-parsed",
-			nodeID: "projects/12345/networks/mesh:/nodes/aaaa-aaaa-aaaa-aaaa",
+			name:       "node-id-parsed",
+			nodeID:     "projects/12345/networks/mesh:/nodes/aaaa-aaaa-aaaa-aaaa",
 			meshIDWant: "",
 		},
 	}
@@ -313,7 +323,7 @@ func (s) TestBootstrap(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cleanup, err := bootstrap.CreateFile(bootstrap.Options{
-				NodeID: test.nodeID,
+				NodeID:    test.nodeID,
 				ServerURI: "xds_server_uri",
 			})
 			if err != nil {
@@ -333,16 +343,6 @@ func (s) TestBootstrap(t *testing.T) {
 	}
 }
 
-// clearEnv unsets all the environment variables relevant to the csm
-// PluginOption.
-func clearEnv() {
-	os.Unsetenv(envconfig.XDSBootstrapFileContentEnv)
-	os.Unsetenv(envconfig.XDSBootstrapFileNameEnv)
-
-	os.Unsetenv("CSM_CANONICAL_SERVICE_NAME")
-	os.Unsetenv("CSM_WORKLOAD_NAME")
-}
-
 // TestSetLabels tests the setting of labels, which snapshots the resource and
 // environment. It mocks the resource and environment, and then calls into
 // labels creation. It verifies to local labels created and metadata exchange
@@ -350,48 +350,48 @@ func clearEnv() {
 func (s) TestSetLabels(t *testing.T) {
 	clearEnv()
 	tests := []struct {
-		name string
-		resourceKeyValues map[string]string
+		name                             string
+		resourceKeyValues                map[string]string
 		csmCanonicalServiceNamePopulated bool
-		csmWorkloadNamePopulated bool
-		bootstrapGeneratorPopulated bool
-		localLabelsWant map[string]string
-		metadataExchangeLabelsWant map[string]string
+		csmWorkloadNamePopulated         bool
+		bootstrapGeneratorPopulated      bool
+		localLabelsWant                  map[string]string
+		metadataExchangeLabelsWant       map[string]string
 	}{
 		{
-			name: "no-type",
+			name:                             "no-type",
 			csmCanonicalServiceNamePopulated: true,
-			bootstrapGeneratorPopulated: true,
-			resourceKeyValues: map[string]string{},
+			bootstrapGeneratorPopulated:      true,
+			resourceKeyValues:                map[string]string{},
 			localLabelsWant: map[string]string{
 				"csm.workload_canonical_service": "canonical_service_name_val", // env var populated so should be set.
-				"csm.mesh_id": "mesh_id", // env var populated so should be set.
+				"csm.mesh_id":                    "mesh_id",                    // env var populated so should be set.
 			},
 			metadataExchangeLabelsWant: map[string]string{
-				"type": "unknown",
+				"type":              "unknown",
 				"canonical_service": "canonical_service_name_val", // env var populated so should be set.
 			},
 		},
 		{
-			name: "gce",
+			name:                     "gce",
 			csmWorkloadNamePopulated: true,
 			resourceKeyValues: map[string]string{
 				"cloud.platform": "gcp_compute_engine",
 				// csm workload name is an env var
 				"cloud.availability_zone": "cloud_availability_zone_val",
-				"cloud.region": "should-be-ignored", // cloud.availability_zone takes precedence
-				"cloud.account.id": "cloud_account_id_val",
+				"cloud.region":            "should-be-ignored", // cloud.availability_zone takes precedence
+				"cloud.account.id":        "cloud_account_id_val",
 			},
 			localLabelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 			},
 			metadataExchangeLabelsWant: map[string]string{
-				"type": "gcp_compute_engine",
+				"type":              "gcp_compute_engine",
 				"canonical_service": "unknown",
-				"workload_name": "workload_name_val",
-				"location": "cloud_availability_zone_val",
-				"project_id": "cloud_account_id_val",
+				"workload_name":     "workload_name_val",
+				"location":          "cloud_availability_zone_val",
+				"project_id":        "cloud_account_id_val",
 			},
 		},
 		{
@@ -400,18 +400,18 @@ func (s) TestSetLabels(t *testing.T) {
 				"cloud.platform": "gcp_compute_engine",
 				// csm workload name is an env var
 				"cloud.availability_zone": "cloud_availability_zone_val",
-				"cloud.region": "should-be-ignored", // cloud.availability_zone takes precedence
+				"cloud.region":            "should-be-ignored", // cloud.availability_zone takes precedence
 			},
 			localLabelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 			},
 			metadataExchangeLabelsWant: map[string]string{
-				"type": "gcp_compute_engine",
+				"type":              "gcp_compute_engine",
 				"canonical_service": "unknown",
-				"workload_name": "unknown",
-				"location": "cloud_availability_zone_val",
-				"project_id": "unknown",
+				"workload_name":     "unknown",
+				"location":          "cloud_availability_zone_val",
+				"project_id":        "unknown",
 			},
 		},
 		{
@@ -419,23 +419,23 @@ func (s) TestSetLabels(t *testing.T) {
 			resourceKeyValues: map[string]string{
 				"cloud.platform": "gcp_kubernetes_engine",
 				// csm workload name is an env var
-				"cloud.region": "cloud_region_val", // availability_zone isn't present, so this should become location
-				"cloud.account.id": "cloud_account_id_val",
+				"cloud.region":       "cloud_region_val", // availability_zone isn't present, so this should become location
+				"cloud.account.id":   "cloud_account_id_val",
 				"k8s.namespace.name": "k8s_namespace_name_val",
-				"k8s.cluster.name": "k8s_cluster_name_val",
+				"k8s.cluster.name":   "k8s_cluster_name_val",
 			},
 			localLabelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 			},
 			metadataExchangeLabelsWant: map[string]string{
-				"type": "gcp_kubernetes_engine",
+				"type":              "gcp_kubernetes_engine",
 				"canonical_service": "unknown",
-				"workload_name": "unknown",
-				"location": "cloud_region_val",
-				"project_id": "cloud_account_id_val",
-				"namespace_name": "k8s_namespace_name_val",
-				"cluster_name": "k8s_cluster_name_val",
+				"workload_name":     "unknown",
+				"location":          "cloud_region_val",
+				"project_id":        "cloud_account_id_val",
+				"namespace_name":    "k8s_namespace_name_val",
+				"cluster_name":      "k8s_cluster_name_val",
 			},
 		},
 		{
@@ -450,16 +450,16 @@ func (s) TestSetLabels(t *testing.T) {
 			},
 			localLabelsWant: map[string]string{
 				"csm.workload_canonical_service": "unknown",
-				"csm.mesh_id": "unknown",
+				"csm.mesh_id":                    "unknown",
 			},
 			metadataExchangeLabelsWant: map[string]string{
-				"type": "gcp_kubernetes_engine",
+				"type":              "gcp_kubernetes_engine",
 				"canonical_service": "unknown",
-				"workload_name": "unknown",
-				"location": "cloud_region_val",
-				"project_id": "unknown",
-				"namespace_name": "k8s_namespace_name_val",
-				"cluster_name": "unknown",
+				"workload_name":     "unknown",
+				"location":          "cloud_region_val",
+				"project_id":        "unknown",
+				"namespace_name":    "k8s_namespace_name_val",
+				"cluster_name":      "unknown",
 			},
 		},
 	}
@@ -470,13 +470,13 @@ func (s) TestSetLabels(t *testing.T) {
 					os.Setenv("CSM_CANONICAL_SERVICE_NAME", "canonical_service_name_val")
 					defer os.Unsetenv("CSM_CANONICAL_SERVICE_NAME")
 				}
-				if test.csmWorkloadNamePopulated { // If can't assume clean env clear out bootstrap config and these two (resource detection I'll always mock)
+				if test.csmWorkloadNamePopulated {
 					os.Setenv("CSM_WORKLOAD_NAME", "workload_name_val")
 					defer os.Unsetenv("CSM_WORKLOAD_NAME")
 				}
 				if test.bootstrapGeneratorPopulated {
 					cleanup, err := bootstrap.CreateFile(bootstrap.Options{
-						NodeID: "projects/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa",
+						NodeID:    "projects/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa",
 						ServerURI: "xds_server_uri",
 					})
 					if err != nil {
@@ -492,7 +492,7 @@ func (s) TestSetLabels(t *testing.T) {
 				// of reading from resource.
 				attrSet := attribute.NewSet(attributes...)
 				origGetAttrSet := getAttrSetFromResourceDetector
-				getAttrSetFromResourceDetector = func() *attribute.Set{
+				getAttrSetFromResourceDetector = func() *attribute.Set {
 					return &attrSet
 				}
 				defer func() { getAttrSetFromResourceDetector = origGetAttrSet }()

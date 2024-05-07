@@ -23,12 +23,13 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal"
+
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 var logger = grpclog.Component("otel-plugin")
@@ -116,7 +117,7 @@ type MetricsOptions struct {
 	// channel and returns a bool representing whether to use target as a label
 	// value or use the string "other". If unset, will use the target string as
 	// is. This only applies for client side metrics.
-	TargetAttributeFilter func(string) bool // Get rid of this...
+	TargetAttributeFilter func(string) bool
 
 	// MethodAttributeFilter is to record the method name of RPCs handled by
 	// grpc.UnknownServiceHandler, but take care to limit the values allowed, as
