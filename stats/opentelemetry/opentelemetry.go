@@ -20,6 +20,7 @@ package opentelemetry
 
 import (
 	"context"
+	internal2 "google.golang.org/grpc/stats/opentelemetry/internal"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -127,6 +128,8 @@ type MetricsOptions struct {
 	// grpc.StaticMethodCallOption as a call option into Invoke or NewStream.
 	// This only applies for server side metrics.
 	MethodAttributeFilter func(string) bool
+
+	PluginOption internal2.PluginOption // can an external user set this?
 }
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation

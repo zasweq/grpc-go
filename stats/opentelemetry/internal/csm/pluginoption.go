@@ -44,13 +44,13 @@ var logger = grpclog.Component("csm-observability-plugin")
 
 // AddLabels adds CSM labels to the provided context's metadata, as a encoded
 // protobuf Struct as the value of x-envoy-metadata.
-func (cpo *PluginOption) AddLabels(ctx context.Context) context.Context {
+func (cpo *pluginOption) AddLabels(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, cpo.metadataExchangeLabelsEncoded)
 }
 
 // NewLabelsMD returns a metadata.MD with the CSM labels as a encoded protobuf
 // Struct as the value of x-envoy-metadata.
-func (cpo *PluginOption) NewLabelsMD() metadata.MD {
+func (cpo *pluginOption) NewLabelsMD() metadata.MD {
 	return metadata.New(map[string]string{
 		metadataExchangeKey: cpo.metadataExchangeLabelsEncoded,
 	})
@@ -60,7 +60,7 @@ func (cpo *PluginOption) NewLabelsMD() metadata.MD {
 // "unknown" for labels not found. Labels returned depend on the remote type.
 // Additionally, local labels determined at initialization time are appended to
 // labels returned, in addition to the optionalLabels provided.
-func (cpo *PluginOption) GetLabels(md metadata.MD, optionalLabels map[string]string) map[string]string {
+func (cpo *pluginOption) GetLabels(md metadata.MD, optionalLabels map[string]string) map[string]string {
 	labels := map[string]string{ // Remote labels if type is unknown (i.e. unset or error processing x-envoy-peer-metadata)
 		"csm.remote_workload_type":              "unknown",
 		"csm.remote_workload_canonical_service": "unknown",
@@ -290,11 +290,11 @@ func getNodeID() string {
 // metadataExchangeKey is the key for HTTP metadata exchange.
 const metadataExchangeKey = "x-envoy-peer-metadata"
 
-// PluginOption emits CSM Labels from the environment and metadata exchange
+// pluginOption emits CSM Labels from the environment and metadata exchange
 // for csm channels and all servers.
 //
 // Do not use this directly; use NewPluginOption instead.
-type PluginOption struct {
+type pluginOption struct {
 	// localLabels are the labels that identify the local environment a binary
 	// is run in, and will be emitted from the CSM Plugin Option.
 	localLabels map[string]string
@@ -305,12 +305,12 @@ type PluginOption struct {
 	metadataExchangeLabelsEncoded string
 }
 
-// NewPluginOption returns a new PluginOption with local labels and metadata
+// NewPluginOption returns a new pluginOption with local labels and metadata
 // exchange labels derived from the environment.
 func NewPluginOption() internal.PluginOption {
 	localLabels, metadataExchangeLabelsEncoded := constructMetadataFromEnv()
 
-	return &PluginOption{
+	return &pluginOption{
 		localLabels:                   localLabels,
 		metadataExchangeLabelsEncoded: metadataExchangeLabelsEncoded,
 	}

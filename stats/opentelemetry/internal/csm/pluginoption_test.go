@@ -45,7 +45,7 @@ func Test(t *testing.T) {
 }
 
 // clearEnv unsets all the environment variables relevant to the csm
-// PluginOption.
+// pluginOption.
 func clearEnv() {
 	os.Unsetenv(envconfig.XDSBootstrapFileContentEnv)
 	os.Unsetenv(envconfig.XDSBootstrapFileNameEnv)

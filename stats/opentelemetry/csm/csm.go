@@ -18,4 +18,48 @@
 
 package csm // package csm? exposed to users in same package, takes dependency on otel so yeah
 
+import (
+	"google.golang.org/grpc/stats/opentelemetry"
+	"google.golang.org/grpc/stats/opentelemetry/internal/csm"
+)
 
+// global setup - one global function that takes in otel options
+func GlobalSetup(options opentelemetry.Options) {
+	// seems like we're going two global instances route:
+	// dial option + otel
+	// just dial option
+
+	// server option + otel
+	// just server option
+}
+
+func DialOption(options opentelemetry.Options) {
+	options.MetricsOptions.PluginOption = csm.NewPluginOption() // I guess this type can be kept internal
+	opentelemetry.DialOption(options)
+}
+
+func ServerOption(options opentelemetry.Options) {
+	options.MetricsOptions.PluginOption = csm.NewPluginOption()
+	opentelemetry.ServerOption(options)
+}
+
+// need to add example for this...probably local example as well for this...
+// example for this layer or otel layer?
+
+// musing
+
+func configureOTelWithOptions(options opentelemetry.Options) {
+	opentelemetry.DialOption(options)
+	opentelemetry.ServerOption(options)
+	options.MetricsOptions
+	options.MetricsOptions.PluginOption
+}
+
+// once I figure out this API this is how I will unit test...
+
+// Just extra layer around DialOption() (adds csm plugin option)
+// and ServerOption() (adds csm plugin option)
+// e2e test for this layer will call this - same thing as OTel e2e with metrics expected
+// except with extra labels, and also figure out a way to induce trailers only
+
+// global will call that ^^^
