@@ -23,13 +23,21 @@ import (
 	"google.golang.org/grpc/stats/opentelemetry/internal/csm"
 )
 
+// Rebase this onto new thing
+
+// The setting of csm plugin option happens through an internal function
+// unexported internal (internal not important - the determinant of interface not showing up is unexported methods, which it can't search for outside package)
+// set through an internal only function - see ORCA for example
+
+
+
 // global setup - one global function that takes in otel options
 func GlobalSetup(options opentelemetry.Options) {
 	// seems like we're going two global instances route:
-	// dial option + otel
+	// dial option + otel (late apply dial option)
 	// just dial option
 
-	// server option + otel
+	// server option + otel (join server options? blocks this is this already present)
 	// just server option
 }
 
