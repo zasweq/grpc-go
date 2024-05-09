@@ -2121,7 +2121,7 @@ func ClientSupportedCompressors(ctx context.Context) ([]string, error) {
 // The error returned is compatible with the status package.  However, the
 // status code will often not match the RPC status as seen by the client
 // application, and therefore, should not be relied upon for this purpose.
-func SetTrailer(ctx context.Context, md metadata.MD) error {
+func SetTrailer(ctx context.Context, md metadata.MD) error { // gets transport stream out of *context*, normal flow puts this in, calls it on that...ask Doug about this
 	if md.Len() == 0 {
 		return nil
 	}

@@ -20,7 +20,6 @@ package opentelemetry
 
 import (
 	"context"
-	internal2 "google.golang.org/grpc/stats/opentelemetry/internal"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,10 +28,18 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal"
+	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 )
+
+func init() {
+	otelinternal.SetPluginOption = func(o *Options, po otelinternal.PluginOption) {
+		o.MetricsOptions.pluginOption = po
+	}
+	// in callsite - csm.go, internal.AllowAnyMinReportingInterval.(func(*orca.ServiceOptions))(&opts) (except with created plugin option, not a part of api surface)
+}
 
 var logger = grpclog.Component("otel-plugin")
 
@@ -129,8 +136,25 @@ type MetricsOptions struct {
 	// This only applies for server side metrics.
 	MethodAttributeFilter func(string) bool
 
-	PluginOption internal2.PluginOption // can an external user set this?
+	pluginOption otelinternal.PluginOption // callsites if set (i.e. not nil)
 }
+
+// Put pluginOption in a file called internal.go?
+
+/*
+ointernal.AllowAnyMinReportingInterval = func(so *ServiceOptions) {
+		so.allowAnyMinReportingInterval = true
+	}
+	internal.ORCAAllowAnyMinReportingInterval = ointernal.AllowAnyMinReportingInterval
+*/
+
+/*
+the main reason to use internal/ is so that code can be *shared internally but not exported*
+if something grows to be massive it might also want internal packages for organization
+like i've wanted to move our ClientConn so that different parts are in internal packages, like addrConn...
+
+*/
+
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation
 // code for a grpc.ClientConn.

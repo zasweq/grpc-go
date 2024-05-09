@@ -18,14 +18,14 @@ package opentelemetry
 
 import (
 	"context"
-	"google.golang.org/grpc/metadata"
-	internal2 "google.golang.org/grpc/stats/opentelemetry/internal"
 	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/internal"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats"
+	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
 	"google.golang.org/grpc/status"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -35,7 +35,7 @@ import (
 type serverStatsHandler struct {
 	o Options // I could put it in this thing, then users can't set it, the call into csm/ exposed to users sets this...
 
-	pluginOption internal2.PluginOption
+	pluginOption otelinternal.PluginOption
 
 	serverMetrics serverMetrics
 }
@@ -54,105 +54,80 @@ func (ssh *serverStatsHandler) unaryInterceptor(ctx context.Context, req any, in
 
 	// where is the transport stream? in info? in handler? same mechanics wrt operations?
 
+	grpc.ServerTransportStream()
+
+	grpc.NewContextWithServerTransportStream()
+
 }
 
 // so a no-op interceptor if not CSM...how to make this determination bit *in OTel*?
 
-// attachMDStream wraps around the embedded grpc.ServerStream, and intercepts
+// attachLabelsStream wraps around the embedded grpc.ServerStream, and intercepts
 // the SetHeader/SendHeader/SendMsg/SendTrailer call to attach metadata exchange labels.
-type attachMDStream struct {
+type attachLabelsStream struct {
 	grpc.ServerStream
 	// grpc.ServerTransportStream // has no SendMsg, I guess happens in the operation of headers...I need to do the underlying plugin option first looks like this might not be solution
 
 	// Defaults to false...
-	sentMD atomic.Bool // accessed atomically (or could I use atomic bool type?)
+	attachedLabels         atomic.Bool // accessed atomically (or could I use atomic bool type?)
 	metadataExchangeLabels metadata.MD // written to when unary/streaming create this persisted from constructor?
 } // can I trace sync. requirements to what needs bool write or not?
 
-// pointer, append and create a new one?
-func (amd *attachMDStream) SendHeader(md metadata.MD) error {
-	amd.sentMD.Store(true) // gate with a read if something has been sent, can this operation happen before others?
-
-	// amd.sentMD.Store(false) // I don't think I'd ever need the operation, oh
-	// that protects it against the read ^^^
-	amd.sentMD.Load() // this atomically loads...
-
-	// could use these and couple the write and load if that takes logic
-	// But I think you just need a read which gates adding the md exchange labels
-	amd.sentMD.CompareAndSwap()
-	amd.sentMD.Swap()
-
-	if sentMD := amd.sentMD.Swap(true); !sentMD {
-		val := amd.metadataExchangeLabels.Get("x-envoy-peer-metadata")
+func (ald *attachLabelsStream) SetHeader(md metadata.MD) error { // you could get two that call this...
+	// just append, it can't call itself, I think append just once, if another
+	// comes in sets both so doesn't matter ordering... one of them that will
+	// eventually get merged will happen, other operations can't come in concurrently
+	// anyway so you're good here...can't have two merged
+	if sentMD := ald.attachedLabels.Swap(true); !sentMD { // Should this be renamed "attachedMD"?
+		val := ald.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
 	}
 
 
-	// how to make atomic etc.
-	// write to atomic bool
-	// attach label to it...isn't that a separate API on underlying plugin option
-	// set a md, it is on ctx or what?
-	// I think it has to be on md in this case...
+	return ald.SetHeader(md)
+} // Figure out how to merge with outgoing context...
 
-	// It's attaching the global...
-	// doesn't need to be through an add, could expose on a method on the plugin option
-	// that gets the global directly and that's how it gets plumbed here...
+// I think I just append to md, how do I test different scenarios wrt this trailers only logic have the stream server side need to do something with it...
 
-	return amd.ServerStream.SendHeader(md) // does the synchronous guarantees get lost somewhere here?
+// could return just the string from plugin option...
+
+// pointer, append and create a new one?
+func (ald *attachLabelsStream) SendHeader(md metadata.MD) error {
+	if attachedLabels := ald.attachedLabels.Swap(true); !attachedLabels { // I think this is fien no need to set header in this case...
+		val := ald.metadataExchangeLabels.Get("x-envoy-peer-metadata")
+		md.Append("x-envoy-peer-metadata", val...)
+	}
+
+	return ald.ServerStream.SendHeader(md) // does the synchronous guarantees get lost somewhere here?
 } // error in certain orderings, a state space of validity
 
 // write bool before any operations? race conditions...?
-func (amd *attachMDStream) SendMsg(m any) error {
-	// rough draft:
-	if sentMD := amd.sentMD.Swap(true); !sentMD { // makes it one operation so one of the writes will gate can't just yield...
-		// attach md?
-		amd.ServerStream.SetHeader(amd.metadataExchangeLabels) // this is written at build time so I'm good...
-		// sends it as seperate frame I guess
-		// gives up the lock, maybe best to combine into one operation
+func (ald *attachLabelsStream) SendMsg(m any) error {
+	if attachedLabels := ald.attachedLabels.Swap(true); !attachedLabels {
+		ald.ServerStream.SetHeader(ald.metadataExchangeLabels)
 	}
-	amd.sentMD.Store(true)
-
-
-
-	// SetHeader then send msg? How to make atomic? are calls sync?
-	// sendmsg and recvmsg are concurrent looks like the rest are ok...
-
-	// is this the right operation?
-	// amd.ServerStream.SetHeader(/**/) // when one of the following happens...documented...any race conditions that can come from wrapping thank god Doug is there to gate...
-
-	// Does SendMsg under the hood read from headers to be written?
-	amd.ServerStream.SendMsg(m)
+	ald.ServerStream.SendMsg(m)
 }
 
-/*
-so in the interceptor, if the handler returns and headers haven't been set/sent
-and no message has been sent, SetTrailer()
-*/
-
-func (amd *attachMDStream) SetTrailer(md metadata.MD) { // maybe wrapping it doesn't work?
-	// ignore this and don't wrap?
-
-	amd.ServerStream.SetTrailer()
-}
-
-func newAttachMDStream(s grpc.ServerStream) *attachMDStream { // I think this is all the logic, now to figure out how to get a ref and also...do it for unary? some transport stream?
-	return &attachMDStream{
-		ServerStream: s,
+func newAttachMDStream(ss grpc.ServerStream, md metadata.MD) *attachLabelsStream { // I think this is all the logic, now to figure out how to get a ref and also...do it for unary? some transport stream?
+	return &attachLabelsStream{
+		ServerStream: ss,
 		// Maybe it doesn't take it, returns a new md object which gets merged with md from application
-		metadataExchangeLabels: /*csm plugin.NewLabelsMD()*/, // should these getters be global?, how do I get this ref?
+		metadataExchangeLabels: md/*csm plugin.NewLabelsMD()*/, // should these getters be global?, how do I get this ref?
 	}
 }
 
 func (ssh *serverStatsHandler) streamInterceptor(srv any, ss grpc.ServerStream, ssi *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	// Do all operations needed while also wrapping the stream...
-	amd := newAttachMDStream(ss)
+	amd := newAttachMDStream(ss, /*csm plugin.NewLabelsMD()*/)
 	err := handler(srv, amd)
 	if err != nil {
 		// logger("RPC failed with error: %v", err)
 	}
 	// I attach it irrespective of failing RPC...if it fails before hitting stream interceptor that's fine, so this needs to do it for any error...which I think this is...
-	amd.sentMD // atomcially load this...
-	if !amd.sentMD.Load() { // handler responds, headers/messages haven't been set/sent...setTrailer...
+	// amd.sentMD // atomcially load this...
+	// should this also be conditional on err != nil...I don't think so
+	if !amd.attachedLabels.Load() { // handler responds, headers/messages haven't been set/sent...setTrailer...
 		/*
 			"the trailers aren't sent though
 			they're sent when the handler returns"

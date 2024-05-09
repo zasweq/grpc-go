@@ -19,7 +19,9 @@
 package csm // package csm? exposed to users in same package, takes dependency on otel so yeah
 
 import (
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/stats/opentelemetry"
+	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
 	"google.golang.org/grpc/stats/opentelemetry/internal/csm"
 )
 
@@ -39,15 +41,40 @@ func GlobalSetup(options opentelemetry.Options) {
 
 	// server option + otel (join server options? blocks this is this already present)
 	// just server option
+
+	// configure a late apply that returns one of two dial options
+
+	// these 2 live in ether, returned from late apply dial option
+	opentelemetry.DialOption(options) // these two are what you can keep as one of two just call directly
+	dialOptionWithCSMPluginOption(options) // this also lives in ether
+
+	// switch ServerOption (called in this) to return join with interceptors too
+	serverOptionWithCSMPluginOption(options) // This gets set as a global server option and picked up for all servers
 }
 
-func DialOption(options opentelemetry.Options) {
-	options.MetricsOptions.PluginOption = csm.NewPluginOption() // I guess this type can be kept internal
+// late apply dial option - need to rework operations in Dial()
+type lateApplyDialOption interface {
+	DialOption(target string) grpc.DialOption // almost a Dial Option factory
+}
+
+// late apply dial option
+func DialOption(target string) grpc.DialOption { // called from grpc (interface method), so must be exported
+	if /*target helper now living in this package*/ {
+		dialOptionWithCSMPluginOption(options) // lives in ether - two globally instantiated things
+	}
+	return opentelemetry.DialOption(options) // lives in ether - two globally instantiated things
+}
+
+func dialOptionWithCSMPluginOption(options opentelemetry.Options) grpc.DialOption {
+	//options.MetricsOptions.PluginOption = csm.NewPluginOption() // I guess this type can be kept internal
+	csm.NewPluginOption() // this will be in this package, *unexport* in PR in flight
+	otelinternal.SetPluginOption.(func(options opentelemetry.Options, po otelinternal.PluginOption))(options, csm.NewPluginOption()) // can I mutate heap user passes in
 	opentelemetry.DialOption(options)
 }
 
-func ServerOption(options opentelemetry.Options) {
-	options.MetricsOptions.PluginOption = csm.NewPluginOption()
+func serverOptionWithCSMPluginOption(options opentelemetry.Options) grpc.ServerOption {
+	//options.MetricsOptions.PluginOption = csm.NewPluginOption()
+	otelinternal.SetPluginOption.(func(options opentelemetry.Options, po otelinternal.PluginOption))(options, csm.NewPluginOption())
 	opentelemetry.ServerOption(options)
 }
 
@@ -71,3 +98,11 @@ func configureOTelWithOptions(options opentelemetry.Options) {
 // except with extra labels, and also figure out a way to induce trailers only
 
 // global will call that ^^^
+
+// internal plumbing for internal only plugin option thingy...
+
+// this package calls it? see orca for how it works...
+
+// get to previous PR and then rebase...
+// previous PR: unexport NewPluginOption
+// make metadata helper one...
