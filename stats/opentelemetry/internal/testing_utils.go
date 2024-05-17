@@ -112,6 +112,9 @@ type MetricDataOptions struct {
 	// assumed to have a gzip compressor call option set. This assumes both
 	// client and peer sent a message.
 	StreamingMessageSent bool
+	// UnaryCallFailed is whether the Unary Call failed, which would trigger
+	// trailers only.
+	UnaryCallFailed bool
 }
 
 // MetricData returns a metricsDataSlice for A66 metrics for client and server
@@ -126,41 +129,54 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 	duplexMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall")
 
 	targetAttr := attribute.String("grpc.target", options.Target) // target is variable - construct dynamically
-	statusAttr := attribute.String("grpc.status", "OK")
+
+	unaryStatusAttr := attribute.String("grpc.status", "OK")
+	streamingStatusAttr := attribute.String("grpc.status", "OK")
+	if options.UnaryCallFailed {
+		unaryStatusAttr = attribute.String("grpc.status", "UNKNOWN")
+	}
 
 	// Started don't need it luckily so just build out - other ones are fixed
 	unaryMethodClientSideEnd := []attribute.KeyValue{
 		unaryMethodAttr,
 		targetAttr,
-		statusAttr,
+		unaryStatusAttr,
 	}
 	streamingMethodClientSideEnd := []attribute.KeyValue{
 		duplexMethodAttr,
 		targetAttr,
-		statusAttr,
+		streamingStatusAttr,
 	}
 	unaryMethodServerSideEnd := []attribute.KeyValue{
 		unaryMethodAttr,
-		statusAttr,
+		unaryStatusAttr,
 	}
 
 	streamingMethodServerSideEnd := []attribute.KeyValue{
 		duplexMethodAttr,
-		statusAttr,
+		streamingStatusAttr,
 	}
 
 	unaryMethodClientSideEnd = append(unaryMethodClientSideEnd, options.CSMLabels...)
 	streamingMethodClientSideEnd = append(streamingMethodClientSideEnd, options.CSMLabels...)
 	unaryMethodServerSideEnd = append(unaryMethodServerSideEnd, options.CSMLabels...)
 	streamingMethodServerSideEnd = append(streamingMethodServerSideEnd, options.CSMLabels...)
-	var unaryCompressedBytesSentRecv int64
+	unaryCompressedBytesSentRecv := int64(0)
+	unaryBucketCounts := []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}
+	unaryExtrema := metricdata.NewExtrema(int64(0))
 	if options.UnaryMessageSent {
 		unaryCompressedBytesSentRecv = 57 // Fixed 10000 bytes with gzip assumption.
+		unaryBucketCounts = []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}
+		unaryExtrema = metricdata.NewExtrema(int64(57))
 	}
 
 	var streamingCompressedBytesSentRecv int64
+	streamingBucketCounts := []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}
+	streamingExtrema := metricdata.NewExtrema(int64(0))
 	if options.StreamingMessageSent {
 		streamingCompressedBytesSentRecv = 57 // Fixed 10000 bytes with gzip assumption.
+		streamingBucketCounts = []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}
+		streamingExtrema = metricdata.NewExtrema(int64(57))
 	}
 
 	return []metricdata.Metrics{
@@ -213,18 +229,18 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 						Attributes:   attribute.NewSet(unaryMethodClientSideEnd...),
 						Count:        1,
 						Bounds:       defaultSizeBounds,
-						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min:          metricdata.NewExtrema(int64(57)),
-						Max:          metricdata.NewExtrema(int64(57)),
+						BucketCounts: unaryBucketCounts,
+						Min:          unaryExtrema,
+						Max:          unaryExtrema,
 						Sum:          unaryCompressedBytesSentRecv,
 					},
 					{
 						Attributes:   attribute.NewSet(streamingMethodClientSideEnd...),
 						Count:        1,
 						Bounds:       defaultSizeBounds,
-						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min:          metricdata.NewExtrema(int64(0)),
-						Max:          metricdata.NewExtrema(int64(0)),
+						BucketCounts: streamingBucketCounts,
+						Min:          streamingExtrema,
+						Max:          streamingExtrema,
 						Sum:          streamingCompressedBytesSentRecv,
 					},
 				},
@@ -241,18 +257,18 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 						Attributes:   attribute.NewSet(unaryMethodClientSideEnd...),
 						Count:        1,
 						Bounds:       defaultSizeBounds,
-						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min:          metricdata.NewExtrema(int64(57)),
-						Max:          metricdata.NewExtrema(int64(57)),
+						BucketCounts: unaryBucketCounts,
+						Min:          unaryExtrema,
+						Max:          unaryExtrema,
 						Sum:          unaryCompressedBytesSentRecv,
 					},
 					{
 						Attributes:   attribute.NewSet(streamingMethodClientSideEnd...),
 						Count:        1,
 						Bounds:       defaultSizeBounds,
-						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min:          metricdata.NewExtrema(int64(0)),
-						Max:          metricdata.NewExtrema(int64(0)),
+						BucketCounts: streamingBucketCounts,
+						Min:          streamingExtrema,
+						Max:          streamingExtrema,
 						Sum:          streamingCompressedBytesSentRecv,
 					},
 				},
@@ -266,12 +282,12 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 			Data: metricdata.Histogram[float64]{
 				DataPoints: []metricdata.HistogramDataPoint[float64]{
 					{
-						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
+						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, unaryStatusAttr),
 						Count:      1,
 						Bounds:     defaultLatencyBounds,
 					},
 					{
-						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
+						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, streamingStatusAttr),
 						Count:      1,
 						Bounds:     defaultLatencyBounds,
 					},
@@ -308,18 +324,18 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 						Attributes:   attribute.NewSet(unaryMethodServerSideEnd...),
 						Count:        1,
 						Bounds:       defaultSizeBounds,
-						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min:          metricdata.NewExtrema(int64(57)),
-						Max:          metricdata.NewExtrema(int64(57)),
+						BucketCounts: unaryBucketCounts,
+						Min:          unaryExtrema,
+						Max:          unaryExtrema,
 						Sum:          unaryCompressedBytesSentRecv,
 					},
 					{
 						Attributes:   attribute.NewSet(streamingMethodServerSideEnd...),
 						Count:        1,
 						Bounds:       defaultSizeBounds,
-						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min:          metricdata.NewExtrema(int64(0)),
-						Max:          metricdata.NewExtrema(int64(0)),
+						BucketCounts: streamingBucketCounts,
+						Min:          streamingExtrema,
+						Max:          streamingExtrema,
 						Sum:          streamingCompressedBytesSentRecv,
 					},
 				},
@@ -336,18 +352,18 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 						Attributes:   attribute.NewSet(unaryMethodServerSideEnd...),
 						Count:        1,
 						Bounds:       defaultSizeBounds,
-						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min:          metricdata.NewExtrema(int64(57)),
-						Max:          metricdata.NewExtrema(int64(57)),
+						BucketCounts: unaryBucketCounts,
+						Min:          unaryExtrema,
+						Max:          unaryExtrema,
 						Sum:          unaryCompressedBytesSentRecv,
 					},
 					{
 						Attributes:   attribute.NewSet(streamingMethodServerSideEnd...),
 						Count:        1,
 						Bounds:       defaultSizeBounds,
-						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-						Min:          metricdata.NewExtrema(int64(0)),
-						Max:          metricdata.NewExtrema(int64(0)),
+						BucketCounts: streamingBucketCounts,
+						Min:          streamingExtrema,
+						Max:          streamingExtrema,
 						Sum:          streamingCompressedBytesSentRecv,
 					},
 				},
@@ -413,3 +429,7 @@ func CompareGotWantMetrics(ctx context.Context, t *testing.T, mr *metric.ManualR
 		}
 	}
 }
+
+// Trailers only, xDS Labels unit test if I want (set in an interceptor I add) - tests this half at least
+// I could send this out but probably wrap up eating errors for 1.20 and then get that PR in
+// and then interop :)

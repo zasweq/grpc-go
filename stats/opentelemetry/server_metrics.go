@@ -71,17 +71,17 @@ func (als *attachLabelsStream) SetHeader(md metadata.MD) error { // you could ge
 	// comes in sets both so doesn't matter ordering... one of them that will
 	// eventually get merged will happen, other operations can't come in concurrently
 	// anyway so you're good here...can't have two merged
-	if attachedLabels := als.attachedLabels.Swap(true); !attachedLabels {
+	if !als.attachedLabels.Swap(true) {
 		val := als.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
 	}
 
 
-	return als.SetHeader(md)
+	return als.ServerStream.SetHeader(md)
 }
 
 func (als *attachLabelsStream) SendHeader(md metadata.MD) error {
-	if attachedLabels := als.attachedLabels.Swap(true); !attachedLabels { // I think this is fine no need to set header in this case...
+	if !als.attachedLabels.Swap(true) { // I think this is fine no need to set header in this case...
 		val := als.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
 	}
@@ -90,7 +90,7 @@ func (als *attachLabelsStream) SendHeader(md metadata.MD) error {
 } // unary and streaming go through same underlying server stream flow...
 
 func (als *attachLabelsStream) SendMsg(m any) error {
-	if attachedLabels := als.attachedLabels.Swap(true); !attachedLabels {
+	if !als.attachedLabels.Swap(true) {
 		als.ServerStream.SetHeader(als.metadataExchangeLabels)
 	}
 	return als.ServerStream.SendMsg(m)
@@ -111,23 +111,28 @@ func (ssh *serverStatsHandler) unaryInterceptor(ctx context.Context, req any, in
 	// stream // grpc.ServerTransportStream...wrap these four operations?
 
 	// Yeah what do I do for this thing? wraps what
-	als := &attachLabelsTransportStream{
+	alts := &attachLabelsTransportStream{
 		ServerTransportStream: sts, // what server stream do I attach here?
 		metadataExchangeLabels: metadataExchangeLabels,
 	}
 	// and if I set the context does this just work?
-	ctx = grpc.NewContextWithServerTransportStream(ctx, als/*Is it just setting the context to this?*/)
+	ctx = grpc.NewContextWithServerTransportStream(ctx, alts /*Is it just setting the context to this?*/)
 
-	any, err := handler(ctx, req)
+	any, err := handler(ctx, req) // if returns a message, set the extra headers, and not set, send this before sending message
 	if err != nil {
+		// error returned, so trailers only
+		if !alts.attachedLabels.Swap(true) {
+			alts.SetTrailer(alts.metadataExchangeLabels)
+		}
 		logger.Infof("RPC failed with error: %v", err)
+	} else { // headers will be written; a message was sent
+		// headers will be sent and I haven't attached it already attach it here...
+		// whether you keep it here or put it in an else doesn't matter
+		if !alts.attachedLabels.Swap(true) {
+			alts.SetHeader(alts.metadataExchangeLabels) // set it to be written
+		}
 	}
 
-	// Add metadata exchange labels to trailers if never sent in headers,
-	// irrespective of whether or not RPC failed.
-	if !als.attachedLabels.Load() {
-		als.SetTrailer(als.metadataExchangeLabels)
-	}
 	return any, err
 
 }
@@ -140,20 +145,24 @@ type attachLabelsTransportStream struct {
 }
 
 func (alts *attachLabelsTransportStream) SetHeader(md metadata.MD) error {
-	if attachedLabels := alts.attachedLabels.Swap(true); !attachedLabels {
+	print("in transport stream SetHeader()")
+	if !alts.attachedLabels.Swap(true) {
+		print("in transport stream SetHeader() attaching labels")
 		val := alts.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
 	}
-	return alts.ServerTransportStream.SendHeader(md)
+	return alts.ServerTransportStream.SetHeader(md)
 }
 
 func (alts *attachLabelsTransportStream) SendHeader(md metadata.MD) error {
-	if attachedLabels := alts.attachedLabels.Swap(true); !attachedLabels {
+	print("in transport stream SendHeader()")
+	if !alts.attachedLabels.Swap(true) {
+		print("in transport stream SendHeader() attaching labels")
 		val := alts.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
 	}
 
-	return alts.SendHeader(md)
+	return alts.ServerTransportStream.SendHeader(md)
 }
 
 func (ssh *serverStatsHandler) streamInterceptor(srv any, ss grpc.ServerStream, ssi *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
@@ -228,7 +237,7 @@ func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats)
 func (ssh *serverStatsHandler) processRPCData(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
 	switch st := s.(type) {
 	case *stats.InHeader:
-		if mi.labelsReceived && ssh.o.MetricsOptions.pluginOption != nil {
+		if !mi.labelsReceived && ssh.o.MetricsOptions.pluginOption != nil {
 			mi.labels = ssh.o.MetricsOptions.pluginOption.GetLabels(st.Header, nil)
 			mi.labelsReceived = true
 		}

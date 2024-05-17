@@ -80,6 +80,7 @@ func (cpo *pluginOption) GetMetadata() metadata.MD {
 // Additionally, local labels determined at initialization time are appended to
 // labels returned, in addition to the optionalLabels provided.
 func (cpo *pluginOption) GetLabels(md metadata.MD, optionalLabels map[string]string) map[string]string {
+	print("Get Labels called with md: ", md)
 	labels := map[string]string{ // Remote labels if type is unknown (i.e. unset or error processing x-envoy-peer-metadata)
 		"csm.remote_workload_type":              "unknown",
 		"csm.remote_workload_canonical_service": "unknown",

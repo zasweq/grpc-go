@@ -148,6 +148,7 @@ func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 	mi := &metricsInfo{ // populates information about RPC start.
 		startTime: time.Now(),
 		xDSLabels: labels.TelemetryLabels, // holds a ref to map, make sure this doesn't race (and works, just test it :D)
+		method: info.FullMethodName,
 	}
 	ri := &rpcInfo{
 		mi: mi,
@@ -182,12 +183,15 @@ func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCS
 	case *stats.End:
 		csh.processRPCEnd(ctx, mi, st)
 	case *stats.InHeader:
+		print("in in header for method: ", mi.method)
+		print(st.Header.Len())
 		// Also delete target filtration...maybe same PR?
 		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
 			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Header, mi.xDSLabels) // way to get xDS Labels set in Tag(), so I'm good here...
 			mi.labelsReceived = true
 		}
 	case *stats.InTrailer: // only variable is header and trailer can pull out into helper
+		print("in in trailer for method: ", mi.method) // both of them trailers only...
 		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
 			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Trailer, mi.xDSLabels) // this read should just...work right (since set in picker update (pass around a heap pointer)
 			mi.labelsReceived = true

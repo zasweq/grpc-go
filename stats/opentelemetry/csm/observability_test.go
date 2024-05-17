@@ -20,6 +20,8 @@ package csm
 
 import (
 	"context"
+	"errors"
+	"google.golang.org/grpc/metadata"
 	"io"
 	"os"
 	"testing"
@@ -220,6 +222,8 @@ func (s) TestCSMPluginOption(t *testing.T) {
 		"csm.mesh_id": "mesh_id", // from bootstrap env var (set already through helper)
 
 		// No xDS Labels - this happens through interop or I could set with another interceptor...
+		// Actually xDS Labels become "unknown" if not set
+		// C++ did this as an array to avoid string comparisons
 
 		"csm.remote_workload_type":              "gcp_kubernetes_engine",
 		"csm.remote_workload_canonical_service": csmCanonicalServiceName,
@@ -256,11 +260,16 @@ func (s) TestCSMPluginOption(t *testing.T) {
 		{
 			name: "normal-flow",
 			unaryCallFunc: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+				// grpc.SetHeader(ctx, metadata.New(map[string]string{"some-metadata": "some-metadata-val"}))
+				// I shouldn't need this call, if I just send a message on unary how to intercept?
+				// If application doesn't send header, and doesn't send msg you'd know that
+
+
 				return &testpb.SimpleResponse{Payload: &testpb.Payload{
 					Body: make([]byte, 10000),
 				}}, nil
 			},
-			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error {
+			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error { // this is trailers only
 				for {
 					_, err := stream.Recv()
 					if err == io.EOF {
@@ -272,6 +281,106 @@ func (s) TestCSMPluginOption(t *testing.T) {
 				CSMLabels: csmLabels,
 				UnaryMessageSent: true,
 				StreamingMessageSent: false, // this needs to be represented in the client side from this test too...
+			},
+		}, // unary does send headers then trailers while streaming is trailers only...how does unary attach it when no send header?
+		{
+			name: "trailers-only-unary-streaming",
+			unaryCallFunc: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+				// grpc.SetHeader(ctx, metadata.New(map[string]string{"some-metadata": "some-metadata-val"}))
+				// I shouldn't need this call, if I just send a message on unary how to intercept?
+				// If application doesn't send header, and doesn't send msg you'd know that
+
+				return nil, errors.New("some error") // return an error for nil
+			}, // nil is an invalid message, error is trailers only, nil induces
+			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error {
+				for {
+					_, err := stream.Recv()
+					if err == io.EOF {
+						return nil
+					}
+				}
+			},
+			opts: internal.MetricDataOptions{
+				CSMLabels: csmLabels,
+				UnaryMessageSent: false,
+				StreamingMessageSent: false, // this needs to be represented in the client side from this test too...
+				UnaryCallFailed: true,
+			}, // nil nil also affects the buckets
+		},
+		{
+			name: "set-header-client-server-side",
+			unaryCallFunc: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+				grpc.SetHeader(ctx, metadata.New(map[string]string{"some-metadata": "some-metadata-val"}))
+
+
+
+				return &testpb.SimpleResponse{Payload: &testpb.Payload{
+					Body: make([]byte, 10000),
+				}}, nil
+			},
+			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error {
+				stream.SetHeader(metadata.New(map[string]string{"some-metadata": "some-metadata-val"}))
+				for {
+					_, err := stream.Recv()
+					if err == io.EOF {
+						return nil
+					}
+				}
+			},
+			opts: internal.MetricDataOptions{
+				CSMLabels: csmLabels,
+				UnaryMessageSent: true,
+				StreamingMessageSent: false, // this needs to be represented in the client side from this test too...
+			},
+		},
+		{
+			name: "send-header-client-server-side",
+			unaryCallFunc: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+				grpc.SendHeader(ctx, metadata.New(map[string]string{"some-metadata": "some-metadata-val"}))
+
+
+
+				return &testpb.SimpleResponse{Payload: &testpb.Payload{
+					Body: make([]byte, 10000),
+				}}, nil
+			},
+			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error {
+				stream.SendHeader(metadata.New(map[string]string{"some-metadata": "some-metadata-val"}))
+				for {
+					_, err := stream.Recv()
+					if err == io.EOF {
+						return nil
+					}
+				}
+			},
+			opts: internal.MetricDataOptions{
+				CSMLabels: csmLabels,
+				UnaryMessageSent: true,
+				StreamingMessageSent: false, // this needs to be represented in the client side from this test too...
+			},
+		},
+		{
+			name: "send-msg-client-server-side",
+			unaryCallFunc: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+				return &testpb.SimpleResponse{Payload: &testpb.Payload{
+					Body: make([]byte, 10000),
+				}}, nil
+			},
+			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error {
+				stream.Send(&testpb.StreamingOutputCallResponse{Payload: &testpb.Payload{
+					Body: make([]byte, 10000),
+				}})
+				for {
+					_, err := stream.Recv()
+					if err == io.EOF {
+						return nil
+					}
+				}
+			},
+			opts: internal.MetricDataOptions{
+				CSMLabels: csmLabels,
+				UnaryMessageSent: true,
+				StreamingMessageSent: true,
 			},
 		},
 		// Different permutations of operations that should all trigger csm md
@@ -317,17 +426,32 @@ func (s) TestCSMPluginOption(t *testing.T) {
 			// defer reader.Shutdown?
 			defer ss.Stop()
 
+			var request *testpb.SimpleRequest
+			if test.opts.UnaryMessageSent {
+				request = &testpb.SimpleRequest{Payload: &testpb.Payload{
+					Body: make([]byte, 10000),
+				}}
+			}
+
+
 			// Make two RPC's, a unary RPC and a streaming RPC. These should cause
 			// certain metrics to be emitted, which should be able to be observed
 			// through the Metric Reader.
-			if _, err := ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{Payload: &testpb.Payload{
-				Body: make([]byte, 10000),
-			}}, grpc.UseCompressor(gzip.Name)); err != nil { // Deterministic compression.
-				t.Fatalf("Unexpected error from UnaryCall: %v", err)
-			}
-			stream, err := ss.Client.FullDuplexCall(ctx)
+			ss.Client.UnaryCall(ctx, request, grpc.UseCompressor(gzip.Name))
+			stream, err := ss.Client.FullDuplexCall(ctx, grpc.UseCompressor(gzip.Name))
 			if err != nil {
 				t.Fatalf("ss.Client.FullDuplexCall failed: %f", err)
+			}
+
+			if test.opts.StreamingMessageSent {
+				if err := stream.Send(&testpb.StreamingOutputCallRequest{Payload: &testpb.Payload{
+					Body: make([]byte, 10000),
+				}}); err != nil {
+					t.Fatalf("stream.Send failed")
+				}
+				if _, err := stream.Recv(); err != nil {
+					t.Fatalf("stream.Recv failed with error: %v", err)
+				}
 			}
 
 			stream.CloseSend()
@@ -364,42 +488,15 @@ func (s) TestCSMPluginOption(t *testing.T) {
 
 Also "If client does not send the mx (metadata-exchange) metadata, server
 records “unknown” value for csm.remote_workload_type and
-csm.remote_workload_canonical_service" - not tested in interop?
+csm.remote_workload_canonical_service" - not tested in interop? this is tested in unit tests...
+
+unit tests also cover the gke/gce/unknown flow, this tests overall plumbing...
 
 this is covered by interop...
 */
 
 
 
-
-
-// unary/streaming both sides tested by unary/full duplex
-
-// Yash has a lot of rules for which specific metrics get these extra labels
-func testExtraLabels() {
-	// all metrics get it but attempt.started and call.started (all client attempt metrics should get it)
-	// ignore the started stuff?
-
-	// I don't know how to induce this expect through e2e flow since it's
-	// coupled (leave it to interop):
-
-	// If client does not send the mx (metadata-exchange) metadata, server
-	// records “unknown” value for `csm.remote_workload_type` and
-	// `csm.remote_workload_canonical_service`
-
-	// Retries : Test that metadata exchange and corresponding service mesh
-	// labels are received and recorded even if the server sends a trailers-only
-	// response.
-
-	// How do I send a trailers only response manually? End RPC without sending
-	// any headers or messages? Need the handler to return before sending
-	// headers or messages.
-
-	// triggers all the metrics since needs a header from client and also server
-	// end metrics, just no compressed messages information...
-
-
-}
 
 
 
@@ -410,8 +507,6 @@ func testExtraLabels() {
 
 // interop...and plumbing...
 
-
-// wrap unary stream, late apply dial option, and test I think is all I have left...
 
 // Eric has a long test just for plumbing and smaller ones
 // for stuff like trailers only...
@@ -457,3 +552,8 @@ func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Con
 // then this then try and compile it...
 
 // just comment out globals and work on interop?
+
+func (s) TestxDSLabels(t *testing.T) {
+	// same test as above, expect set xDS Labels in the interceptor, and then
+	// make sure it's emitted...or leave to interop (wait on this until I change the plumbing of the in flight PR).
+}
