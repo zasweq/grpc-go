@@ -28,6 +28,12 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata/metricdatatest"
 )
+var (
+	// defaultLatencyBounds are the default bounds for latency metrics.
+	defaultLatencyBounds = []float64{0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100} // provide "advice" through API, SDK should set this too
+	// defaultSizeBounds are the default bounds for metrics which record size.
+	defaultSizeBounds = []float64{0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
+)
 
 // waitForServerCompletedRPCs waits until the unary and streaming stats.End
 // calls are finished processing. It does this by waiting for the expected
@@ -135,12 +141,12 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 	}
 	unaryMethodServerSideEnd := []attribute.KeyValue{
 		unaryMethodAttr,
-		targetAttr,
+		statusAttr,
 	}
 
 	streamingMethodServerSideEnd := []attribute.KeyValue{
 		duplexMethodAttr,
-		targetAttr,
+		statusAttr,
 	}
 
 	unaryMethodClientSideEnd = append(unaryMethodClientSideEnd, options.CSMLabels...)
@@ -186,12 +192,12 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes: attribute.NewSet(unaryMethodClientSideEnd...),
 						Count:      1,
-						Bounds:     DefaultLatencyBounds,
+						Bounds:     defaultLatencyBounds,
 					},
 					{
 						Attributes: attribute.NewSet(streamingMethodClientSideEnd...),
 						Count:      1,
-						Bounds:     DefaultLatencyBounds,
+						Bounds:     defaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -206,7 +212,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes:   attribute.NewSet(unaryMethodClientSideEnd...),
 						Count:        1,
-						Bounds:       DefaultSizeBounds,
+						Bounds:       defaultSizeBounds,
 						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min:          metricdata.NewExtrema(int64(57)),
 						Max:          metricdata.NewExtrema(int64(57)),
@@ -215,7 +221,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes:   attribute.NewSet(streamingMethodClientSideEnd...),
 						Count:        1,
-						Bounds:       DefaultSizeBounds,
+						Bounds:       defaultSizeBounds,
 						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min:          metricdata.NewExtrema(int64(0)),
 						Max:          metricdata.NewExtrema(int64(0)),
@@ -234,7 +240,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes:   attribute.NewSet(unaryMethodClientSideEnd...),
 						Count:        1,
-						Bounds:       DefaultSizeBounds,
+						Bounds:       defaultSizeBounds,
 						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min:          metricdata.NewExtrema(int64(57)),
 						Max:          metricdata.NewExtrema(int64(57)),
@@ -243,7 +249,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes:   attribute.NewSet(streamingMethodClientSideEnd...),
 						Count:        1,
-						Bounds:       DefaultSizeBounds,
+						Bounds:       defaultSizeBounds,
 						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min:          metricdata.NewExtrema(int64(0)),
 						Max:          metricdata.NewExtrema(int64(0)),
@@ -262,12 +268,12 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, statusAttr),
 						Count:      1,
-						Bounds:     DefaultLatencyBounds,
+						Bounds:     defaultLatencyBounds,
 					},
 					{
 						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, statusAttr),
 						Count:      1,
-						Bounds:     DefaultLatencyBounds,
+						Bounds:     defaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -301,7 +307,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes:   attribute.NewSet(unaryMethodServerSideEnd...),
 						Count:        1,
-						Bounds:       DefaultSizeBounds,
+						Bounds:       defaultSizeBounds,
 						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min:          metricdata.NewExtrema(int64(57)),
 						Max:          metricdata.NewExtrema(int64(57)),
@@ -310,7 +316,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes:   attribute.NewSet(streamingMethodServerSideEnd...),
 						Count:        1,
-						Bounds:       DefaultSizeBounds,
+						Bounds:       defaultSizeBounds,
 						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min:          metricdata.NewExtrema(int64(0)),
 						Max:          metricdata.NewExtrema(int64(0)),
@@ -329,7 +335,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes:   attribute.NewSet(unaryMethodServerSideEnd...),
 						Count:        1,
-						Bounds:       DefaultSizeBounds,
+						Bounds:       defaultSizeBounds,
 						BucketCounts: []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min:          metricdata.NewExtrema(int64(57)),
 						Max:          metricdata.NewExtrema(int64(57)),
@@ -338,7 +344,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes:   attribute.NewSet(streamingMethodServerSideEnd...),
 						Count:        1,
-						Bounds:       DefaultSizeBounds,
+						Bounds:       defaultSizeBounds,
 						BucketCounts: []uint64{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 						Min:          metricdata.NewExtrema(int64(0)),
 						Max:          metricdata.NewExtrema(int64(0)),
@@ -357,12 +363,12 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 					{
 						Attributes: attribute.NewSet(unaryMethodServerSideEnd...),
 						Count:      1,
-						Bounds:     DefaultLatencyBounds,
+						Bounds:     defaultLatencyBounds,
 					},
 					{
 						Attributes: attribute.NewSet(streamingMethodServerSideEnd...),
 						Count:      1,
-						Bounds:     DefaultLatencyBounds,
+						Bounds:     defaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,

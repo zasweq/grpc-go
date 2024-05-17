@@ -18,8 +18,6 @@ package opentelemetry
 
 import (
 	"context"
-	"fmt"
-	"google.golang.org/grpc/stats/opentelemetry/internal"
 	"io"
 	"testing"
 	"time"
@@ -30,6 +28,7 @@ import (
 	"google.golang.org/grpc/internal/stubserver"
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
+	"google.golang.org/grpc/stats/opentelemetry/internal"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -255,6 +254,10 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 			gotMetrics[m.Name] = m
 		}
 	}
+	unaryMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/UnaryCall")
+	duplexMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall")
+
+	targetAttr := attribute.String("grpc.target", ss.Target)
 	otherMethodAttr := attribute.String("grpc.method", "other")
 	wantMetrics = []metricdata.Metrics{
 		{

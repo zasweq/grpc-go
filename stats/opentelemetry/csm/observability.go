@@ -19,11 +19,7 @@
 package csm
 
 import (
-	"context"
-	"net/url"
-
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/stats/opentelemetry"
 	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
 )
@@ -50,7 +46,8 @@ var clientSideOTel grpc.DialOption
 // This function is not thread safe, and should only be invoked once in main
 // before any channels or servers are created. Returns a cleanup function to be
 // deferred in main.
-func Observability(ctx context.Context, options opentelemetry.Options) func() {
+
+/*func Observability(ctx context.Context, options opentelemetry.Options) func() {
 	csmPluginOption := newPluginOption(ctx) // Do this operation in tests now...because this is global to the binary...
 	clientSideOTelWithCSM = dialOptionWithCSMPluginOption(options, csmPluginOption)
 	clientSideOTel = opentelemetry.DialOption(options)
@@ -66,27 +63,29 @@ func Observability(ctx context.Context, options opentelemetry.Options) func() {
 		internal.ClearGlobalServerOptions()
 		internal.ClearGlobalLateApplyDialOptions()
 	}
-} // this won't actually compile unless I rebase
+}*/ // this won't actually compile unless I rebase
 
+
+/*
 type lateApplyDialOption interface { // doing this in other PR...although idk how if this will be able to access...
 	DialOption(parsedTarget *url.URL) grpc.DialOption
 }
 
 // Just call this with a pointer...
 // Do I register just this function or do I need to make this on an object...
-func DialOption(parsedTarget *url.URL) grpc.DialOption {
+func DialOption(parsedTarget *url.URL) grpc.DialOption { // yeah only difference is this api and the prepending with csm.
 	if determineTargetCSM(parsedTarget) {
 		return clientSideOTelWithCSM
 	}
 	return clientSideOTel
-}
+}*/
 
 func dialOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.DialOption { // test at this layer and replace grpc.DialOption in OTel tests...
-	otelinternal.SetPluginOption.(func(options opentelemetry.Options, po otelinternal.PluginOption))(options, po)
+	otelinternal.SetPluginOption.(func(options *opentelemetry.Options, po otelinternal.PluginOption))(&options, po)
 	return opentelemetry.DialOption(options)
 }
 
 func serverOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.ServerOption {
-	otelinternal.SetPluginOption.(func(options opentelemetry.Options, po otelinternal.PluginOption))(options, po)
+	otelinternal.SetPluginOption.(func(options *opentelemetry.Options, po otelinternal.PluginOption))(&options, po)
 	return opentelemetry.ServerOption(options)
 }

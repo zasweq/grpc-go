@@ -98,7 +98,7 @@ func (cpo *pluginOption) GetLabels(md metadata.MD, optionalLabels map[string]str
 	val := md.Get("x-envoy-peer-metadata")
 	// This can't happen if corresponding csm client because of proto wire
 	// format encoding, but since it is arbitrary off the wire be safe.
-	if len(val) != 1 {
+	if len(val) != 1 { // Hits this so doesn't get md off the wire for unary...
 		logger.Warningf("length of md values of \"x-envoy-peer-metadata\" is not 1, is %v", len(val))
 		return labels
 	}
