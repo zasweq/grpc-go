@@ -18,6 +18,8 @@ package opentelemetry
 
 import (
 	"context"
+	istats "google.golang.org/grpc/internal/stats"
+	"google.golang.org/grpc/metadata"
 	"sync/atomic"
 	"time"
 
@@ -63,6 +65,14 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 	}
 	ctx = setCallInfo(ctx, ci)
 
+	if csh.o.MetricsOptions.pluginOption != nil {
+		md := csh.o.MetricsOptions.pluginOption.GetMetadata()
+		val := md.Get("x-envoy-peer-metadata")
+		if len(val) == 1 {
+			ctx = metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, val[0])
+		}
+	}
+
 	startTime := time.Now()
 	err := invoker(ctx, method, req, reply, cc, opts...)
 	csh.perCallMetrics(ctx, err, startTime, ci)
@@ -98,6 +108,15 @@ func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc
 		method: csh.determineMethod(method, opts...),
 	}
 	ctx = setCallInfo(ctx, ci)
+
+	if csh.o.MetricsOptions.pluginOption != nil { // from incoming context right for GetLabels? well e2e test and find out :)
+		md := csh.o.MetricsOptions.pluginOption.GetMetadata() // metadata.MD
+		val := md.Get("x-envoy-peer-metadata")
+		if len(val) == 1 {
+			ctx = metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, val[0])
+		}
+	}
+
 	startTime := time.Now()
 
 	callback := func(err error) {
@@ -123,12 +142,17 @@ func (csh *clientStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 
 // TagRPC implements per RPC attempt context management.
 func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	labels := &istats.Labels{
+		TelemetryLabels: make(map[string]string),
+	}
 	mi := &metricsInfo{ // populates information about RPC start.
 		startTime: time.Now(),
+		xDSLabels: labels.TelemetryLabels, // holds a ref to map, make sure this doesn't race (and works, just test it :D)
 	}
 	ri := &rpcInfo{
 		mi: mi,
 	}
+	ctx = istats.SetLabels(ctx, labels) // ctx passed is immutable, however cluster_impl writes to the map of Telemetry Labels on the heap.
 	return setRPCInfo(ctx, ri)
 }
 
@@ -157,6 +181,17 @@ func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCS
 		atomic.AddInt64(&mi.recvCompressedBytes, int64(st.CompressedLength))
 	case *stats.End:
 		csh.processRPCEnd(ctx, mi, st)
+	case *stats.InHeader:
+		// Also delete target filtration...maybe same PR?
+		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
+			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Header, mi.xDSLabels) // way to get xDS Labels set in Tag(), so I'm good here...
+			mi.labelsReceived = true
+		}
+	case *stats.InTrailer: // only variable is header and trailer can pull out into helper
+		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
+			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Trailer, mi.xDSLabels) // this read should just...work right (since set in picker update (pass around a heap pointer)
+			mi.labelsReceived = true
+		}
 	default:
 	}
 }
@@ -174,7 +209,17 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		st = canonicalString(s.Code())
 	}
 
-	clientAttributeOption := metric.WithAttributes(attribute.String("grpc.method", ci.method), attribute.String("grpc.target", ci.target), attribute.String("grpc.status", st))
+	attributes := []attribute.KeyValue{
+		attribute.String("grpc.method", ci.method),
+		attribute.String("grpc.target", ci.target),
+		attribute.String("grpc.status", st),
+	}
+
+	for k, v := range mi.labels {
+		attributes = append(attributes, attribute.String(k, v))
+	}
+
+	clientAttributeOption := metric.WithAttributes(attributes...)
 	csh.clientMetrics.attemptDuration.Record(ctx, latency, clientAttributeOption)
 	csh.clientMetrics.attemptSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), clientAttributeOption)
 	csh.clientMetrics.attemptRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), clientAttributeOption)

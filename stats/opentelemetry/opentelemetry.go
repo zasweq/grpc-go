@@ -27,10 +27,20 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal"
+	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 )
+
+func init() {
+	otelinternal.SetPluginOption = func(o *Options, po otelinternal.PluginOption) {
+		o.MetricsOptions.pluginOption = po
+	}
+}
+
+// metadataExchangeKey is the key for HTTP metadata exchange.
+const metadataExchangeKey = "x-envoy-peer-metadata"
 
 var logger = grpclog.Component("otel-plugin")
 
@@ -126,6 +136,8 @@ type MetricsOptions struct {
 	// grpc.StaticMethodCallOption as a call option into Invoke or NewStream.
 	// This only applies for server side metrics.
 	MethodAttributeFilter func(string) bool
+
+	pluginOption otelinternal.PluginOption
 }
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation
@@ -146,6 +158,8 @@ func DialOption(o Options) grpc.DialOption {
 	return joinDialOptions(grpc.WithChainUnaryInterceptor(csh.unaryInterceptor), grpc.WithChainStreamInterceptor(csh.streamInterceptor), grpc.WithStatsHandler(csh))
 }
 
+var joinServerOptions = internal.JoinServerOptions.(func(...grpc.ServerOption) grpc.ServerOption)
+
 // ServerOption returns a server option which enables OpenTelemetry
 // instrumentation code for a grpc.Server.
 //
@@ -161,7 +175,7 @@ func DialOption(o Options) grpc.DialOption {
 func ServerOption(o Options) grpc.ServerOption {
 	ssh := &serverStatsHandler{o: o}
 	ssh.initializeMetrics()
-	return grpc.StatsHandler(ssh)
+	return joinServerOptions(grpc.ChainUnaryInterceptor(ssh.unaryInterceptor), grpc.ChainStreamInterceptor(ssh.streamInterceptor), grpc.StatsHandler(ssh))
 }
 
 // callInfo is information pertaining to the lifespan of the RPC client side.
@@ -220,6 +234,13 @@ type metricsInfo struct {
 
 	startTime time.Time
 	method    string
+
+	labelsReceived bool
+	labels map[string]string // labels to attach to metrics emitted
+	xDSLabels map[string]string // how does this work? set in Tag, set in picker, where is this read? at some point you have to read this in sh callouts
+
+	// case *stats.OutPayload, *stats.InPayload, *stats.End: verify that is hits these, inheader or intrailer read the xDS labels then?
+	// write test to verify you can do this?
 }
 
 type clientMetrics struct {

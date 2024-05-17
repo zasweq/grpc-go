@@ -18,6 +18,7 @@ package opentelemetry
 
 import (
 	"context"
+	"google.golang.org/grpc/metadata"
 	"sync/atomic"
 	"time"
 
@@ -53,6 +54,128 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 	ssh.serverMetrics.callSentTotalCompressedMessageSize = createInt64Histogram(setOfMetrics, "grpc.server.call.sent_total_compressed_message_size", meter, metric.WithUnit("By"), metric.WithDescription("Compressed message bytes sent per server call."), metric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	ssh.serverMetrics.callRcvdTotalCompressedMessageSize = createInt64Histogram(setOfMetrics, "grpc.server.call.rcvd_total_compressed_message_size", meter, metric.WithUnit("By"), metric.WithDescription("Compressed message bytes received per server call."), metric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	ssh.serverMetrics.callDuration = createFloat64Histogram(setOfMetrics, "grpc.server.call.duration", meter, metric.WithUnit("s"), metric.WithDescription("End-to-end time taken to complete a call from server transport's perspective."), metric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
+}
+
+// attachLabelsStream wraps around the embedded grpc.ServerStream, and
+// intercepts the SetHeader/SendHeader/SendMsg/SendTrailer call to attach
+// metadata exchange labels.
+type attachLabelsStream struct {
+	grpc.ServerStream
+
+	attachedLabels atomic.Bool
+	metadataExchangeLabels metadata.MD
+}
+
+func (als *attachLabelsStream) SetHeader(md metadata.MD) error { // you could get two that call this...
+	// just append, it can't call itself, I think append just once, if another
+	// comes in sets both so doesn't matter ordering... one of them that will
+	// eventually get merged will happen, other operations can't come in concurrently
+	// anyway so you're good here...can't have two merged
+	if attachedLabels := als.attachedLabels.Swap(true); !attachedLabels {
+		val := als.metadataExchangeLabels.Get("x-envoy-peer-metadata")
+		md.Append("x-envoy-peer-metadata", val...)
+	}
+
+
+	return als.SetHeader(md)
+}
+
+func (als *attachLabelsStream) SendHeader(md metadata.MD) error {
+	if attachedLabels := als.attachedLabels.Swap(true); !attachedLabels { // I think this is fine no need to set header in this case...
+		val := als.metadataExchangeLabels.Get("x-envoy-peer-metadata")
+		md.Append("x-envoy-peer-metadata", val...)
+	}
+
+	return als.ServerStream.SendHeader(md) // does the synchronous guarantees get lost somewhere here?
+} // unary and streaming go through same underlying server stream flow...
+
+func (als *attachLabelsStream) SendMsg(m any) error {
+	if attachedLabels := als.attachedLabels.Swap(true); !attachedLabels {
+		als.ServerStream.SetHeader(als.metadataExchangeLabels)
+	}
+	return als.ServerStream.SendMsg(m)
+}
+
+func (ssh *serverStatsHandler) unaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	var metadataExchangeLabels metadata.MD
+	if ssh.o.MetricsOptions.pluginOption != nil {
+		metadataExchangeLabels = ssh.o.MetricsOptions.pluginOption.GetMetadata()
+	}
+
+
+	// How do I plumb in something here...
+	// no example? does it override the unary handler
+	// handler(ctx, req) // this is the function definition...what do I do with it?
+
+	sts := grpc.ServerTransportStreamFromContext(ctx)
+	// stream // grpc.ServerTransportStream...wrap these four operations?
+
+	// Yeah what do I do for this thing? wraps what
+	als := &attachLabelsTransportStream{
+		ServerTransportStream: sts, // what server stream do I attach here?
+		metadataExchangeLabels: metadataExchangeLabels,
+	}
+	// and if I set the context does this just work?
+	ctx = grpc.NewContextWithServerTransportStream(ctx, als/*Is it just setting the context to this?*/)
+
+	any, err := handler(ctx, req)
+	if err != nil {
+		logger.Infof("RPC failed with error: %v", err)
+	}
+
+	// Add metadata exchange labels to trailers if never sent in headers,
+	// irrespective of whether or not RPC failed.
+	if !als.attachedLabels.Load() {
+		als.SetTrailer(als.metadataExchangeLabels)
+	}
+	return any, err
+
+}
+
+type attachLabelsTransportStream struct {
+	grpc.ServerTransportStream
+
+	attachedLabels atomic.Bool
+	metadataExchangeLabels metadata.MD
+}
+
+func (alts *attachLabelsTransportStream) SetHeader(md metadata.MD) error {
+	if attachedLabels := alts.attachedLabels.Swap(true); !attachedLabels {
+		val := alts.metadataExchangeLabels.Get("x-envoy-peer-metadata")
+		md.Append("x-envoy-peer-metadata", val...)
+	}
+	return alts.ServerTransportStream.SendHeader(md)
+}
+
+func (alts *attachLabelsTransportStream) SendHeader(md metadata.MD) error {
+	if attachedLabels := alts.attachedLabels.Swap(true); !attachedLabels {
+		val := alts.metadataExchangeLabels.Get("x-envoy-peer-metadata")
+		md.Append("x-envoy-peer-metadata", val...)
+	}
+
+	return alts.SendHeader(md)
+}
+
+func (ssh *serverStatsHandler) streamInterceptor(srv any, ss grpc.ServerStream, ssi *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	var metadataExchangeLabels metadata.MD
+	if ssh.o.MetricsOptions.pluginOption != nil {
+		metadataExchangeLabels = ssh.o.MetricsOptions.pluginOption.GetMetadata()
+	}
+	als := &attachLabelsStream{
+		ServerStream: ss,
+		metadataExchangeLabels: metadataExchangeLabels,
+	}
+	err := handler(srv, als)
+	if err != nil {
+		logger.Infof("RPC failed with error: %v", err)
+	}
+
+	// Add metadata exchange labels to trailers if never sent in headers,
+	// irrespective of whether or not RPC failed.
+	if !als.attachedLabels.Load() {
+		als.SetTrailer(als.metadataExchangeLabels)
+	}
+	return err
 }
 
 // TagConn exists to satisfy stats.Handler.
@@ -105,6 +228,10 @@ func (ssh *serverStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats)
 func (ssh *serverStatsHandler) processRPCData(ctx context.Context, s stats.RPCStats, mi *metricsInfo) {
 	switch st := s.(type) {
 	case *stats.InHeader:
+		if mi.labelsReceived && ssh.o.MetricsOptions.pluginOption != nil {
+			mi.labels = ssh.o.MetricsOptions.pluginOption.GetLabels(st.Header, nil)
+			mi.labelsReceived = true
+		}
 		ssh.serverMetrics.callStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("grpc.method", mi.method)))
 	case *stats.OutPayload:
 		atomic.AddInt64(&mi.sentCompressedBytes, int64(st.CompressedLength))
@@ -123,8 +250,15 @@ func (ssh *serverStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		s, _ := status.FromError(e.Error)
 		st = canonicalString(s.Code())
 	}
-	serverAttributeOption := metric.WithAttributes(attribute.String("grpc.method", mi.method), attribute.String("grpc.status", st))
+	attributes := []attribute.KeyValue{
+		attribute.String("grpc.method", mi.method),
+		attribute.String("grpc.status", st),
+	}
+	for k, v := range mi.labels {
+		attributes = append(attributes, attribute.String(k, v))
+	}
 
+	serverAttributeOption := metric.WithAttributes(attributes...)
 	ssh.serverMetrics.callDuration.Record(ctx, latency, serverAttributeOption)
 	ssh.serverMetrics.callSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), serverAttributeOption)
 	ssh.serverMetrics.callRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), serverAttributeOption)
