@@ -127,7 +127,11 @@ type MetricsOptions struct {
 	// channel and returns a bool representing whether to use target as a label
 	// value or use the string "other". If unset, will use the target string as
 	// is. This only applies for client side metrics.
-	TargetAttributeFilter func(string) bool
+	TargetAttributeFilter func(string) bool // delete this
+
+	// OptionalLabels are labels received from xDS that this component should
+	// add to metrics recording after received labels.
+	OptionalLabels []string
 
 	// MethodAttributeFilter is to record the method name of RPCs handled by
 	// grpc.UnknownServiceHandler, but take care to limit the values allowed, as

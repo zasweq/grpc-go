@@ -142,8 +142,15 @@ func (csh *clientStatsHandler) HandleConn(context.Context, stats.ConnStats) {}
 
 // TagRPC implements per RPC attempt context management.
 func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
-	labels := &istats.Labels{
-		TelemetryLabels: make(map[string]string),
+	// Numerous stats handlers can be used for the same channel. The cluster
+	// impl balancer which writes to this will only write once, thus have this
+	// stats handler's per attempt scoped context point to the same optional
+	// labels map if set.
+	var labels *istats.Labels
+	if labels = istats.GetLabels(ctx); labels == nil {
+		labels = &istats.Labels{ // switch this to see if already allocated on heap, and if so point to that instead...only client side :) optional labels don't even apply server side...
+			TelemetryLabels: make(map[string]string),
+		} // Create optional labels map only if first stats handler in possible chain.
 	}
 	mi := &metricsInfo{ // populates information about RPC start.
 		startTime: time.Now(),
@@ -152,7 +159,8 @@ func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 	}
 	ri := &rpcInfo{
 		mi: mi,
-	}
+	} // points to same top level object with a different ctx with different key so I think you're fine here...
+	// new or old...will set old which wilj get read
 	ctx = istats.SetLabels(ctx, labels) // ctx passed is immutable, however cluster_impl writes to the map of Telemetry Labels on the heap.
 	return setRPCInfo(ctx, ri)
 }
@@ -187,12 +195,14 @@ func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCS
 		print(st.Header.Len())
 		// Also delete target filtration...maybe same PR?
 		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
+			// switch this to not pass xDS Labels once rebased, and compare it to configured options at the end...
 			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Header, mi.xDSLabels) // way to get xDS Labels set in Tag(), so I'm good here...
 			mi.labelsReceived = true
 		}
 	case *stats.InTrailer: // only variable is header and trailer can pull out into helper
 		print("in in trailer for method: ", mi.method) // both of them trailers only...
 		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
+			// switch this to not pass xDS Labels, and compare it to configured options at the end...
 			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Trailer, mi.xDSLabels) // this read should just...work right (since set in picker update (pass around a heap pointer)
 			mi.labelsReceived = true
 		}
@@ -223,7 +233,18 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		attributes = append(attributes, attribute.String(k, v))
 	}
 
-	clientAttributeOption := metric.WithAttributes(attributes...)
+	// this needs to communicate to the top level call info?
+	// loop through xDS Labels (wait I stick it per attempt rn
+	// mi.xDSLabels // no has attempt data here
+	// csh.o.MetricsOptions.OptionalLabels // []string, combine with xDS Labels
+	for _, o := range csh.o.MetricsOptions.OptionalLabels { // server side sets this
+		if val, ok := mi.xDSLabels[o]; ok {
+			attributes = append(attributes, attribute.String(o, val))
+		} // can't race since hedging is per attempt...
+	} // global csm layer then sets this...interop client changes block nothing...
+
+
+	clientAttributeOption := metric.WithAttributes(attributes...) // connecting plugin option to set labels...if we want to do this
 	csh.clientMetrics.attemptDuration.Record(ctx, latency, clientAttributeOption)
 	csh.clientMetrics.attemptSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), clientAttributeOption)
 	csh.clientMetrics.attemptRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), clientAttributeOption)

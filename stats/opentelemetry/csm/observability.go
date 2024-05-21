@@ -80,12 +80,21 @@ func DialOption(parsedTarget *url.URL) grpc.DialOption { // yeah only difference
 	return clientSideOTel
 }*/
 
+// Keep global layer to show how it works in PR Call it in tests to not fail
+// vet...
+
+
+
+
+// OTel labels happen internally under the hood, so keep the optional labels as is.
 func dialOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.DialOption { // test at this layer and replace grpc.DialOption in OTel tests...
+	options.MetricsOptions.OptionalLabels = []string{"csm.service_name", "csm.service_namespace"} // Attach the two xDS Optional Labels for this component to not filter out.
 	otelinternal.SetPluginOption.(func(options *opentelemetry.Options, po otelinternal.PluginOption))(&options, po)
 	return opentelemetry.DialOption(options)
 }
 
 func serverOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.ServerOption {
+	options.MetricsOptions.OptionalLabels = []string{"csm.service_name", "csm.service_namespace"} // Attach the two xDS Optional Labels for this component to not filter out.
 	otelinternal.SetPluginOption.(func(options *opentelemetry.Options, po otelinternal.PluginOption))(&options, po)
 	return opentelemetry.ServerOption(options)
 }
