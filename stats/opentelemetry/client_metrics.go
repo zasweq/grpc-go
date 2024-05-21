@@ -18,12 +18,12 @@ package opentelemetry
 
 import (
 	"context"
-	istats "google.golang.org/grpc/internal/stats"
-	"google.golang.org/grpc/metadata"
 	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
+	istats "google.golang.org/grpc/internal/stats"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 
@@ -60,7 +60,7 @@ func (csh *clientStatsHandler) initializeMetrics() {
 
 func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	ci := &callInfo{
-		target: csh.determineTarget(cc),
+		target: cc.CanonicalTarget(),
 		method: csh.determineMethod(method, opts...),
 	}
 	ctx = setCallInfo(ctx, ci)
@@ -79,17 +79,6 @@ func (csh *clientStatsHandler) unaryInterceptor(ctx context.Context, method stri
 	return err
 }
 
-// determineTarget determines the target to record attributes with. This will be
-// "other" if target filter is set and specifies, the target name as is
-// otherwise.
-func (csh *clientStatsHandler) determineTarget(cc *grpc.ClientConn) string {
-	target := cc.CanonicalTarget()
-	if f := csh.o.MetricsOptions.TargetAttributeFilter; f != nil && !f(target) {
-		target = "other"
-	}
-	return target
-}
-
 // determineMethod determines the method to record attributes with. This will be
 // "other" if StaticMethod isn't specified or if method filter is set and
 // specifies, the method name as is otherwise.
@@ -104,13 +93,13 @@ func (csh *clientStatsHandler) determineMethod(method string, opts ...grpc.CallO
 
 func (csh *clientStatsHandler) streamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	ci := &callInfo{
-		target: csh.determineTarget(cc),
+		target: cc.CanonicalTarget(),
 		method: csh.determineMethod(method, opts...),
 	}
 	ctx = setCallInfo(ctx, ci)
 
-	if csh.o.MetricsOptions.pluginOption != nil { // from incoming context right for GetLabels? well e2e test and find out :)
-		md := csh.o.MetricsOptions.pluginOption.GetMetadata() // metadata.MD
+	if csh.o.MetricsOptions.pluginOption != nil {
+		md := csh.o.MetricsOptions.pluginOption.GetMetadata()
 		val := md.Get("x-envoy-peer-metadata")
 		if len(val) == 1 {
 			ctx = metadata.AppendToOutgoingContext(ctx, metadataExchangeKey, val[0])
@@ -148,19 +137,18 @@ func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 	// labels map if set.
 	var labels *istats.Labels
 	if labels = istats.GetLabels(ctx); labels == nil {
-		labels = &istats.Labels{ // switch this to see if already allocated on heap, and if so point to that instead...only client side :) optional labels don't even apply server side...
+		labels = &istats.Labels{
 			TelemetryLabels: make(map[string]string),
 		} // Create optional labels map only if first stats handler in possible chain.
 	}
 	mi := &metricsInfo{ // populates information about RPC start.
 		startTime: time.Now(),
-		xDSLabels: labels.TelemetryLabels, // holds a ref to map, make sure this doesn't race (and works, just test it :D)
+		xDSLabels: labels.TelemetryLabels,
 		method: info.FullMethodName,
 	}
 	ri := &rpcInfo{
 		mi: mi,
-	} // points to same top level object with a different ctx with different key so I think you're fine here...
-	// new or old...will set old which wilj get read
+	}
 	ctx = istats.SetLabels(ctx, labels) // ctx passed is immutable, however cluster_impl writes to the map of Telemetry Labels on the heap.
 	return setRPCInfo(ctx, ri)
 }
@@ -191,19 +179,14 @@ func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCS
 	case *stats.End:
 		csh.processRPCEnd(ctx, mi, st)
 	case *stats.InHeader:
-		print("in in header for method: ", mi.method)
-		print(st.Header.Len())
-		// Also delete target filtration...maybe same PR?
 		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
 			// switch this to not pass xDS Labels once rebased, and compare it to configured options at the end...
-			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Header, mi.xDSLabels) // way to get xDS Labels set in Tag(), so I'm good here...
+			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Header, mi.xDSLabels)
 			mi.labelsReceived = true
 		}
 	case *stats.InTrailer: // only variable is header and trailer can pull out into helper
-		print("in in trailer for method: ", mi.method) // both of them trailers only...
 		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
-			// switch this to not pass xDS Labels, and compare it to configured options at the end...
-			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Trailer, mi.xDSLabels) // this read should just...work right (since set in picker update (pass around a heap pointer)
+			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Trailer, mi.xDSLabels)
 			mi.labelsReceived = true
 		}
 	default:
@@ -233,20 +216,13 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 		attributes = append(attributes, attribute.String(k, v))
 	}
 
-	// this needs to communicate to the top level call info?
-	// loop through xDS Labels (wait I stick it per attempt rn
-	// mi.xDSLabels // no has attempt data here
-	// csh.o.MetricsOptions.OptionalLabels // []string, combine with xDS Labels
-	for _, o := range csh.o.MetricsOptions.OptionalLabels { // server side sets this
-		print("optional label iteration: ", o)
+	for _, o := range csh.o.MetricsOptions.OptionalLabels {
 		if val, ok := mi.xDSLabels[o]; ok {
-			print("appending to attributes for optional label: ", o, ": ", val)
 			attributes = append(attributes, attribute.String(o, val))
-		} // can't race since hedging is per attempt...
-	} // global csm layer then sets this...interop client changes block nothing...
+		}
+	}
 
-
-	clientAttributeOption := metric.WithAttributes(attributes...) // connecting plugin option to set labels...if we want to do this
+	clientAttributeOption := metric.WithAttributes(attributes...)
 	csh.clientMetrics.attemptDuration.Record(ctx, latency, clientAttributeOption)
 	csh.clientMetrics.attemptSentTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.sentCompressedBytes), clientAttributeOption)
 	csh.clientMetrics.attemptRcvdTotalCompressedMessageSize.Record(ctx, atomic.LoadInt64(&mi.recvCompressedBytes), clientAttributeOption)

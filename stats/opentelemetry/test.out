@@ -1,0 +1,611 @@
+?   	google.golang.org/grpc/stats/opentelemetry/internal	[no test files]
+=== RUN   Test
+=== RUN   Test/AllMetricsOneFunction
+    tlogger.go:116: INFO server.go:685 [core] [Server #1]Server created  (t=+1.758173ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #2]Channel created  (t=+1.826116ms)
+    tlogger.go:116: INFO clientconn.go:1684 [core] [Channel #2]original dial target is: "whatever:///127.0.0.1:52635"  (t=+1.853042ms)
+    tlogger.go:116: INFO clientconn.go:1691 [core] [Channel #2]parsed dial target is: resolver.Target{URL:url.URL{Scheme:"whatever", Opaque:"", User:(*url.Userinfo)(nil), Host:"", Path:"/127.0.0.1:52635", RawPath:"", OmitHost:false, ForceQuery:false, RawQuery:"", Fragment:"", RawFragment:""}}  (t=+1.903083ms)
+    tlogger.go:116: INFO clientconn.go:1841 [core] [Channel #2]Channel authority set to "127.0.0.1:52635"  (t=+1.917444ms)
+    tlogger.go:116: INFO server.go:881 [core] [Server #1 ListenSocket #3]ListenSocket created  (t=+1.936256ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #2]Channel exiting idle mode  (t=+1.958075ms)
+    tlogger.go:116: INFO resolver_wrapper.go:197 [core] [Channel #2]Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:52635",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Metadata": null
+            }
+          ],
+          "Endpoints": [
+            {
+              "Addresses": [
+                {
+                  "Addr": "127.0.0.1:52635",
+                  "ServerName": "",
+                  "Attributes": null,
+                  "BalancerAttributes": null,
+                  "Metadata": null
+                }
+              ],
+              "Attributes": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+2.054732ms)
+    tlogger.go:116: INFO balancer_wrapper.go:103 [core] [Channel #2]Channel switches to new LB policy "pick_first"  (t=+2.093418ms)
+    tlogger.go:116: INFO clientconn.go:849 [core] [Channel #2 SubChannel #4]Subchannel created  (t=+2.144604ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #2]Channel Connectivity change to CONNECTING  (t=+2.161724ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #2 SubChannel #4]Subchannel Connectivity change to CONNECTING  (t=+2.21108ms)
+    tlogger.go:116: INFO clientconn.go:1326 [core] [Channel #2 SubChannel #4]Subchannel picks a new address "127.0.0.1:52635" to connect  (t=+2.224416ms)
+    tlogger.go:116: INFO syscall_nonlinux.go:39 [core] CPU time info is unavailable on non-linux environments.  (t=+2.568344ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #2 SubChannel #4]Subchannel Connectivity change to READY  (t=+2.731615ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #2]Channel Connectivity change to READY  (t=+2.768284ms)
+in transport stream SetHeader()in write header lockedwriting status unary rpcin in header for method: /grpc.testing.TestService/UnaryCall1in in trailer for method: /grpc.testing.TestService/UnaryCallsending trailer onlyin in trailer for method: /grpc.testing.TestService/FullDuplexCallsending trailer onlyin in trailer for method: /grpc.testing.TestService/FullDuplexCallsending trailer onlyin in trailer for method: /grpc.testing.TestService/UnregisteredCallsending trailer onlyin in trailer for method: /grpc.testing.TestService/UnregisteredCallsending trailer onlyin in trailer for method: /grpc.testing.TestService/UnregisteredCall    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #2]Channel Connectivity change to SHUTDOWN  (t=+6.500597ms)
+    tlogger.go:116: INFO resolver_wrapper.go:100 [core] [Channel #2]Closing the name resolver  (t=+6.58252ms)
+    tlogger.go:116: INFO balancer_wrapper.go:135 [core] [Channel #2]ccBalancerWrapper: closing  (t=+6.616208ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #2 SubChannel #4]Subchannel Connectivity change to SHUTDOWN  (t=+6.648673ms)
+    tlogger.go:116: INFO clientconn.go:1557 [core] [Channel #2 SubChannel #4]Subchannel deleted  (t=+6.689629ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #2]Channel deleted  (t=+6.82346ms)
+    tlogger.go:116: INFO server.go:817 [core] [Server #1 ListenSocket #3]ListenSocket deleted  (t=+6.873341ms)
+=== RUN   Test/MethodTargetAttributeFilter
+    tlogger.go:116: INFO server.go:685 [core] [Server #7]Server created  (t=+851.381µs)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #8]Channel created  (t=+889.125µs)
+    tlogger.go:116: INFO clientconn.go:1684 [core] [Channel #8]original dial target is: "whatever:///127.0.0.1:52637"  (t=+911.375µs)
+    tlogger.go:116: INFO clientconn.go:1691 [core] [Channel #8]parsed dial target is: resolver.Target{URL:url.URL{Scheme:"whatever", Opaque:"", User:(*url.Userinfo)(nil), Host:"", Path:"/127.0.0.1:52637", RawPath:"", OmitHost:false, ForceQuery:false, RawQuery:"", Fragment:"", RawFragment:""}}  (t=+943.519µs)
+    tlogger.go:116: INFO clientconn.go:1841 [core] [Channel #8]Channel authority set to "127.0.0.1:52637"  (t=+963.123µs)
+    tlogger.go:116: INFO server.go:881 [core] [Server #7 ListenSocket #9]ListenSocket created  (t=+982.054µs)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #8]Channel exiting idle mode  (t=+1.011588ms)
+    tlogger.go:116: INFO resolver_wrapper.go:197 [core] [Channel #8]Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:52637",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Metadata": null
+            }
+          ],
+          "Endpoints": [
+            {
+              "Addresses": [
+                {
+                  "Addr": "127.0.0.1:52637",
+                  "ServerName": "",
+                  "Attributes": null,
+                  "BalancerAttributes": null,
+                  "Metadata": null
+                }
+              ],
+              "Attributes": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+1.048575ms)
+    tlogger.go:116: INFO balancer_wrapper.go:103 [core] [Channel #8]Channel switches to new LB policy "pick_first"  (t=+1.074452ms)
+    tlogger.go:116: INFO clientconn.go:849 [core] [Channel #8 SubChannel #10]Subchannel created  (t=+1.101593ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #8]Channel Connectivity change to CONNECTING  (t=+1.11463ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #8 SubChannel #10]Subchannel Connectivity change to CONNECTING  (t=+1.143209ms)
+    tlogger.go:116: INFO clientconn.go:1326 [core] [Channel #8 SubChannel #10]Subchannel picks a new address "127.0.0.1:52637" to connect  (t=+1.155809ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #8 SubChannel #10]Subchannel Connectivity change to READY  (t=+1.484724ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #8]Channel Connectivity change to READY  (t=+1.516921ms)
+in transport stream SetHeader()in write header lockedwriting status unary rpcin in header for method: /grpc.testing.TestService/UnaryCall1in in trailer for method: /grpc.testing.TestService/UnaryCallsending trailer onlyin in trailer for method: /grpc.testing.TestService/FullDuplexCall    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #8]Channel Connectivity change to SHUTDOWN  (t=+2.055543ms)
+    tlogger.go:116: INFO resolver_wrapper.go:100 [core] [Channel #8]Closing the name resolver  (t=+2.073581ms)
+    tlogger.go:116: INFO balancer_wrapper.go:135 [core] [Channel #8]ccBalancerWrapper: closing  (t=+2.095114ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #8 SubChannel #10]Subchannel Connectivity change to SHUTDOWN  (t=+2.117379ms)
+    tlogger.go:116: INFO clientconn.go:1557 [core] [Channel #8 SubChannel #10]Subchannel deleted  (t=+2.144672ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #8]Channel deleted  (t=+2.201928ms)
+    tlogger.go:116: INFO server.go:817 [core] [Server #7 ListenSocket #9]ListenSocket deleted  (t=+2.242675ms)
+--- PASS: Test (0.01s)
+    --- PASS: Test/AllMetricsOneFunction (0.01s)
+    --- PASS: Test/MethodTargetAttributeFilter (0.00s)
+PASS
+ok  	google.golang.org/grpc/stats/opentelemetry	0.332s
+=== RUN   Test
+=== RUN   Test/Bootstrap
+=== RUN   Test/Bootstrap/malformed-node-id-unknown
+=== NAME  Test/Bootstrap
+    tlogger.go:116: INFO bootstrap.go:87 [internal/xds] Created bootstrap file at "/var/folders/cl/f8vhjmb14694s95xvbb2z_nh00rk43/T/test_xds_bootstrap_1462550648" with contents: {
+          "xds_servers": [
+            {
+              "server_uri": "xds_server_uri",
+              "channel_creds": [
+                {
+                  "type": "insecure"
+                }
+              ],
+              "server_features": [
+                "xds_v3"
+              ]
+            }
+          ],
+          "node": {
+            "id": "malformed"
+          },
+          "authorities": {
+            "": {}
+          }
+        }
+          (t=+422.296µs)
+=== RUN   Test/Bootstrap/node-id-parsed
+=== NAME  Test/Bootstrap
+    tlogger.go:116: INFO bootstrap.go:87 [internal/xds] Created bootstrap file at "/var/folders/cl/f8vhjmb14694s95xvbb2z_nh00rk43/T/test_xds_bootstrap_6013544" with contents: {
+          "xds_servers": [
+            {
+              "server_uri": "xds_server_uri",
+              "channel_creds": [
+                {
+                  "type": "insecure"
+                }
+              ],
+              "server_features": [
+                "xds_v3"
+              ]
+            }
+          ],
+          "node": {
+            "id": "projects/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa"
+          },
+          "authorities": {
+            "": {}
+          }
+        }
+          (t=+1.21398ms)
+=== RUN   Test/Bootstrap/wrong-syntax-unknown
+=== NAME  Test/Bootstrap
+    tlogger.go:116: INFO bootstrap.go:87 [internal/xds] Created bootstrap file at "/var/folders/cl/f8vhjmb14694s95xvbb2z_nh00rk43/T/test_xds_bootstrap_2075184884" with contents: {
+          "xds_servers": [
+            {
+              "server_uri": "xds_server_uri",
+              "channel_creds": [
+                {
+                  "type": "insecure"
+                }
+              ],
+              "server_features": [
+                "xds_v3"
+              ]
+            }
+          ],
+          "node": {
+            "id": "wrong-syntax/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa"
+          },
+          "authorities": {
+            "": {}
+          }
+        }
+          (t=+1.628292ms)
+=== RUN   Test/Bootstrap/node-id-parsed#01
+=== NAME  Test/Bootstrap
+    tlogger.go:116: INFO bootstrap.go:87 [internal/xds] Created bootstrap file at "/var/folders/cl/f8vhjmb14694s95xvbb2z_nh00rk43/T/test_xds_bootstrap_2344006345" with contents: {
+          "xds_servers": [
+            {
+              "server_uri": "xds_server_uri",
+              "channel_creds": [
+                {
+                  "type": "insecure"
+                }
+              ],
+              "server_features": [
+                "xds_v3"
+              ]
+            }
+          ],
+          "node": {
+            "id": "projects/12345/networks/mesh:/nodes/aaaa-aaaa-aaaa-aaaa"
+          },
+          "authorities": {
+            "": {}
+          }
+        }
+          (t=+2.040107ms)
+=== RUN   Test/CSMPluginOption
+    tlogger.go:116: INFO bootstrap.go:87 [internal/xds] Created bootstrap file at "/var/folders/cl/f8vhjmb14694s95xvbb2z_nh00rk43/T/test_xds_bootstrap_1029441925" with contents: {
+          "xds_servers": [
+            {
+              "server_uri": "xds_server_uri",
+              "channel_creds": [
+                {
+                  "type": "insecure"
+                }
+              ],
+              "server_features": [
+                "xds_v3"
+              ]
+            }
+          ],
+          "node": {
+            "id": "projects/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa"
+          },
+          "authorities": {
+            "": {}
+          }
+        }
+          (t=+349.488µs)
+=== RUN   Test/CSMPluginOption/normal-flow
+=== NAME  Test/CSMPluginOption
+    tlogger.go:116: INFO server.go:685 [core] [Server #1]Server created  (t=+1.963851ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #2]Channel created  (t=+2.004214ms)
+    tlogger.go:116: INFO clientconn.go:1684 [core] [Channel #2]original dial target is: "whatever:///127.0.0.1:52639"  (t=+2.025829ms)
+    tlogger.go:116: INFO clientconn.go:1691 [core] [Channel #2]parsed dial target is: resolver.Target{URL:url.URL{Scheme:"whatever", Opaque:"", User:(*url.Userinfo)(nil), Host:"", Path:"/127.0.0.1:52639", RawPath:"", OmitHost:false, ForceQuery:false, RawQuery:"", Fragment:"", RawFragment:""}}  (t=+2.077168ms)
+    tlogger.go:116: INFO clientconn.go:1841 [core] [Channel #2]Channel authority set to "127.0.0.1:52639"  (t=+2.090504ms)
+    tlogger.go:116: INFO server.go:881 [core] [Server #1 ListenSocket #3]ListenSocket created  (t=+2.130531ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #2]Channel exiting idle mode  (t=+2.183569ms)
+    tlogger.go:116: INFO resolver_wrapper.go:197 [core] [Channel #2]Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:52639",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Metadata": null
+            }
+          ],
+          "Endpoints": [
+            {
+              "Addresses": [
+                {
+                  "Addr": "127.0.0.1:52639",
+                  "ServerName": "",
+                  "Attributes": null,
+                  "BalancerAttributes": null,
+                  "Metadata": null
+                }
+              ],
+              "Attributes": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+2.250992ms)
+    tlogger.go:116: INFO balancer_wrapper.go:103 [core] [Channel #2]Channel switches to new LB policy "pick_first"  (t=+2.308143ms)
+    tlogger.go:116: INFO clientconn.go:849 [core] [Channel #2 SubChannel #4]Subchannel created  (t=+2.338513ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #2]Channel Connectivity change to CONNECTING  (t=+2.353224ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #2 SubChannel #4]Subchannel Connectivity change to CONNECTING  (t=+2.443408ms)
+    tlogger.go:116: INFO clientconn.go:1326 [core] [Channel #2 SubChannel #4]Subchannel picks a new address "127.0.0.1:52639" to connect  (t=+2.491455ms)
+    tlogger.go:116: INFO syscall_nonlinux.go:39 [core] CPU time info is unavailable on non-linux environments.  (t=+2.797732ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #2 SubChannel #4]Subchannel Connectivity change to READY  (t=+2.922127ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #2]Channel Connectivity change to READY  (t=+2.943752ms)
+Get Labels called with md: 0xc00023cc90in transport stream SetHeader()in write header lockedwriting status unary rpcin in header for method: /grpc.testing.TestService/UnaryCall2Get Labels called with md: 0xc0002b0960in in trailer for method: /grpc.testing.TestService/UnaryCalloptional label iteration: csm.service_nameoptional label iteration: csm.service_namespaceGet Labels called with md: 0xc0002b1110sending trailer onlyin in trailer for method: /grpc.testing.TestService/FullDuplexCallGet Labels called with md: 0xc0002b14a0optional label iteration: csm.service_nameoptional label iteration: csm.service_namespace    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #2]Channel Connectivity change to SHUTDOWN  (t=+4.560306ms)
+    tlogger.go:116: INFO resolver_wrapper.go:100 [core] [Channel #2]Closing the name resolver  (t=+4.574817ms)
+    tlogger.go:116: INFO balancer_wrapper.go:135 [core] [Channel #2]ccBalancerWrapper: closing  (t=+4.597286ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #2 SubChannel #4]Subchannel Connectivity change to SHUTDOWN  (t=+4.613423ms)
+    tlogger.go:116: INFO clientconn.go:1557 [core] [Channel #2 SubChannel #4]Subchannel deleted  (t=+4.634139ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #2]Channel deleted  (t=+4.688779ms)
+    tlogger.go:116: INFO server.go:817 [core] [Server #1 ListenSocket #3]ListenSocket deleted  (t=+4.723543ms)
+=== RUN   Test/CSMPluginOption/trailers-only-unary-streaming
+=== NAME  Test/CSMPluginOption
+    tlogger.go:116: INFO server.go:685 [core] [Server #7]Server created  (t=+5.386465ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #8]Channel created  (t=+5.413984ms)
+    tlogger.go:116: INFO clientconn.go:1684 [core] [Channel #8]original dial target is: "whatever:///127.0.0.1:52641"  (t=+5.426485ms)
+    tlogger.go:116: INFO clientconn.go:1691 [core] [Channel #8]parsed dial target is: resolver.Target{URL:url.URL{Scheme:"whatever", Opaque:"", User:(*url.Userinfo)(nil), Host:"", Path:"/127.0.0.1:52641", RawPath:"", OmitHost:false, ForceQuery:false, RawQuery:"", Fragment:"", RawFragment:""}}  (t=+5.443111ms)
+    tlogger.go:116: INFO server.go:881 [core] [Server #7 ListenSocket #9]ListenSocket created  (t=+5.456019ms)
+    tlogger.go:116: INFO clientconn.go:1841 [core] [Channel #8]Channel authority set to "127.0.0.1:52641"  (t=+5.475134ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #8]Channel exiting idle mode  (t=+5.500783ms)
+    tlogger.go:116: INFO resolver_wrapper.go:197 [core] [Channel #8]Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:52641",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Metadata": null
+            }
+          ],
+          "Endpoints": [
+            {
+              "Addresses": [
+                {
+                  "Addr": "127.0.0.1:52641",
+                  "ServerName": "",
+                  "Attributes": null,
+                  "BalancerAttributes": null,
+                  "Metadata": null
+                }
+              ],
+              "Attributes": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+5.531298ms)
+    tlogger.go:116: INFO balancer_wrapper.go:103 [core] [Channel #8]Channel switches to new LB policy "pick_first"  (t=+5.557602ms)
+    tlogger.go:116: INFO clientconn.go:849 [core] [Channel #8 SubChannel #10]Subchannel created  (t=+5.578351ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #8]Channel Connectivity change to CONNECTING  (t=+5.590317ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #8 SubChannel #10]Subchannel Connectivity change to CONNECTING  (t=+5.647293ms)
+    tlogger.go:116: INFO clientconn.go:1326 [core] [Channel #8 SubChannel #10]Subchannel picks a new address "127.0.0.1:52641" to connect  (t=+5.671382ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #8 SubChannel #10]Subchannel Connectivity change to READY  (t=+5.957419ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #8]Channel Connectivity change to READY  (t=+5.975064ms)
+Get Labels called with md: 0xc00070ab40    tlogger.go:116: INFO server_metrics.go:127 [otel-plugin] RPC failed with error: some error  (t=+6.147633ms)
+sending trailer onlyin in trailer for method: /grpc.testing.TestService/UnaryCallGet Labels called with md: 0xc000556120optional label iteration: csm.service_nameoptional label iteration: csm.service_namespaceGet Labels called with md: 0xc00070af90sending trailer onlyin in trailer for method: /grpc.testing.TestService/FullDuplexCallGet Labels called with md: 0xc0002c6de0optional label iteration: csm.service_nameoptional label iteration: csm.service_namespace    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #8]Channel Connectivity change to SHUTDOWN  (t=+6.910528ms)
+    tlogger.go:116: INFO resolver_wrapper.go:100 [core] [Channel #8]Closing the name resolver  (t=+6.974165ms)
+    tlogger.go:116: INFO balancer_wrapper.go:135 [core] [Channel #8]ccBalancerWrapper: closing  (t=+6.993447ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #8 SubChannel #10]Subchannel Connectivity change to SHUTDOWN  (t=+7.236362ms)
+    tlogger.go:116: INFO clientconn.go:1557 [core] [Channel #8 SubChannel #10]Subchannel deleted  (t=+7.263535ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #8]Channel deleted  (t=+7.320058ms)
+    tlogger.go:116: INFO server.go:817 [core] [Server #7 ListenSocket #9]ListenSocket deleted  (t=+7.368855ms)
+=== RUN   Test/CSMPluginOption/set-header-client-server-side
+=== NAME  Test/CSMPluginOption
+    tlogger.go:116: INFO server.go:685 [core] [Server #13]Server created  (t=+8.057069ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #14]Channel created  (t=+8.085577ms)
+    tlogger.go:116: INFO clientconn.go:1684 [core] [Channel #14]original dial target is: "whatever:///127.0.0.1:52643"  (t=+8.103137ms)
+    tlogger.go:116: INFO server.go:881 [core] [Server #13 ListenSocket #15]ListenSocket created  (t=+8.12657ms)
+    tlogger.go:116: INFO clientconn.go:1691 [core] [Channel #14]parsed dial target is: resolver.Target{URL:url.URL{Scheme:"whatever", Opaque:"", User:(*url.Userinfo)(nil), Host:"", Path:"/127.0.0.1:52643", RawPath:"", OmitHost:false, ForceQuery:false, RawQuery:"", Fragment:"", RawFragment:""}}  (t=+8.146069ms)
+    tlogger.go:116: INFO clientconn.go:1841 [core] [Channel #14]Channel authority set to "127.0.0.1:52643"  (t=+8.160946ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #14]Channel exiting idle mode  (t=+8.193127ms)
+    tlogger.go:116: INFO resolver_wrapper.go:197 [core] [Channel #14]Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:52643",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Metadata": null
+            }
+          ],
+          "Endpoints": [
+            {
+              "Addresses": [
+                {
+                  "Addr": "127.0.0.1:52643",
+                  "ServerName": "",
+                  "Attributes": null,
+                  "BalancerAttributes": null,
+                  "Metadata": null
+                }
+              ],
+              "Attributes": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+8.22349ms)
+    tlogger.go:116: INFO balancer_wrapper.go:103 [core] [Channel #14]Channel switches to new LB policy "pick_first"  (t=+8.245403ms)
+    tlogger.go:116: INFO clientconn.go:849 [core] [Channel #14 SubChannel #16]Subchannel created  (t=+8.270624ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #14]Channel Connectivity change to CONNECTING  (t=+8.282806ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #14 SubChannel #16]Subchannel Connectivity change to CONNECTING  (t=+8.3093ms)
+    tlogger.go:116: INFO clientconn.go:1326 [core] [Channel #14 SubChannel #16]Subchannel picks a new address "127.0.0.1:52643" to connect  (t=+8.322478ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #14 SubChannel #16]Subchannel Connectivity change to READY  (t=+8.5885ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #14]Channel Connectivity change to READY  (t=+8.608786ms)
+Get Labels called with md: 0xc00070a480in transport stream SetHeader()in transport stream SetHeader() attaching labelsin write header lockedwriting status unary rpcin in header for method: /grpc.testing.TestService/UnaryCall3Get Labels called with md: 0xc00070a780in in trailer for method: /grpc.testing.TestService/UnaryCalloptional label iteration: csm.service_nameoptional label iteration: csm.service_namespaceGet Labels called with md: 0xc0005153e0sending separate header framein write header lockedin in header for method: /grpc.testing.TestService/FullDuplexCall3Get Labels called with md: 0xc0005157d0in in trailer for method: /grpc.testing.TestService/FullDuplexCalloptional label iteration: csm.service_nameoptional label iteration: csm.service_namespace    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #14]Channel Connectivity change to SHUTDOWN  (t=+9.994467ms)
+    tlogger.go:116: INFO resolver_wrapper.go:100 [core] [Channel #14]Closing the name resolver  (t=+10.046796ms)
+    tlogger.go:116: INFO balancer_wrapper.go:135 [core] [Channel #14]ccBalancerWrapper: closing  (t=+10.187334ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #14 SubChannel #16]Subchannel Connectivity change to SHUTDOWN  (t=+10.21166ms)
+    tlogger.go:116: INFO clientconn.go:1557 [core] [Channel #14 SubChannel #16]Subchannel deleted  (t=+10.231792ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #14]Channel deleted  (t=+10.280871ms)
+    tlogger.go:116: INFO server.go:817 [core] [Server #13 ListenSocket #15]ListenSocket deleted  (t=+10.325083ms)
+=== RUN   Test/CSMPluginOption/send-header-client-server-side
+=== NAME  Test/CSMPluginOption
+    tlogger.go:116: INFO server.go:685 [core] [Server #19]Server created  (t=+10.951723ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #20]Channel created  (t=+10.977318ms)
+    tlogger.go:116: INFO clientconn.go:1684 [core] [Channel #20]original dial target is: "whatever:///127.0.0.1:52645"  (t=+10.989693ms)
+    tlogger.go:116: INFO server.go:881 [core] [Server #19 ListenSocket #21]ListenSocket created  (t=+11.016664ms)
+    tlogger.go:116: INFO clientconn.go:1691 [core] [Channel #20]parsed dial target is: resolver.Target{URL:url.URL{Scheme:"whatever", Opaque:"", User:(*url.Userinfo)(nil), Host:"", Path:"/127.0.0.1:52645", RawPath:"", OmitHost:false, ForceQuery:false, RawQuery:"", Fragment:"", RawFragment:""}}  (t=+11.036995ms)
+    tlogger.go:116: INFO clientconn.go:1841 [core] [Channel #20]Channel authority set to "127.0.0.1:52645"  (t=+11.051084ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #20]Channel exiting idle mode  (t=+11.075177ms)
+    tlogger.go:116: INFO resolver_wrapper.go:197 [core] [Channel #20]Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:52645",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Metadata": null
+            }
+          ],
+          "Endpoints": [
+            {
+              "Addresses": [
+                {
+                  "Addr": "127.0.0.1:52645",
+                  "ServerName": "",
+                  "Attributes": null,
+                  "BalancerAttributes": null,
+                  "Metadata": null
+                }
+              ],
+              "Attributes": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+11.099249ms)
+    tlogger.go:116: INFO balancer_wrapper.go:103 [core] [Channel #20]Channel switches to new LB policy "pick_first"  (t=+11.119965ms)
+    tlogger.go:116: INFO clientconn.go:849 [core] [Channel #20 SubChannel #22]Subchannel created  (t=+11.141058ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #20]Channel Connectivity change to CONNECTING  (t=+11.152348ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #20 SubChannel #22]Subchannel Connectivity change to CONNECTING  (t=+11.191295ms)
+    tlogger.go:116: INFO clientconn.go:1326 [core] [Channel #20 SubChannel #22]Subchannel picks a new address "127.0.0.1:52645" to connect  (t=+11.215573ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #20 SubChannel #22]Subchannel Connectivity change to READY  (t=+11.463458ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #20]Channel Connectivity change to READY  (t=+11.480612ms)
+Get Labels called with md: 0xc00070a9f0in transport stream SendHeader()in transport stream SendHeader() attaching labelsin write header lockedwriting status unary rpcin in header for method: /grpc.testing.TestService/UnaryCall3Get Labels called with md: 0xc000126180in in trailer for method: /grpc.testing.TestService/UnaryCalloptional label iteration: csm.service_nameoptional label iteration: csm.service_namespaceGet Labels called with md: 0xc0005b8de0in write header lockedin in header for method: /grpc.testing.TestService/FullDuplexCall3Get Labels called with md: 0xc0005b9230in in trailer for method: /grpc.testing.TestService/FullDuplexCalloptional label iteration: csm.service_nameoptional label iteration: csm.service_namespace    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #20]Channel Connectivity change to SHUTDOWN  (t=+12.819479ms)
+    tlogger.go:116: INFO resolver_wrapper.go:100 [core] [Channel #20]Closing the name resolver  (t=+12.835223ms)
+    tlogger.go:116: INFO balancer_wrapper.go:135 [core] [Channel #20]ccBalancerWrapper: closing  (t=+12.850803ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #20 SubChannel #22]Subchannel Connectivity change to SHUTDOWN  (t=+12.872535ms)
+    tlogger.go:116: INFO clientconn.go:1557 [core] [Channel #20 SubChannel #22]Subchannel deleted  (t=+12.890692ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #20]Channel deleted  (t=+12.939716ms)
+    tlogger.go:116: INFO server.go:817 [core] [Server #19 ListenSocket #21]ListenSocket deleted  (t=+12.973215ms)
+=== RUN   Test/CSMPluginOption/send-msg-client-server-side
+=== NAME  Test/CSMPluginOption
+    tlogger.go:116: INFO server.go:685 [core] [Server #25]Server created  (t=+13.545465ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #26]Channel created  (t=+13.569726ms)
+    tlogger.go:116: INFO clientconn.go:1684 [core] [Channel #26]original dial target is: "whatever:///127.0.0.1:52647"  (t=+13.581512ms)
+    tlogger.go:116: INFO clientconn.go:1691 [core] [Channel #26]parsed dial target is: resolver.Target{URL:url.URL{Scheme:"whatever", Opaque:"", User:(*url.Userinfo)(nil), Host:"", Path:"/127.0.0.1:52647", RawPath:"", OmitHost:false, ForceQuery:false, RawQuery:"", Fragment:"", RawFragment:""}}  (t=+13.598433ms)
+    tlogger.go:116: INFO server.go:881 [core] [Server #25 ListenSocket #27]ListenSocket created  (t=+13.610259ms)
+    tlogger.go:116: INFO clientconn.go:1841 [core] [Channel #26]Channel authority set to "127.0.0.1:52647"  (t=+13.63015ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #26]Channel exiting idle mode  (t=+13.660097ms)
+    tlogger.go:116: INFO resolver_wrapper.go:197 [core] [Channel #26]Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:52647",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Metadata": null
+            }
+          ],
+          "Endpoints": [
+            {
+              "Addresses": [
+                {
+                  "Addr": "127.0.0.1:52647",
+                  "ServerName": "",
+                  "Attributes": null,
+                  "BalancerAttributes": null,
+                  "Metadata": null
+                }
+              ],
+              "Attributes": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+13.686204ms)
+    tlogger.go:116: INFO balancer_wrapper.go:103 [core] [Channel #26]Channel switches to new LB policy "pick_first"  (t=+13.707244ms)
+    tlogger.go:116: INFO clientconn.go:849 [core] [Channel #26 SubChannel #28]Subchannel created  (t=+13.727742ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #26]Channel Connectivity change to CONNECTING  (t=+13.73892ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #26 SubChannel #28]Subchannel Connectivity change to CONNECTING  (t=+13.78221ms)
+    tlogger.go:116: INFO clientconn.go:1326 [core] [Channel #26 SubChannel #28]Subchannel picks a new address "127.0.0.1:52647" to connect  (t=+13.803012ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #26 SubChannel #28]Subchannel Connectivity change to READY  (t=+14.022273ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #26]Channel Connectivity change to READY  (t=+14.041291ms)
+Get Labels called with md: 0xc000556390in transport stream SetHeader()in write header lockedwriting status unary rpcin in header for method: /grpc.testing.TestService/UnaryCall2Get Labels called with md: 0xc00070b350in in trailer for method: /grpc.testing.TestService/UnaryCalloptional label iteration: csm.service_nameoptional label iteration: csm.service_namespaceGet Labels called with md: 0xc000556b70in write header lockedin in header for method: /grpc.testing.TestService/FullDuplexCall2Get Labels called with md: 0xc000126120in in trailer for method: /grpc.testing.TestService/FullDuplexCalloptional label iteration: csm.service_nameoptional label iteration: csm.service_namespace    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #26]Channel Connectivity change to SHUTDOWN  (t=+15.480338ms)
+    tlogger.go:116: INFO resolver_wrapper.go:100 [core] [Channel #26]Closing the name resolver  (t=+15.495241ms)
+    tlogger.go:116: INFO balancer_wrapper.go:135 [core] [Channel #26]ccBalancerWrapper: closing  (t=+15.510313ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #26 SubChannel #28]Subchannel Connectivity change to SHUTDOWN  (t=+15.53142ms)
+    tlogger.go:116: INFO clientconn.go:1557 [core] [Channel #26 SubChannel #28]Subchannel deleted  (t=+15.549926ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #26]Channel deleted  (t=+15.595127ms)
+    tlogger.go:116: INFO server.go:817 [core] [Server #25 ListenSocket #27]ListenSocket deleted  (t=+15.633962ms)
+=== RUN   Test/DetermineTargetCSM
+=== RUN   Test/DetermineTargetCSM/dns:///localhost
+=== RUN   Test/DetermineTargetCSM/xds-no-authority
+=== RUN   Test/DetermineTargetCSM/xds-traffic-director-authority
+=== RUN   Test/DetermineTargetCSM/xds-not-traffic-director-authority
+=== RUN   Test/GetLabels
+=== RUN   Test/GetLabels/unset-labels
+Get Labels called with md: 0xc0005b8c60=== RUN   Test/GetLabels/metadata-partially-set
+Get Labels called with md: 0xc0005b8e40=== RUN   Test/GetLabels/google-compute-engine
+Get Labels called with md: 0xc0005b90b0=== RUN   Test/GetLabels/google-compute-engine-labels-partially-set-with-extra
+Get Labels called with md: 0xc0005b92c0=== RUN   Test/GetLabels/google-kubernetes-engine
+Get Labels called with md: 0xc0005b94d0=== RUN   Test/GetLabels/google-kubernetes-engine-labels-partially-set
+Get Labels called with md: 0xc0005b97d0=== RUN   Test/GetLabels/unset-header
+Get Labels called with md: 0xc0005b9c20=== NAME  Test/GetLabels
+    tlogger.go:116: WARNING pluginoption.go:103 [csm-observability-plugin] length of md values of "x-envoy-peer-metadata" is not 1, is 0  (t=+815.328µs)
+=== RUN   Test/GetLabels/two-header-values
+Get Labels called with md: 0xc0005b9e00=== NAME  Test/GetLabels
+    tlogger.go:116: WARNING pluginoption.go:103 [csm-observability-plugin] length of md values of "x-envoy-peer-metadata" is not 1, is 2  (t=+875.377µs)
+=== RUN   Test/SetLabels
+=== RUN   Test/SetLabels/no-type
+=== NAME  Test/SetLabels
+    tlogger.go:116: INFO bootstrap.go:87 [internal/xds] Created bootstrap file at "/var/folders/cl/f8vhjmb14694s95xvbb2z_nh00rk43/T/test_xds_bootstrap_2878035886" with contents: {
+          "xds_servers": [
+            {
+              "server_uri": "xds_server_uri",
+              "channel_creds": [
+                {
+                  "type": "insecure"
+                }
+              ],
+              "server_features": [
+                "xds_v3"
+              ]
+            }
+          ],
+          "node": {
+            "id": "projects/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa"
+          },
+          "authorities": {
+            "": {}
+          }
+        }
+          (t=+1.277657ms)
+=== RUN   Test/SetLabels/gce
+=== RUN   Test/SetLabels/gce-half-unset
+=== RUN   Test/SetLabels/gke
+=== RUN   Test/SetLabels/gke-half-unset
+=== RUN   Test/xDSLabels
+    tlogger.go:116: INFO server.go:685 [core] [Server #31]Server created  (t=+974.304µs)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #32]Channel created  (t=+1.028205ms)
+    tlogger.go:116: INFO clientconn.go:1684 [core] [Channel #32]original dial target is: "whatever:///127.0.0.1:52650"  (t=+1.060048ms)
+    tlogger.go:116: INFO clientconn.go:1691 [core] [Channel #32]parsed dial target is: resolver.Target{URL:url.URL{Scheme:"whatever", Opaque:"", User:(*url.Userinfo)(nil), Host:"", Path:"/127.0.0.1:52650", RawPath:"", OmitHost:false, ForceQuery:false, RawQuery:"", Fragment:"", RawFragment:""}}  (t=+1.111175ms)
+    tlogger.go:116: INFO clientconn.go:1841 [core] [Channel #32]Channel authority set to "127.0.0.1:52650"  (t=+1.136423ms)
+    tlogger.go:116: INFO server.go:881 [core] [Server #31 ListenSocket #33]ListenSocket created  (t=+1.510982ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #32]Channel exiting idle mode  (t=+1.569319ms)
+    tlogger.go:116: INFO resolver_wrapper.go:197 [core] [Channel #32]Resolver state updated: {
+          "Addresses": [
+            {
+              "Addr": "127.0.0.1:52650",
+              "ServerName": "",
+              "Attributes": null,
+              "BalancerAttributes": null,
+              "Metadata": null
+            }
+          ],
+          "Endpoints": [
+            {
+              "Addresses": [
+                {
+                  "Addr": "127.0.0.1:52650",
+                  "ServerName": "",
+                  "Attributes": null,
+                  "BalancerAttributes": null,
+                  "Metadata": null
+                }
+              ],
+              "Attributes": null
+            }
+          ],
+          "ServiceConfig": null,
+          "Attributes": null
+        } (resolver returned new addresses)  (t=+1.960838ms)
+    tlogger.go:116: INFO balancer_wrapper.go:103 [core] [Channel #32]Channel switches to new LB policy "pick_first"  (t=+2.011537ms)
+    tlogger.go:116: INFO clientconn.go:849 [core] [Channel #32 SubChannel #34]Subchannel created  (t=+2.057639ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #32]Channel Connectivity change to CONNECTING  (t=+2.079823ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #32 SubChannel #34]Subchannel Connectivity change to CONNECTING  (t=+2.178814ms)
+    tlogger.go:116: INFO clientconn.go:1326 [core] [Channel #32 SubChannel #34]Subchannel picks a new address "127.0.0.1:52650" to connect  (t=+2.214382ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #32 SubChannel #34]Subchannel Connectivity change to READY  (t=+2.66306ms)
+    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #32]Channel Connectivity change to READY  (t=+2.697618ms)
+in write header lockedwriting status unary rpcin in header for method: /grpc.testing.TestService/UnaryCall1Get Labels called with md: 0xc0005b8a20    tlogger.go:116: WARNING pluginoption.go:103 [csm-observability-plugin] length of md values of "x-envoy-peer-metadata" is not 1, is 0  (t=+4.122527ms)
+in in trailer for method: /grpc.testing.TestService/UnaryCalloptional label iteration: csm.service_nameappending to attributes for optional label: csm.service_name: service_name_valoptional label iteration: csm.service_namespaceappending to attributes for optional label: csm.service_namespace: service_namespace_val    tlogger.go:116: INFO clientconn.go:535 [core] [Channel #32]Channel Connectivity change to SHUTDOWN  (t=+4.291046ms)
+    tlogger.go:116: INFO resolver_wrapper.go:100 [core] [Channel #32]Closing the name resolver  (t=+4.326423ms)
+    tlogger.go:116: INFO balancer_wrapper.go:135 [core] [Channel #32]ccBalancerWrapper: closing  (t=+4.350495ms)
+    tlogger.go:116: INFO clientconn.go:1210 [core] [Channel #32 SubChannel #34]Subchannel Connectivity change to SHUTDOWN  (t=+4.3898ms)
+    tlogger.go:116: INFO clientconn.go:1557 [core] [Channel #32 SubChannel #34]Subchannel deleted  (t=+4.423163ms)
+    tlogger.go:116: INFO clientconn.go:305 [core] [Channel #32]Channel deleted  (t=+4.507804ms)
+    tlogger.go:116: INFO server.go:817 [core] [Server #31 ListenSocket #33]ListenSocket deleted  (t=+4.582763ms)
+--- PASS: Test (0.08s)
+    --- PASS: Test/Bootstrap (0.00s)
+        --- PASS: Test/Bootstrap/malformed-node-id-unknown (0.00s)
+        --- PASS: Test/Bootstrap/node-id-parsed (0.00s)
+        --- PASS: Test/Bootstrap/wrong-syntax-unknown (0.00s)
+        --- PASS: Test/Bootstrap/node-id-parsed#01 (0.00s)
+    --- PASS: Test/CSMPluginOption (0.02s)
+        --- PASS: Test/CSMPluginOption/normal-flow (0.00s)
+        --- PASS: Test/CSMPluginOption/trailers-only-unary-streaming (0.00s)
+        --- PASS: Test/CSMPluginOption/set-header-client-server-side (0.00s)
+        --- PASS: Test/CSMPluginOption/send-header-client-server-side (0.00s)
+        --- PASS: Test/CSMPluginOption/send-msg-client-server-side (0.00s)
+    --- PASS: Test/DetermineTargetCSM (0.00s)
+        --- PASS: Test/DetermineTargetCSM/dns:///localhost (0.00s)
+        --- PASS: Test/DetermineTargetCSM/xds-no-authority (0.00s)
+        --- PASS: Test/DetermineTargetCSM/xds-traffic-director-authority (0.00s)
+        --- PASS: Test/DetermineTargetCSM/xds-not-traffic-director-authority (0.00s)
+    --- PASS: Test/GetLabels (0.05s)
+        --- PASS: Test/GetLabels/unset-labels (0.00s)
+        --- PASS: Test/GetLabels/metadata-partially-set (0.00s)
+        --- PASS: Test/GetLabels/google-compute-engine (0.00s)
+        --- PASS: Test/GetLabels/google-compute-engine-labels-partially-set-with-extra (0.00s)
+        --- PASS: Test/GetLabels/google-kubernetes-engine (0.00s)
+        --- PASS: Test/GetLabels/google-kubernetes-engine-labels-partially-set (0.00s)
+        --- PASS: Test/GetLabels/unset-header (0.00s)
+        --- PASS: Test/GetLabels/two-header-values (0.00s)
+    --- PASS: Test/SetLabels (0.00s)
+        --- PASS: Test/SetLabels/no-type (0.00s)
+        --- PASS: Test/SetLabels/gce (0.00s)
+        --- PASS: Test/SetLabels/gce-half-unset (0.00s)
+        --- PASS: Test/SetLabels/gke (0.00s)
+        --- PASS: Test/SetLabels/gke-half-unset (0.00s)
+    --- PASS: Test/xDSLabels (0.01s)
+PASS
+ok  	google.golang.org/grpc/stats/opentelemetry/csm	0.679s

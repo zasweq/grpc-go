@@ -49,7 +49,7 @@ func Test(t *testing.T) {
 // setup creates a stub server with OpenTelemetry component configured on client
 // and server side. It returns a reader for metrics emitted from OpenTelemetry
 // component and the server.
-func setup(t *testing.T, tafOn bool, maf func(string) bool) (*metric.ManualReader, *stubserver.StubServer) {
+func setup(t *testing.T, maf func(string) bool) (*metric.ManualReader, *stubserver.StubServer) {
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(
 		metric.WithReader(reader),
@@ -69,29 +69,16 @@ func setup(t *testing.T, tafOn bool, maf func(string) bool) (*metric.ManualReade
 			}
 		},
 	}
-	var taf func(string) bool
-	if tafOn {
-		taf = func(str string) bool {
-			return str != ss.Target
-		}
-	}
-
-	// or parameterize it - but this has no access to internal
-
-	// create all this stuff, or take a server option directly, or just
-	// do it inline
 
 	if err := ss.Start([]grpc.ServerOption{ServerOption(Options{
 		MetricsOptions: MetricsOptions{
 			MeterProvider:         provider,
 			Metrics:               DefaultMetrics,
-			TargetAttributeFilter: taf,
 			MethodAttributeFilter: maf,
 		}})}, DialOption(Options{
 		MetricsOptions: MetricsOptions{
 			MeterProvider:         provider,
 			Metrics:               DefaultMetrics,
-			TargetAttributeFilter: taf,
 			MethodAttributeFilter: maf,
 		},
 	})); err != nil {
@@ -108,12 +95,11 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 		// Will allow duplex/any other type of RPC.
 		return str != "/grpc.testing.TestService/UnaryCall"
 	}
-	// pull out setup into a helper
-	reader, ss := setup(t, true, maf)
+	reader, ss := setup(t, maf)
 	defer ss.Stop()
 
-	// make a single RPC (unary rpc), and filter out the target and method
-	// that would correspond.
+	// make a single RPC (unary rpc), and filter out the method that would
+	// correspond.
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	if _, err := ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{Payload: &testpb.Payload{
@@ -132,6 +118,12 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 	}
 	rm := &metricdata.ResourceMetrics{}
 	reader.Collect(ctx, rm)
+	gotMetrics := map[string]metricdata.Metrics{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			gotMetrics[m.Name] = m
+		}
+	}
 
 	wantMetrics := []metricdata.Metrics{
 		{
@@ -141,11 +133,11 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
-						Attributes: attribute.NewSet(attribute.String("grpc.method", "grpc.testing.TestService/UnaryCall"), attribute.String("grpc.target", "other")),
+						Attributes: attribute.NewSet(attribute.String("grpc.method", "grpc.testing.TestService/UnaryCall"), attribute.String("grpc.target", ss.Target)),
 						Value:      1,
 					},
 					{
-						Attributes: attribute.NewSet(attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall"), attribute.String("grpc.target", "other")),
+						Attributes: attribute.NewSet(attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall"), attribute.String("grpc.target", ss.Target)),
 						Value:      1,
 					},
 				},
@@ -153,24 +145,37 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 				IsMonotonic: true,
 			},
 		},
-	}
-	gotMetrics := map[string]metricdata.Metrics{}
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			gotMetrics[m.Name] = m
-		}
+		{
+			Name:        "grpc.server.call.duration",
+			Description: "End-to-end time taken to complete a call from server transport's perspective.",
+			Unit:        "s",
+			Data: metricdata.Histogram[float64]{
+				DataPoints: []metricdata.HistogramDataPoint[float64]{
+					{ // Method should go to "other" due to the method attribute filter.
+						Attributes: attribute.NewSet(attribute.String("grpc.method", "other"), attribute.String("grpc.status", "OK")),
+						Count:      1,
+						Bounds:     defaultLatencyBounds,
+					},
+					{
+						Attributes: attribute.NewSet(attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall"), attribute.String("grpc.status", "OK")),
+						Count:      1,
+						Bounds:     defaultLatencyBounds,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+			},
+		},
 	}
 
-	for _, metric := range wantMetrics {
-		val, ok := gotMetrics[metric.Name]
-		if !ok {
-			t.Fatalf("metric %v not present in recorded metrics", metric.Name)
-		}
-		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
-			t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
-		}
-	}
+	internal.CompareGotWantMetrics(ctx, t, reader, gotMetrics, wantMetrics)
 }
+
+var (
+	// defaultLatencyBounds are the default bounds for latency metrics.
+	defaultLatencyBounds = []float64{0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100} // provide "advice" through API, SDK should set this too
+	// defaultSizeBounds are the default bounds for metrics which record size.
+	defaultSizeBounds = []float64{0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
+)
 
 // TestAllMetricsOneFunction tests emitted metrics from OpenTelemetry
 // instrumentation component. It then configures a system with a gRPC Client and
@@ -182,7 +187,7 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 // on the Client (no StaticMethodCallOption set) and Server. The method
 // attribute on subsequent metrics should be bucketed in "other".
 func (s) TestAllMetricsOneFunction(t *testing.T) {
-	reader, ss := setup(t, false, nil) // dial and server option are parameterized, this becomes the delta (knobs on setup, just like cc, options)
+	reader, ss := setup(t, nil)
 	defer ss.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
@@ -219,15 +224,7 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		UnaryMessageSent: true,
 		StreamingMessageSent: false,
 	})
-
 	internal.CompareGotWantMetrics(ctx, t, reader, gotMetrics, wantMetrics)
-	// need all this logic too - perhaps factor out into helper.
-
-	// Alongside setup, that can also be a helper...
-
-	// lightweight verification would also be a lot of logic...refactor into shared helper...
-
-
 
 	stream, err = ss.Client.FullDuplexCall(ctx)
 	if err != nil {
@@ -317,3 +314,10 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		}
 	}
 }
+
+// In PR description for OTel:
+// * Deleted Target Attribute filter and all related code and tests/examples
+// * Added test section for Method Attribute Filter
+// * Refactored common e2e test functionality for usage by CSM e2e test...(need to call global in test just to make sure compiles but comes in interop)
+
+// When I get back: cleanup

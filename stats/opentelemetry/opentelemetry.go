@@ -123,12 +123,6 @@ type MetricsOptions struct {
 	// will be recorded.
 	Metrics *Metrics
 
-	// TargetAttributeFilter is a callback that takes the target string of the
-	// channel and returns a bool representing whether to use target as a label
-	// value or use the string "other". If unset, will use the target string as
-	// is. This only applies for client side metrics.
-	TargetAttributeFilter func(string) bool // delete this
-
 	// OptionalLabels are labels received from xDS that this component should
 	// add to metrics recording after received labels.
 	OptionalLabels []string
@@ -241,10 +235,7 @@ type metricsInfo struct {
 
 	labelsReceived bool
 	labels map[string]string // labels to attach to metrics emitted
-	xDSLabels map[string]string // how does this work? set in Tag, set in picker, where is this read? at some point you have to read this in sh callouts
-
-	// case *stats.OutPayload, *stats.InPayload, *stats.End: verify that is hits these, inheader or intrailer read the xDS labels then?
-	// write test to verify you can do this?
+	xDSLabels map[string]string
 }
 
 type clientMetrics struct {

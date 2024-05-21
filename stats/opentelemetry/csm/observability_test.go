@@ -21,18 +21,18 @@ package csm
 import (
 	"context"
 	"errors"
-	istats "google.golang.org/grpc/internal/stats"
 	"io"
 	"os"
 	"testing"
 
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/encoding/gzip"
+	istats "google.golang.org/grpc/internal/stats"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/internal/testutils/xds/bootstrap"
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats/opentelemetry"
 	"google.golang.org/grpc/stats/opentelemetry/internal"
 
@@ -41,7 +41,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-// setupEnv configures the enviornment for CSM Testing.
+// setupEnv configures the environment for CSM Testing. It returns a cleanup
+// function to be invoked to clear the environment.
 func setupEnv(t *testing.T, resourceDetectorEmissions map[string]string, nodeID string, csmCanonicalServiceName string, csmWorkloadName string) func() {
 	clearEnv()
 
@@ -79,11 +80,13 @@ func setupEnv(t *testing.T, resourceDetectorEmissions map[string]string, nodeID 
 // TestCSMPluginOption tests the CSM Plugin Option and labels. It configures the
 // environment for the CSM Plugin Option to read from. It then configures a
 // system with a gRPC Client and gRPC server with the OpenTelemetry Dial and
-// Server Option configured with a CSM Plugin Option, and makes a Unary RPC and
-// a Streaming RPC. These two RPCs should cause certain recording for each
-// registered metric observed through a Manual Metrics Reader on the provided
-// OpenTelemetry SDK's Meter Provider. The CSM Labels emitted from the plugin
-// option should be attached to the relevant metrics.
+// Server Option configured with a CSM Plugin Option with certain unary and
+// streaming handlers set to induce different ways of setting metadata exchange
+// labels, and makes a Unary RPC and a Streaming RPC. These two RPCs should
+// cause certain recording for each registered metric observed through a Manual
+// Metrics Reader on the provided OpenTelemetry SDK's Meter Provider. The CSM
+// Labels emitted from the plugin option should be attached to the relevant
+// metrics.
 func (s) TestCSMPluginOption(t *testing.T) {
 	resourceDetectorEmissions := map[string]string{
 		"cloud.platform":     "gcp_kubernetes_engine",
@@ -95,17 +98,15 @@ func (s) TestCSMPluginOption(t *testing.T) {
 	nodeID := "projects/12345/networks/mesh:mesh_id/nodes/aaaa-aaaa-aaaa-aaaa"
 	csmCanonicalServiceName := "csm_canonical_service_name"
 	csmWorkloadName := "csm_workload_name"
-	cleanup := setupEnv(t, resourceDetectorEmissions, nodeID, csmCanonicalServiceName, csmWorkloadName) // persist all around as map to expect CSM Labels from...
+	cleanup := setupEnv(t, resourceDetectorEmissions, nodeID, csmCanonicalServiceName, csmWorkloadName)
 	defer cleanup()
 
 
 	attributesWant := map[string]string {
 		"csm.workload_canonical_service": csmCanonicalServiceName, // from env
-		"csm.mesh_id": "mesh_id", // from bootstrap env var (set already through helper)
+		"csm.mesh_id": "mesh_id", // from bootstrap env var
 
-		// No xDS Labels - this happens through interop or I could set with another interceptor...
-		// Actually xDS Labels become "unknown" if not set
-		// C++ did this as an array to avoid string comparisons
+		// No xDS Labels - this happens in a test below.
 
 		"csm.remote_workload_type":              "gcp_kubernetes_engine",
 		"csm.remote_workload_canonical_service": csmCanonicalServiceName,
@@ -116,17 +117,16 @@ func (s) TestCSMPluginOption(t *testing.T) {
 		"csm.remote_workload_name":              csmWorkloadName,
 	}
 
-	// expectations of emitted metrics have extra csm labels of them...
 	var csmLabels []attribute.KeyValue
 	for k, v := range attributesWant {
 		csmLabels = append(csmLabels, attribute.String(k, v))
 	}
-	// Just like global...main will create this and pass to test...test is like main, creates bounds
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	tests := []struct{
 		name string
-		// to test the different operations to plumb metadata exchange header in...
+		// To test the different operations for Unary and Streaming RPC's from
+		// the interceptor level that can plumb metadata exchange header in.
 		unaryCallFunc func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error)
 		streamingCallFunc func(stream testgrpc.TestService_FullDuplexCallServer) error
 		opts internal.MetricDataOptions
@@ -140,7 +140,7 @@ func (s) TestCSMPluginOption(t *testing.T) {
 					Body: make([]byte, 10000),
 				}}, nil
 			},
-			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error { // this is trailers only
+			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error { // this is trailers only - no messages or headers attached
 				for {
 					_, err := stream.Recv()
 					if err == io.EOF {
@@ -153,12 +153,12 @@ func (s) TestCSMPluginOption(t *testing.T) {
 				UnaryMessageSent: true,
 				StreamingMessageSent: false,
 			},
-		}, // unary does send headers then trailers while streaming is trailers only...how does unary attach it when no send header?
+		},
 		{
 			name: "trailers-only-unary-streaming",
 			unaryCallFunc: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
-				return nil, errors.New("some error") // return an error and no message - this triggers trailers only
-			}, // nil is an invalid message, error is trailers only, nil induces
+				return nil, errors.New("some error") // return an error and no message - this triggers trailers only - no messages or headers attached
+			},
 			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error {
 				for {
 					_, err := stream.Recv()
@@ -170,7 +170,7 @@ func (s) TestCSMPluginOption(t *testing.T) {
 			opts: internal.MetricDataOptions{
 				CSMLabels: csmLabels,
 				UnaryMessageSent: false,
-				StreamingMessageSent: false, // this needs to be represented in the client side from this test too...
+				StreamingMessageSent: false,
 				UnaryCallFailed: true,
 			},
 		},
@@ -219,7 +219,7 @@ func (s) TestCSMPluginOption(t *testing.T) {
 			opts: internal.MetricDataOptions{
 				CSMLabels: csmLabels,
 				UnaryMessageSent: true,
-				StreamingMessageSent: false, // this needs to be represented in the client side from this test too...
+				StreamingMessageSent: false,
 			},
 		},
 		{
@@ -303,14 +303,7 @@ func (s) TestCSMPluginOption(t *testing.T) {
 			internal.CompareGotWantMetrics(ctx, t, mr, gotMetrics, wantMetrics)
 		})
 	}
-
 }
-
-// Make a note to ignore OTel...
-// per target dial option rebase, other one seems to be set in stone so I think we're good here...
-//
-
-
 
 // setup creates a stub server with the provided unary call and full duplex call
 // handlers, alongside with OpenTelemetry component with a CSM Plugin Option
@@ -327,14 +320,13 @@ func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Con
 		FullDuplexCallF: streamingCallFunc,
 	}
 
-	po := newPluginOption(ctx) // Same thing with po plumbed in...
+	po := newPluginOption(ctx)
 	var sopts []grpc.ServerOption
 	if serverOTelConfigured {
 		sopts = append(sopts, serverOptionWithCSMPluginOption(opentelemetry.Options{
 			MetricsOptions: opentelemetry.MetricsOptions{
 				MeterProvider:         provider,
 				Metrics:               opentelemetry.DefaultMetrics,
-				// OptionalLabels: []string{"csm.service_name", "csm.service_namespace"}, // should be a no-op unless receive labels through optional labels mechanism
 			}}, po))
 	}
 	dopts := []grpc.DialOption{dialOptionWithCSMPluginOption(opentelemetry.Options{
@@ -353,19 +345,7 @@ func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Con
 	return reader, ss
 }
 
-// Also move to observability package...yeah waitForServerCompletedRPC's will work
-// when I move needs ctx, reader, and t...
-// move to o11y package, switch current test to use helpers
-// then this then try and compile it...
-
-// just comment out globals and work on interop?
-
 func unaryInterceptorAttachxDSLabels(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	// both the tag setter
-	// and then set the labels,
-
-	// the chain set labels thing is hard to test...
-	// need to configure two stats handlers to test it...
 	ctx = istats.SetLabels(ctx, &istats.Labels{
 		TelemetryLabels: map[string]string{
 			// mock what the cluster impl would write here ("csm.")
@@ -375,8 +355,8 @@ func unaryInterceptorAttachxDSLabels(ctx context.Context, method string, req, re
 		},
 	})
 
-	// tag will just see this in the context and point to new map on heap...
-
+	// TagRPC will just see this in the context and it's xDS Labels point to
+	// this map on the heap.
 	return invoker(ctx, method, req, reply, cc, opts...)
 }
 
@@ -384,21 +364,11 @@ func unaryInterceptorAttachxDSLabels(ctx context.Context, method string, req, re
 // TestxDSLabels tests that xDS Labels get emitted from OpenTelemetry metrics.
 // This test configures OpenTelemetry with the CSM Plugin Option, and xDS
 // Optional Labels turned on. It then configures an interceptor to attach
-// labels, representing the cluster_impl picker. It then makes two RPC's, and
-// expects these labels to be emitted alongside relevant metrics. Full xDS
-// System alongside OpenTelemetry will be tested with interop.
-func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
-	// same test as above, expect set xDS Labels in the interceptor, and then
-	// make sure it's emitted...or leave to interop (for e2e flow)
-
-	// make sure to configure on optional labels (and delete target attribute filter)
-	// "csm.service_name"
-	// "csm.service_namespace"
-	/*opts := opentelemetry.Options{
-		MetricsOptions: opentelemetry.MetricsOptions{ // The rest as is, to get test working
-			OptionalLabels: []string{"csm.service_name", "csm.service_namespace"},
-		},
-	} // same thing metrics reader yada yada...*/
+// labels, representing the cluster_impl picker. It then makes a unary RPC, and
+// expects xDS Labels labels to be attached to emitted relevant metrics. Full
+// xDS System alongside OpenTelemetry will be tested with interop. (there is
+// test for xDS -> Stats handler and this tests -> OTel -> emission).
+func (s) TestxDSLabels(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	mr, ss := setup(ctx, t, func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
@@ -419,16 +389,8 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 		for _, m := range sm.Metrics {
 			gotMetrics[m.Name] = m
 		}
-	} // doens't need to block but does need client bucket stuff...
+	}
 
-	// stub server with just a unary handler...
-
-	// make a unary RPC
-
-	// just assert the labels for the want...inline wantmetrics for just client side, just
-	// verify client side...
-
-	// unarymethodclientsideend make it the xDS Labels (hardcoded)
 	unaryMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/UnaryCall")
 	targetAttr := attribute.String("grpc.target", ss.Target)
 	unaryStatusAttr := attribute.String("grpc.status", "OK")
@@ -480,7 +442,7 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 					{
 						Attributes: attribute.NewSet(unaryMethodClientSideEnd...),
 						Count:      1,
-						Bounds:     defaultLatencyBounds,
+						Bounds:     internal.DefaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -495,7 +457,7 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 					{
 						Attributes:   attribute.NewSet(unaryMethodClientSideEnd...),
 						Count:        1,
-						Bounds:       defaultSizeBounds,
+						Bounds:       internal.DefaultSizeBounds,
 						BucketCounts: unaryBucketCounts,
 						Min:          unaryExtrema,
 						Max:          unaryExtrema,
@@ -514,7 +476,7 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 					{
 						Attributes:   attribute.NewSet(unaryMethodClientSideEnd...),
 						Count:        1,
-						Bounds:       defaultSizeBounds,
+						Bounds:       internal.DefaultSizeBounds,
 						BucketCounts: unaryBucketCounts,
 						Min:          unaryExtrema,
 						Max:          unaryExtrema,
@@ -533,7 +495,7 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, unaryStatusAttr),
 						Count:      1,
-						Bounds:     defaultLatencyBounds,
+						Bounds:     internal.DefaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -541,40 +503,5 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 		},
 	}
 
-	// reuse testing logic...
 	internal.CompareGotWantMetrics(ctx, t, mr, gotMetrics, wantMetrics)
-
-	// no extra csm labels just xDS don't even set up env - keep it lightweight...
-
-
-	// this now gets read from xDS but not passed to plugin option, but filtered in OTel, try that and then
-	// write this test to see if it works
-
-	// this test only works once rebased since rn comes out of plugin option logic...
-
-	// same e2e setup expect add interceptor that sets labels as Tag does, sets it in the context *and then writes to it*
-	// or just write the labels and then set that into context...
-
-	// *If you have multiple stats handlers, the per attempt scope of these labels needs to point to the same heap
-	// that way when the cluster picker writes to it it all points to the same heap, still only client side...
-
-
-	// same locality label on same metrics I assume, if so commit it at the end of attempt into call info
-
-
-	// Same thing as above expect configure OTel with optional labels + plugin option (in options struct)
-
-	// Add interceptor that does what csh does and sets the labels, it's already there so will pick those up
-	// just not written to by xDS
-	// or set it here and then put it in context with certain map[string]string
-
 }
-
-// Delete target filter from this and add optional labels API...
-
-var (
-	// defaultLatencyBounds are the default bounds for latency metrics.
-	defaultLatencyBounds = []float64{0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100} // provide "advice" through API, SDK should set this too
-	// defaultSizeBounds are the default bounds for metrics which record size.
-	defaultSizeBounds = []float64{0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
-)
