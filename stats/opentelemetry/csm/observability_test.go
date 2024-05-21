@@ -250,8 +250,7 @@ func (s) TestCSMPluginOption(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mr, ss := setup(ctx, t, test.unaryCallFunc, test.streamingCallFunc)
-			// defer reader.Shutdown?
+			mr, ss := setup(ctx, t, test.unaryCallFunc, test.streamingCallFunc, true, nil)
 			defer ss.Stop()
 
 			var request *testpb.SimpleRequest
@@ -315,9 +314,10 @@ func (s) TestCSMPluginOption(t *testing.T) {
 
 // setup creates a stub server with the provided unary call and full duplex call
 // handlers, alongside with OpenTelemetry component with a CSM Plugin Option
-// configured on client and server side. It returns a reader for metrics emitted
-// from the OpenTelemetry component and the stub server.
-func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error), streamingCallFunc func(stream testgrpc.TestService_FullDuplexCallServer) error) (*metric.ManualReader, *stubserver.StubServer) { // specific for plugin option
+// configured on client and server side based off bool. It also takes in a unary
+// interceptor to configure. It returns a reader for metrics emitted from the
+// OpenTelemetry component and the stub server.
+func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error), streamingCallFunc func(stream testgrpc.TestService_FullDuplexCallServer) error, serverOTelConfigured bool, clientUnaryInterceptor grpc.UnaryClientInterceptor) (*metric.ManualReader, *stubserver.StubServer) { // specific for plugin option
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(
 		metric.WithReader(reader),
@@ -328,16 +328,26 @@ func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Con
 	}
 
 	po := newPluginOption(ctx) // Same thing with po plumbed in...
-	if err := ss.Start([]grpc.ServerOption{serverOptionWithCSMPluginOption(opentelemetry.Options{
+	var sopts []grpc.ServerOption
+	if serverOTelConfigured {
+		sopts = append(sopts, serverOptionWithCSMPluginOption(opentelemetry.Options{
+			MetricsOptions: opentelemetry.MetricsOptions{
+				MeterProvider:         provider,
+				Metrics:               opentelemetry.DefaultMetrics,
+				// OptionalLabels: []string{"csm.service_name", "csm.service_namespace"}, // should be a no-op unless receive labels through optional labels mechanism
+			}}, po))
+	}
+	dopts := []grpc.DialOption{dialOptionWithCSMPluginOption(opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
 			MeterProvider:         provider,
 			Metrics:               opentelemetry.DefaultMetrics,
-		}}, po)}, dialOptionWithCSMPluginOption(opentelemetry.Options{
-		MetricsOptions: opentelemetry.MetricsOptions{
-			MeterProvider:         provider,
-			Metrics:               opentelemetry.DefaultMetrics,
+			OptionalLabels: []string{"csm.service_name", "csm.service_namespace"}, // should be a no-op unless receive labels through optional labels mechanism
 		},
-	}, po)); err != nil {
+	}, po)}
+	if clientUnaryInterceptor != nil {
+		dopts = append(dopts, grpc.WithUnaryInterceptor(clientUnaryInterceptor))
+	}
+	if err := ss.Start(sopts, dopts...); err != nil {
 		t.Fatalf("Error starting endpoint server: %v", err)
 	}
 	return reader, ss
@@ -384,11 +394,32 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 	// make sure to configure on optional labels (and delete target attribute filter)
 	// "csm.service_name"
 	// "csm.service_namespace"
-	opts := opentelemetry.Options{
+	/*opts := opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{ // The rest as is, to get test working
 			OptionalLabels: []string{"csm.service_name", "csm.service_namespace"},
 		},
-	} // same thing metrics reader yada yada...
+	} // same thing metrics reader yada yada...*/
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	mr, ss := setup(ctx, t, func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+		return &testpb.SimpleResponse{Payload: &testpb.Payload{
+			Body: make([]byte, 10000),
+		}}, nil
+	}, nil, false, unaryInterceptorAttachxDSLabels)
+	defer ss.Stop()
+	ss.Client.UnaryCall(ctx, &testpb.SimpleRequest{Payload: &testpb.Payload{
+		Body: make([]byte, 10000),
+	}}, grpc.UseCompressor(gzip.Name))
+
+	rm := &metricdata.ResourceMetrics{}
+	mr.Collect(ctx, rm)
+
+	gotMetrics := map[string]metricdata.Metrics{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			gotMetrics[m.Name] = m
+		}
+	} // doens't need to block but does need client bucket stuff...
 
 	// stub server with just a unary handler...
 
@@ -398,7 +429,32 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 	// verify client side...
 
 	// unarymethodclientsideend make it the xDS Labels (hardcoded)
+	unaryMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/UnaryCall")
+	targetAttr := attribute.String("grpc.target", ss.Target)
+	unaryStatusAttr := attribute.String("grpc.status", "OK")
 
+	serviceNameAttr := attribute.String("csm.service_name", "service_name_val")
+	serviceNamespaceAttr := attribute.String("csm.service_namespace", "service_namespace_val")
+	meshIDAttr := attribute.String("csm.mesh_id", "unknown")
+	workloadCanonicalServiceAttr := attribute.String("csm.workload_canonical_service", "unknown")
+	remoteWorkloadTypeAttr := attribute.String("csm.remote_workload_type", "unknown")
+	remoteWorkloadCanonicalServiceAttr := attribute.String("csm.remote_workload_canonical_service", "unknown")
+
+	unaryMethodClientSideEnd := []attribute.KeyValue{
+		unaryMethodAttr,
+		targetAttr,
+		unaryStatusAttr,
+		serviceNameAttr,
+		serviceNamespaceAttr,
+		meshIDAttr,
+		workloadCanonicalServiceAttr,
+		remoteWorkloadTypeAttr,
+		remoteWorkloadCanonicalServiceAttr,
+	}
+
+	unaryCompressedBytesSentRecv := int64(57) // Fixed 10000 bytes with gzip assumption.
+	unaryBucketCounts := []uint64{0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}
+	unaryExtrema := metricdata.NewExtrema(int64(57))
 	wantMetrics := []metricdata.Metrics{
 		{
 			Name:        "grpc.client.attempt.started",
@@ -464,15 +520,6 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 						Max:          unaryExtrema,
 						Sum:          unaryCompressedBytesSentRecv,
 					},
-					{
-						Attributes:   attribute.NewSet(streamingMethodClientSideEnd...),
-						Count:        1,
-						Bounds:       defaultSizeBounds,
-						BucketCounts: streamingBucketCounts,
-						Min:          streamingExtrema,
-						Max:          streamingExtrema,
-						Sum:          streamingCompressedBytesSentRecv,
-					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 			},
@@ -485,11 +532,6 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 				DataPoints: []metricdata.HistogramDataPoint[float64]{
 					{
 						Attributes: attribute.NewSet(unaryMethodAttr, targetAttr, unaryStatusAttr),
-						Count:      1,
-						Bounds:     defaultLatencyBounds,
-					},
-					{
-						Attributes: attribute.NewSet(duplexMethodAttr, targetAttr, streamingStatusAttr),
 						Count:      1,
 						Bounds:     defaultLatencyBounds,
 					},
@@ -529,3 +571,10 @@ func (s) TestxDSLabels(t *testing.T) { // configure with xDS Labels...
 }
 
 // Delete target filter from this and add optional labels API...
+
+var (
+	// defaultLatencyBounds are the default bounds for latency metrics.
+	defaultLatencyBounds = []float64{0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100} // provide "advice" through API, SDK should set this too
+	// defaultSizeBounds are the default bounds for metrics which record size.
+	defaultSizeBounds = []float64{0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
+)

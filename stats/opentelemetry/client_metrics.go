@@ -238,7 +238,9 @@ func (csh *clientStatsHandler) processRPCEnd(ctx context.Context, mi *metricsInf
 	// mi.xDSLabels // no has attempt data here
 	// csh.o.MetricsOptions.OptionalLabels // []string, combine with xDS Labels
 	for _, o := range csh.o.MetricsOptions.OptionalLabels { // server side sets this
+		print("optional label iteration: ", o)
 		if val, ok := mi.xDSLabels[o]; ok {
+			print("appending to attributes for optional label: ", o, ": ", val)
 			attributes = append(attributes, attribute.String(o, val))
 		} // can't race since hedging is per attempt...
 	} // global csm layer then sets this...interop client changes block nothing...
