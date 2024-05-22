@@ -505,3 +505,11 @@ func (s) TestxDSLabels(t *testing.T) {
 
 	internal.CompareGotWantMetrics(ctx, t, mr, gotMetrics, wantMetrics)
 }
+
+// TestObservability tests that Observability global function compiles and runs
+// without error. The actual functionality of this function will be verified in
+// interop tests.
+func (s) TestObservability(t *testing.T) {
+	cleanup := Observability(context.Background(), opentelemetry.Options{})
+	defer cleanup()
+}

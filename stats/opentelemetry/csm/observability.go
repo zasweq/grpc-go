@@ -19,7 +19,11 @@
 package csm
 
 import (
+	"context"
+	"net/url"
+
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/stats/opentelemetry"
 	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
 )
@@ -40,61 +44,44 @@ var clientSideOTel grpc.DialOption
 //
 // The CSM Plugin Option is instantiated with local labels and metadata exchange
 // labels pulled from the environment, and emits metadata exchange labels from
-// the peer, local labels, and xDS Labels if provided. Context timeouts does not
-// trigger an error, but sets certain labels to "unknown".
+// the peer and local labels. Context timeouts do not trigger an error, but set
+// certain labels to "unknown".
 //
 // This function is not thread safe, and should only be invoked once in main
 // before any channels or servers are created. Returns a cleanup function to be
 // deferred in main.
-
-/*func Observability(ctx context.Context, options opentelemetry.Options) func() {
-	csmPluginOption := newPluginOption(ctx) // Do this operation in tests now...because this is global to the binary...
+func Observability(ctx context.Context, options opentelemetry.Options) func() {
+	csmPluginOption := newPluginOption(ctx)
 	clientSideOTelWithCSM = dialOptionWithCSMPluginOption(options, csmPluginOption)
 	clientSideOTel = opentelemetry.DialOption(options)
 
 	serverSideOTelWithCSM := serverOptionWithCSMPluginOption(options, csmPluginOption)
 
-	// internal.AddGlobalLateApplyDialOptions.(func(opt ...LateApplyDialOption))(&testLateApplyDialOption{})
+	internal.AddGlobalPerTargetDialOptions.(func(opt any))(perTargetDialOption)
 
 
-	internal.AddGlobalServerOptions.(func(opt ...grpc.ServerOption))(serverSideOTelWithCSM) // sets the global - not intended to be used with o11y so we're good here...
+	internal.AddGlobalServerOptions.(func(opt ...grpc.ServerOption))(serverSideOTelWithCSM)
 
 	return func() {
 		internal.ClearGlobalServerOptions()
-		internal.ClearGlobalLateApplyDialOptions()
+		internal.ClearGlobalPerTargetDialOptions()
 	}
-}*/ // this won't actually compile unless I rebase
-
-
-/*
-type lateApplyDialOption interface { // doing this in other PR...although idk how if this will be able to access...
-	DialOption(parsedTarget *url.URL) grpc.DialOption
 }
 
-// Just call this with a pointer...
-// Do I register just this function or do I need to make this on an object...
-func DialOption(parsedTarget *url.URL) grpc.DialOption { // yeah only difference is this api and the prepending with csm.
-	if determineTargetCSM(parsedTarget) {
+func perTargetDialOption(parsedTarget url.URL) grpc.DialOption {
+	if determineTargetCSM(&parsedTarget) {
 		return clientSideOTelWithCSM
 	}
 	return clientSideOTel
-}*/
+}
 
-// Keep global layer to show how it works in PR Call it in tests to not fail
-// vet...
-
-
-
-
-// OTel labels happen internally under the hood, so keep the optional labels as is.
-func dialOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.DialOption { // test at this layer and replace grpc.DialOption in OTel tests...
+func dialOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.DialOption {
 	options.MetricsOptions.OptionalLabels = []string{"csm.service_name", "csm.service_namespace"} // Attach the two xDS Optional Labels for this component to not filter out.
 	otelinternal.SetPluginOption.(func(options *opentelemetry.Options, po otelinternal.PluginOption))(&options, po)
 	return opentelemetry.DialOption(options)
 }
 
 func serverOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.ServerOption {
-	options.MetricsOptions.OptionalLabels = []string{"csm.service_name", "csm.service_namespace"} // Attach the two xDS Optional Labels for this component to not filter out.
 	otelinternal.SetPluginOption.(func(options *opentelemetry.Options, po otelinternal.PluginOption))(&options, po)
 	return opentelemetry.ServerOption(options)
 }

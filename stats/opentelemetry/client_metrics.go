@@ -150,7 +150,7 @@ func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 	ri := &rpcInfo{
 		mi: mi,
 	}
-	ctx = istats.SetLabels(ctx, labels) // ctx passed is immutable, however cluster_impl writes to the map of Telemetry Labels on the heap.
+	ctx = istats.SetLabels(ctx, labels)
 	return setRPCInfo(ctx, ri)
 }
 
@@ -180,16 +180,17 @@ func (csh *clientStatsHandler) processRPCEvent(ctx context.Context, s stats.RPCS
 	case *stats.End:
 		csh.processRPCEnd(ctx, mi, st)
 	case *stats.InHeader:
-		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
-			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Header)
-			mi.labelsReceived = true
-		}
-	case *stats.InTrailer: // only variable is header and trailer can pull out into helper
-		if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
-			mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(st.Trailer)
-			mi.labelsReceived = true
-		}
+		csh.getLabelsFromPluginOption(mi, st.Header)
+	case *stats.InTrailer:
+		csh.getLabelsFromPluginOption(mi, st.Trailer)
 	default:
+	}
+}
+
+func (csh *clientStatsHandler) getLabelsFromPluginOption(mi *metricsInfo, incomingMetadata metadata.MD) {
+	if !mi.labelsReceived && csh.o.MetricsOptions.pluginOption != nil {
+		mi.labels = csh.o.MetricsOptions.pluginOption.GetLabels(incomingMetadata)
+		mi.labelsReceived = true
 	}
 }
 

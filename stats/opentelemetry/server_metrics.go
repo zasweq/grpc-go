@@ -18,12 +18,12 @@ package opentelemetry
 
 import (
 	"context"
-	"google.golang.org/grpc/metadata"
 	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/internal"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 
@@ -66,11 +66,7 @@ type attachLabelsStream struct {
 	metadataExchangeLabels metadata.MD
 }
 
-func (als *attachLabelsStream) SetHeader(md metadata.MD) error { // you could get two that call this...
-	// just append, it can't call itself, I think append just once, if another
-	// comes in sets both so doesn't matter ordering... one of them that will
-	// eventually get merged will happen, other operations can't come in concurrently
-	// anyway so you're good here...can't have two merged
+func (als *attachLabelsStream) SetHeader(md metadata.MD) error {
 	if !als.attachedLabels.Swap(true) {
 		val := als.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
@@ -81,13 +77,13 @@ func (als *attachLabelsStream) SetHeader(md metadata.MD) error { // you could ge
 }
 
 func (als *attachLabelsStream) SendHeader(md metadata.MD) error {
-	if !als.attachedLabels.Swap(true) { // I think this is fine no need to set header in this case...
+	if !als.attachedLabels.Swap(true) {
 		val := als.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
 	}
 
-	return als.ServerStream.SendHeader(md) // does the synchronous guarantees get lost somewhere here?
-} // unary and streaming go through same underlying server stream flow...
+	return als.ServerStream.SendHeader(md)
+}
 
 func (als *attachLabelsStream) SendMsg(m any) error {
 	if !als.attachedLabels.Swap(true) {
@@ -102,34 +98,23 @@ func (ssh *serverStatsHandler) unaryInterceptor(ctx context.Context, req any, in
 		metadataExchangeLabels = ssh.o.MetricsOptions.pluginOption.GetMetadata()
 	}
 
-
-	// How do I plumb in something here...
-	// no example? does it override the unary handler
-	// handler(ctx, req) // this is the function definition...what do I do with it?
-
 	sts := grpc.ServerTransportStreamFromContext(ctx)
-	// stream // grpc.ServerTransportStream...wrap these four operations?
 
-	// Yeah what do I do for this thing? wraps what
 	alts := &attachLabelsTransportStream{
-		ServerTransportStream: sts, // what server stream do I attach here?
+		ServerTransportStream: sts,
 		metadataExchangeLabels: metadataExchangeLabels,
 	}
-	// and if I set the context does this just work?
-	ctx = grpc.NewContextWithServerTransportStream(ctx, alts /*Is it just setting the context to this?*/)
+	ctx = grpc.NewContextWithServerTransportStream(ctx, alts)
 
-	any, err := handler(ctx, req) // if returns a message, set the extra headers, and not set, send this before sending message
-	if err != nil {
-		// error returned, so trailers only
+	any, err := handler(ctx, req)
+	if err != nil { // error returned, so trailers only
 		if !alts.attachedLabels.Swap(true) {
 			alts.SetTrailer(alts.metadataExchangeLabels)
 		}
 		logger.Infof("RPC failed with error: %v", err)
 	} else { // headers will be written; a message was sent
-		// headers will be sent and I haven't attached it already attach it here...
-		// whether you keep it here or put it in an else doesn't matter
 		if !alts.attachedLabels.Swap(true) {
-			alts.SetHeader(alts.metadataExchangeLabels) // set it to be written
+			alts.SetHeader(alts.metadataExchangeLabels)
 		}
 	}
 
@@ -137,6 +122,8 @@ func (ssh *serverStatsHandler) unaryInterceptor(ctx context.Context, req any, in
 
 }
 
+// attachLabelsTransport stream intercepts SetHeader and SendHeader calls of the
+// underlying ServerTransportStream to attach metadataExchangeLabels.
 type attachLabelsTransportStream struct {
 	grpc.ServerTransportStream
 
@@ -145,9 +132,7 @@ type attachLabelsTransportStream struct {
 }
 
 func (alts *attachLabelsTransportStream) SetHeader(md metadata.MD) error {
-	print("in transport stream SetHeader()")
 	if !alts.attachedLabels.Swap(true) {
-		print("in transport stream SetHeader() attaching labels")
 		val := alts.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
 	}
@@ -155,9 +140,7 @@ func (alts *attachLabelsTransportStream) SetHeader(md metadata.MD) error {
 }
 
 func (alts *attachLabelsTransportStream) SendHeader(md metadata.MD) error {
-	print("in transport stream SendHeader()")
 	if !alts.attachedLabels.Swap(true) {
-		print("in transport stream SendHeader() attaching labels")
 		val := alts.metadataExchangeLabels.Get("x-envoy-peer-metadata")
 		md.Append("x-envoy-peer-metadata", val...)
 	}
