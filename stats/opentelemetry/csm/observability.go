@@ -59,7 +59,6 @@ func Observability(ctx context.Context, options opentelemetry.Options) func() {
 
 	internal.AddGlobalPerTargetDialOptions.(func(opt any))(perTargetDialOption)
 
-
 	internal.AddGlobalServerOptions.(func(opt ...grpc.ServerOption))(serverSideOTelWithCSM)
 
 	return func() {

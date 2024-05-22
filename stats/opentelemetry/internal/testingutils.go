@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package internal
 
 import (
@@ -92,7 +91,6 @@ func assertDataPointWithinFiveSeconds(metric metricdata.Metrics) error {
 	return nil
 }
 
-// Helpers below...
 // MetricDataOptions are the options used to configure the metricData emissions
 // of expected metrics data from NewMetricData. (rename function? this feels
 // like the different config state spaces for xDS haha).
@@ -102,7 +100,7 @@ type MetricDataOptions struct {
 	// side).
 	CSMLabels []attribute.KeyValue
 	// Target is the target of the client and server.
-	Target string // need to set this based on variable stub server - return target? and set in function body dynamically
+	Target string
 	// UnaryMessageSent is whether a message was sent for the unary RPC or not.
 	// This unary message is assumed to be 10000 bytes and the RPC is assumed to
 	// have a gzip compressor call option set. This assumes both client and peer
@@ -123,13 +121,10 @@ type MetricDataOptions struct {
 // sent. If csmAttributes is set to true, the corresponding CSM Metrics (not
 // client side call metrics, or started on client and server side).
 func MetricData(options MetricDataOptions) []metricdata.Metrics {
-	// unaryMessageSent and streamingMessageSent likely just affect compressed bytes on the wire
-
-
 	unaryMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/UnaryCall")
 	duplexMethodAttr := attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall")
 
-	targetAttr := attribute.String("grpc.target", options.Target) // target is variable - construct dynamically
+	targetAttr := attribute.String("grpc.target", options.Target)
 
 	unaryStatusAttr := attribute.String("grpc.status", "OK")
 	streamingStatusAttr := attribute.String("grpc.status", "OK")
@@ -137,7 +132,6 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 		unaryStatusAttr = attribute.String("grpc.status", "UNKNOWN")
 	}
 
-	// Started don't need it luckily so just build out - other ones are fixed
 	unaryMethodClientSideEnd := []attribute.KeyValue{
 		unaryMethodAttr,
 		targetAttr,
@@ -315,7 +309,7 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 				IsMonotonic: true,
 			},
 		},
-		{ // switch otel e2e to use this and see if it works, other thing is to mock env
+		{
 			Name:        "grpc.server.call.sent_total_compressed_message_size",
 			Unit:        "By",
 			Description: "Compressed message bytes sent per server call.",
@@ -394,7 +388,10 @@ func MetricData(options MetricDataOptions) []metricdata.Metrics {
 	}
 }
 
-// CompareGotWantMetrics asserts wantMetrics are what we expect...
+// CompareGotWantMetrics asserts wantMetrics are what we expect. It polls for
+// eventual server metrics (not emitted synchronously with client side rpc
+// returning), and for duration metrics makes sure the data point is within
+// possible testing time (five seconds from context timeout).
 func CompareGotWantMetrics(ctx context.Context, t *testing.T, mr *metric.ManualReader, gotMetrics map[string]metricdata.Metrics, wantMetrics []metricdata.Metrics) { // return an error instead of t...
 	for _, metric := range wantMetrics {
 		if metric.Name == "grpc.server.call.sent_total_compressed_message_size" || metric.Name == "grpc.server.call.rcvd_total_compressed_message_size" {
@@ -419,7 +416,7 @@ func CompareGotWantMetrics(ctx context.Context, t *testing.T, mr *metric.ManualR
 			if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars(), metricdatatest.IgnoreValue()) {
 				t.Fatalf("metrics data type not equal for metric: %v", metric.Name)
 			}
-			if err := assertDataPointWithinFiveSeconds(val); err != nil { // move to shared helper...
+			if err := assertDataPointWithinFiveSeconds(val); err != nil {
 				t.Fatalf("Data point not within five seconds for metric %v: %v", metric.Name, err)
 			}
 			continue
@@ -430,7 +427,3 @@ func CompareGotWantMetrics(ctx context.Context, t *testing.T, mr *metric.ManualR
 		}
 	}
 }
-
-// Trailers only, xDS Labels unit test if I want (set in an interceptor I add) - tests this half at least
-// I could send this out but probably wrap up eating errors for 1.20 and then get that PR in
-// and then interop :)

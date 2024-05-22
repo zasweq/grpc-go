@@ -124,7 +124,7 @@ type MetricsOptions struct {
 	Metrics *Metrics
 
 	// OptionalLabels are labels received from xDS that this component should
-	// add to metrics recording after received labels.
+	// add to metrics that record after receiving incoming metadata.
 	OptionalLabels []string
 
 	// MethodAttributeFilter is to record the method name of RPCs handled by
@@ -135,6 +135,7 @@ type MetricsOptions struct {
 	// This only applies for server side metrics.
 	MethodAttributeFilter func(string) bool
 
+	// pluginOption is used to get labels to attach to certain metrics, if set.
 	pluginOption otelinternal.PluginOption
 }
 
@@ -234,8 +235,8 @@ type metricsInfo struct {
 	method    string
 
 	labelsReceived bool
-	labels map[string]string // labels to attach to metrics emitted
-	xDSLabels map[string]string
+	labels         map[string]string // labels to attach to metrics emitted
+	xDSLabels      map[string]string
 }
 
 type clientMetrics struct {

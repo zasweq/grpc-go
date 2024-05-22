@@ -26,9 +26,10 @@ import (
 	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/stubserver"
+	"google.golang.org/grpc/stats/opentelemetry/internal"
+
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
-	"google.golang.org/grpc/stats/opentelemetry/internal"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -154,12 +155,12 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 					{ // Method should go to "other" due to the method attribute filter.
 						Attributes: attribute.NewSet(attribute.String("grpc.method", "other"), attribute.String("grpc.status", "OK")),
 						Count:      1,
-						Bounds:     defaultLatencyBounds,
+						Bounds:     internal.DefaultLatencyBounds,
 					},
 					{
 						Attributes: attribute.NewSet(attribute.String("grpc.method", "grpc.testing.TestService/FullDuplexCall"), attribute.String("grpc.status", "OK")),
 						Count:      1,
-						Bounds:     defaultLatencyBounds,
+						Bounds:     internal.DefaultLatencyBounds,
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -169,13 +170,6 @@ func (s) TestMethodTargetAttributeFilter(t *testing.T) {
 
 	internal.CompareGotWantMetrics(ctx, t, reader, gotMetrics, wantMetrics)
 }
-
-var (
-	// defaultLatencyBounds are the default bounds for latency metrics.
-	defaultLatencyBounds = []float64{0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100} // provide "advice" through API, SDK should set this too
-	// defaultSizeBounds are the default bounds for metrics which record size.
-	defaultSizeBounds = []float64{0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
-)
 
 // TestAllMetricsOneFunction tests emitted metrics from OpenTelemetry
 // instrumentation component. It then configures a system with a gRPC Client and
@@ -220,8 +214,8 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 	}
 
 	wantMetrics := internal.MetricData(internal.MetricDataOptions{
-		Target: ss.Target,
-		UnaryMessageSent: true,
+		Target:               ss.Target,
+		UnaryMessageSent:     true,
 		StreamingMessageSent: false,
 	})
 	internal.CompareGotWantMetrics(ctx, t, reader, gotMetrics, wantMetrics)
@@ -314,10 +308,3 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		}
 	}
 }
-
-// In PR description for OTel:
-// * Deleted Target Attribute filter and all related code and tests/examples
-// * Added test section for Method Attribute Filter
-// * Refactored common e2e test functionality for usage by CSM e2e test...(need to call global in test just to make sure compiles but comes in interop)
-
-// When I get back: cleanup

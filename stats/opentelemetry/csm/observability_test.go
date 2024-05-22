@@ -41,8 +41,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-// setupEnv configures the environment for CSM Testing. It returns a cleanup
-// function to be invoked to clear the environment.
+// setupEnv configures the environment for CSM Observability Testing. It returns
+// a cleanup function to be invoked to clear the environment.
 func setupEnv(t *testing.T, resourceDetectorEmissions map[string]string, nodeID string, csmCanonicalServiceName string, csmWorkloadName string) func() {
 	clearEnv()
 
@@ -55,7 +55,6 @@ func setupEnv(t *testing.T, resourceDetectorEmissions map[string]string, nodeID 
 	}
 	os.Setenv("CSM_CANONICAL_SERVICE_NAME", csmCanonicalServiceName)
 	os.Setenv("CSM_WORKLOAD_NAME", csmWorkloadName)
-
 
 	var attributes []attribute.KeyValue
 	for k, v := range resourceDetectorEmissions {
@@ -101,10 +100,9 @@ func (s) TestCSMPluginOption(t *testing.T) {
 	cleanup := setupEnv(t, resourceDetectorEmissions, nodeID, csmCanonicalServiceName, csmWorkloadName)
 	defer cleanup()
 
-
-	attributesWant := map[string]string {
+	attributesWant := map[string]string{
 		"csm.workload_canonical_service": csmCanonicalServiceName, // from env
-		"csm.mesh_id": "mesh_id", // from bootstrap env var
+		"csm.mesh_id":                    "mesh_id",               // from bootstrap env var
 
 		// No xDS Labels - this happens in a test below.
 
@@ -123,13 +121,13 @@ func (s) TestCSMPluginOption(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
-	tests := []struct{
+	tests := []struct {
 		name string
 		// To test the different operations for Unary and Streaming RPC's from
 		// the interceptor level that can plumb metadata exchange header in.
-		unaryCallFunc func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error)
+		unaryCallFunc     func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error)
 		streamingCallFunc func(stream testgrpc.TestService_FullDuplexCallServer) error
-		opts internal.MetricDataOptions
+		opts              internal.MetricDataOptions
 	}{
 		// Different permutations of operations that should all trigger csm md
 		// exchange labels to be written on the wire.
@@ -140,7 +138,7 @@ func (s) TestCSMPluginOption(t *testing.T) {
 					Body: make([]byte, 10000),
 				}}, nil
 			},
-			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error { // this is trailers only - no messages or headers attached
+			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error { // this is trailers only - no messages or headers sent
 				for {
 					_, err := stream.Recv()
 					if err == io.EOF {
@@ -149,15 +147,15 @@ func (s) TestCSMPluginOption(t *testing.T) {
 				}
 			},
 			opts: internal.MetricDataOptions{
-				CSMLabels: csmLabels,
-				UnaryMessageSent: true,
+				CSMLabels:            csmLabels,
+				UnaryMessageSent:     true,
 				StreamingMessageSent: false,
 			},
 		},
 		{
 			name: "trailers-only-unary-streaming",
 			unaryCallFunc: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
-				return nil, errors.New("some error") // return an error and no message - this triggers trailers only - no messages or headers attached
+				return nil, errors.New("some error") // return an error and no message - this triggers trailers only - no messages or headers sent
 			},
 			streamingCallFunc: func(stream testgrpc.TestService_FullDuplexCallServer) error {
 				for {
@@ -168,10 +166,10 @@ func (s) TestCSMPluginOption(t *testing.T) {
 				}
 			},
 			opts: internal.MetricDataOptions{
-				CSMLabels: csmLabels,
-				UnaryMessageSent: false,
+				CSMLabels:            csmLabels,
+				UnaryMessageSent:     false,
 				StreamingMessageSent: false,
-				UnaryCallFailed: true,
+				UnaryCallFailed:      true,
 			},
 		},
 		{
@@ -193,8 +191,8 @@ func (s) TestCSMPluginOption(t *testing.T) {
 				}
 			},
 			opts: internal.MetricDataOptions{
-				CSMLabels: csmLabels,
-				UnaryMessageSent: true,
+				CSMLabels:            csmLabels,
+				UnaryMessageSent:     true,
 				StreamingMessageSent: false,
 			},
 		},
@@ -217,8 +215,8 @@ func (s) TestCSMPluginOption(t *testing.T) {
 				}
 			},
 			opts: internal.MetricDataOptions{
-				CSMLabels: csmLabels,
-				UnaryMessageSent: true,
+				CSMLabels:            csmLabels,
+				UnaryMessageSent:     true,
 				StreamingMessageSent: false,
 			},
 		},
@@ -241,8 +239,8 @@ func (s) TestCSMPluginOption(t *testing.T) {
 				}
 			},
 			opts: internal.MetricDataOptions{
-				CSMLabels: csmLabels,
-				UnaryMessageSent: true,
+				CSMLabels:            csmLabels,
+				UnaryMessageSent:     true,
 				StreamingMessageSent: true,
 			},
 		},
@@ -259,7 +257,6 @@ func (s) TestCSMPluginOption(t *testing.T) {
 					Body: make([]byte, 10000),
 				}}
 			}
-
 
 			// Make two RPC's, a unary RPC and a streaming RPC. These should cause
 			// certain metrics to be emitted, which should be able to be observed
@@ -296,7 +293,6 @@ func (s) TestCSMPluginOption(t *testing.T) {
 				}
 			}
 
-
 			opts := test.opts
 			opts.Target = ss.Target
 			wantMetrics := internal.MetricData(opts)
@@ -316,7 +312,7 @@ func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Con
 		metric.WithReader(reader),
 	)
 	ss := &stubserver.StubServer{
-		UnaryCallF: unaryCallFunc,
+		UnaryCallF:      unaryCallFunc,
 		FullDuplexCallF: streamingCallFunc,
 	}
 
@@ -325,14 +321,14 @@ func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Con
 	if serverOTelConfigured {
 		sopts = append(sopts, serverOptionWithCSMPluginOption(opentelemetry.Options{
 			MetricsOptions: opentelemetry.MetricsOptions{
-				MeterProvider:         provider,
-				Metrics:               opentelemetry.DefaultMetrics,
+				MeterProvider: provider,
+				Metrics:       opentelemetry.DefaultMetrics,
 			}}, po))
 	}
 	dopts := []grpc.DialOption{dialOptionWithCSMPluginOption(opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
-			MeterProvider:         provider,
-			Metrics:               opentelemetry.DefaultMetrics,
+			MeterProvider:  provider,
+			Metrics:        opentelemetry.DefaultMetrics,
 			OptionalLabels: []string{"csm.service_name", "csm.service_namespace"}, // should be a no-op unless receive labels through optional labels mechanism
 		},
 	}, po)}
@@ -348,18 +344,16 @@ func setup(ctx context.Context, t *testing.T, unaryCallFunc func(ctx context.Con
 func unaryInterceptorAttachxDSLabels(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	ctx = istats.SetLabels(ctx, &istats.Labels{
 		TelemetryLabels: map[string]string{
-			// mock what the cluster impl would write here ("csm.")
-			"csm.service_name": "service_name_val",
+			// mock what the cluster impl would write here ("csm." xDS Labels)
+			"csm.service_name":      "service_name_val",
 			"csm.service_namespace": "service_namespace_val",
-
 		},
 	})
 
-	// TagRPC will just see this in the context and it's xDS Labels point to
-	// this map on the heap.
+	// TagRPC will just see this in the context and set it's xDS Labels to point
+	// to this map on the heap.
 	return invoker(ctx, method, req, reply, cc, opts...)
 }
-
 
 // TestxDSLabels tests that xDS Labels get emitted from OpenTelemetry metrics.
 // This test configures OpenTelemetry with the CSM Plugin Option, and xDS
@@ -367,7 +361,7 @@ func unaryInterceptorAttachxDSLabels(ctx context.Context, method string, req, re
 // labels, representing the cluster_impl picker. It then makes a unary RPC, and
 // expects xDS Labels labels to be attached to emitted relevant metrics. Full
 // xDS System alongside OpenTelemetry will be tested with interop. (there is
-// test for xDS -> Stats handler and this tests -> OTel -> emission).
+// a test for xDS -> Stats handler and this tests -> OTel -> emission).
 func (s) TestxDSLabels(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()

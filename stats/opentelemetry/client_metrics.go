@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2024 gRPC authors.
  *
@@ -140,12 +139,12 @@ func (csh *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInf
 	if labels = istats.GetLabels(ctx); labels == nil {
 		labels = &istats.Labels{
 			TelemetryLabels: make(map[string]string),
-		} // Create optional labels map only if first stats handler in possible chain.
+		} // Create optional labels map only if first stats handler in possible chain for a channel.
 	}
 	mi := &metricsInfo{ // populates information about RPC start.
 		startTime: time.Now(),
 		xDSLabels: labels.TelemetryLabels,
-		method: info.FullMethodName,
+		method:    info.FullMethodName,
 	}
 	ri := &rpcInfo{
 		mi: mi,
