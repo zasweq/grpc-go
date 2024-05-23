@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,16 +36,22 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/xds"
 	"google.golang.org/grpc/grpclog"
+	_ "google.golang.org/grpc/interop/xds"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/stats/opentelemetry"
+	"google.golang.org/grpc/stats/opentelemetry/csm"
 	"google.golang.org/grpc/status"
 	_ "google.golang.org/grpc/xds"
 
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
-	_ "google.golang.org/grpc/interop/xds" // to register Custom LB.
-)
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel/exporters/prometheus" // need to make this it's own go.mod
+	"go.opentelemetry.io/otel/sdk/metric"
+) // Observability update go.mod - this will happen in in flight PR so rebase
 
 func init() {
 	rpcCfgs.Store([]*rpcConfig{{typ: unaryCall}})
@@ -179,6 +186,9 @@ var (
 	server          = flag.String("server", "localhost:8080", "Address of server to connect to")
 	statsPort       = flag.Int("stats_port", 8081, "Port to expose peer distribution stats service")
 	secureMode      = flag.Bool("secure_mode", false, "If true, retrieve security configuration from the management server. Else, use insecure credentials.")
+	enableCSMObservability = flag.Bool("enable_csm_observability", false, "Whether to enable CSM Observability")
+	requestPayloadSize = flag.Int("request_payload_size", 0, "Ask the server to respond with SimpleResponse.payload.body of the given length (may not be implemented on the server).")
+	responsePayloadSize = flag.Int("response_payload_size", 0, "Ask the server to respond with SimpleResponse.payload.body of the given length (may not be implemented on the server).")
 
 	rpcCfgs atomic.Value
 
@@ -368,6 +378,23 @@ func parseRPCMetadata(rpcMetadataStr string, rpcs []string) []*rpcConfig {
 
 func main() {
 	flag.Parse()
+	if *enableCSMObservability {
+		exporter, err := prometheus.New()
+		if err != nil {
+			// fail binary?
+		}
+		provider := metric.NewMeterProvider(
+			metric.WithReader(exporter),
+		)
+		http.ListenAndServe("0.0.0.0:9464", promhttp.Handler())
+
+
+		cleanup := csm.Observability(opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
+		defer cleanup()
+	}
+
+	// Make this it's own go mod Not just this client and server both...
+
 	rpcCfgs.Store(parseRPCMetadata(*rpcMetadata, parseRPCTypes(*rpc)))
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *statsPort))
@@ -430,8 +457,23 @@ func makeOneRPC(c testgrpc.TestServiceClient, cfg *rpcConfig) (*peer.Peer, *rpcI
 	accStats.startRPC(cfg.typ)
 	switch cfg.typ {
 	case unaryCall:
+		// also need to make it's own go.mod, so really rebase this...
+
+		sr := &testpb.SimpleRequest{FillServerId: true}
+		if *requestPayloadSize > 0 { // Stanley wrote checks/assertions for empty call...I don't need this I think
+			sr.Payload = &testpb.Payload{Body: make([]byte, *requestPayloadSize)} // or read into var in if
+		}
+		if *responsePayloadSize > 0 {
+			sr.ResponseSize = int32(*responsePayloadSize)
+		}
+
+		// SimpleRequest.payload.body to a string of repeated 0 (zero) ASCII
+		// characters of the given size in bytes.
+		//bytes := []byte{0, 0, 0, 0} // Is this repeated 0 of ascii characters? compressed size in bytes I think these 0s are bytes might not even have the char concept for us
+
+		sr.ResponseSize = int32(*responsePayloadSize) // set to absl flag, clause is > 0 on server side
 		var resp *testpb.SimpleResponse
-		resp, err = c.UnaryCall(ctx, &testpb.SimpleRequest{FillServerId: true}, grpc.Peer(&p), grpc.Header(&header))
+		resp, err = c.UnaryCall(ctx, sr, grpc.Peer(&p), grpc.Header(&header))
 		// For UnaryCall, also read hostname from response, in case the server
 		// isn't updated to send headers.
 		if resp != nil {
