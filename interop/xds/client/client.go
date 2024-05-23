@@ -389,7 +389,7 @@ func main() {
 		http.ListenAndServe("0.0.0.0:9464", promhttp.Handler())
 
 
-		cleanup := csm.Observability(opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
+		cleanup := csm.Observability(context.Background(), opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
 		defer cleanup()
 	}
 

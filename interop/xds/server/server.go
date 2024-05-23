@@ -41,6 +41,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/stats/opentelemetry"
+	"google.golang.org/grpc/stats/opentelemetry/csm"
 	"google.golang.org/grpc/xds"
 
 	xdscreds "google.golang.org/grpc/credentials/xds"
@@ -238,7 +239,7 @@ func main() {
 		provider := metric.NewMeterProvider(
 			metric.WithReader(exporter),
 		)
-		cleanup := csm.Observability(opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
+		cleanup := csm.Observability(context.Background(), opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
 		defer cleanup()
 	}
 
