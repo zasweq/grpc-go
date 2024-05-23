@@ -44,11 +44,14 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 		return
 	}
 
-	meter := ssh.o.MetricsOptions.MeterProvider.Meter("grpc-go " + grpc.Version)
+	meter := ssh.o.MetricsOptions.MeterProvider.Meter("grpc-go", metric.WithInstrumentationVersion(grpc.Version)) // so I have this bug, the external facing O11y bug, and then the bug in the _name
 	if meter == nil {
 		return
 	}
-	setOfMetrics := ssh.o.MetricsOptions.Metrics.metrics
+	setOfMetrics := DefaultMetrics.metrics
+	if ssh.o.MetricsOptions.Metrics != nil {
+		setOfMetrics = ssh.o.MetricsOptions.Metrics.metrics
+	} // Need to add to probably testing PR (4th)
 
 	ssh.serverMetrics.callStarted = createInt64Counter(setOfMetrics, "grpc.server.call.started", meter, metric.WithUnit("call"), metric.WithDescription("Number of server calls started."))
 	ssh.serverMetrics.callSentTotalCompressedMessageSize = createInt64Histogram(setOfMetrics, "grpc.server.call.sent_total_compressed_message_size", meter, metric.WithUnit("By"), metric.WithDescription("Compressed message bytes sent per server call."), metric.WithExplicitBucketBoundaries(DefaultSizeBounds...))

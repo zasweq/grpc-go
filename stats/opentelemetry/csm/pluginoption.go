@@ -135,6 +135,7 @@ func (cpo *pluginOption) GetLabels(md metadata.MD) map[string]string {
 	// GKE only labels.
 	labels["csm.remote_workload_cluster_name"] = getFromMetadata("cluster_name", fields)
 	labels["csm.remote_workload_namespace_name"] = getFromMetadata("namespace_name", fields)
+	print("setting csm.remote_workload_namespace_name to: ", getFromMetadata("namespace_name", fields))
 	return labels
 }
 
@@ -177,7 +178,7 @@ func getEnv(name string) string {
 var (
 	// This function will be overridden in unit tests.
 	getAttrSetFromResourceDetector = func(ctx context.Context) *attribute.Set {
-		r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()))
+		r, err := resource.New(ctx, resource.WithFromEnv(), resource.WithDetectors(gcp.NewDetector())) // adding these and changing optional labels are the only other things...
 		if err != nil {
 			logger.Errorf("error reading OpenTelemetry resource: %v", err)
 			return nil
@@ -185,6 +186,8 @@ var (
 		return r.Set()
 	}
 )
+// I can pull from this next week instead of big PR...somehow merge the bug fixes in too alongside old
+
 
 // constructMetadataFromEnv creates local labels and labels to send to the peer
 // using metadata exchange based off resource detection and environment
@@ -194,6 +197,12 @@ var (
 // exchange labels.
 func constructMetadataFromEnv(ctx context.Context) (map[string]string, string) {
 	set := getAttrSetFromResourceDetector(ctx)
+	for _, val := range set.ToSlice() {
+		print("key:", val.Key, "\n")
+		print("val:", val.Value.AsString(), "\n")
+	}
+	// print("set as a slice: ", set.ToSlice())
+	print("set contains k8s namespace name: ", set.HasValue("k8s.namespace.name"))
 
 	labels := make(map[string]string)
 	labels["type"] = getFromResource("cloud.platform", set)
@@ -224,6 +233,7 @@ func constructMetadataFromEnv(ctx context.Context) (map[string]string, string) {
 
 	// GKE specific labels:
 	labels["namespace_name"] = getFromResource("k8s.namespace.name", set)
+	print("setting namespace_name to :", getFromResource("k8s.namespace.name", set))
 	labels["cluster_name"] = getFromResource("k8s.cluster.name", set)
 	return initializeLocalAndMetadataLabels(labels)
 }
@@ -307,3 +317,22 @@ func determineTargetCSM(parsedTarget *url.URL) bool {
 	// as described below.
 	return parsedTarget.Scheme == "xds" && (parsedTarget.Host == "" || parsedTarget.Host == "traffic-director-global.xds.googleapis.com")
 }
+
+// Two bugs: csm.service_namespace_name (need to add "_name" for this in the client)
+
+// is this on client or server side? Orthogonal
+// 'csm_remote_workload_namespace_name': 'psm-csm-server-20240524-2116-krqeq' != 'unknown'
+
+// csm.remote_workload_namespace_name is based of metadat exchange key "namespace_name"
+
+// "namespace_name" is from resource "k8s.namespace.name", "unknown" if unset
+// only for GKE
+
+// bugs:
+// DialOption thing (Represent this in OTel CSM o11y PR)
+// Any bugs that came up here (look at diff)
+// grpc-go, version bug
+// These are the interop changes...persist the go.mod and everything around
+
+// Figure out the otel plumbing thing - perhaps scale up e2e test (merge this with PR's taken off the big PR in flight)
+

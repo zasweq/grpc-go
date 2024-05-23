@@ -176,19 +176,19 @@ func (as *accumulatedStats) finishRPC(rpcType string, err error) {
 }
 
 var (
-	failOnFailedRPC = flag.Bool("fail_on_failed_rpc", false, "Fail client if any RPCs fail after first success")
-	numChannels     = flag.Int("num_channels", 1, "Num of channels")
-	printResponse   = flag.Bool("print_response", false, "Write RPC response to stdout")
-	qps             = flag.Int("qps", 1, "QPS per channel, for each type of RPC")
-	rpc             = flag.String("rpc", "UnaryCall", "Types of RPCs to make, ',' separated string. RPCs can be EmptyCall or UnaryCall. Deprecated: Use Configure RPC to XdsUpdateClientConfigureServiceServer instead.")
-	rpcMetadata     = flag.String("metadata", "", "The metadata to send with RPC, in format EmptyCall:key1:value1,UnaryCall:key2:value2. Deprecated: Use Configure RPC to XdsUpdateClientConfigureServiceServer instead.")
-	rpcTimeout      = flag.Duration("rpc_timeout", 20*time.Second, "Per RPC timeout")
-	server          = flag.String("server", "localhost:8080", "Address of server to connect to")
-	statsPort       = flag.Int("stats_port", 8081, "Port to expose peer distribution stats service")
-	secureMode      = flag.Bool("secure_mode", false, "If true, retrieve security configuration from the management server. Else, use insecure credentials.")
+	failOnFailedRPC        = flag.Bool("fail_on_failed_rpc", false, "Fail client if any RPCs fail after first success")
+	numChannels            = flag.Int("num_channels", 1, "Num of channels")
+	printResponse          = flag.Bool("print_response", false, "Write RPC response to stdout")
+	qps                    = flag.Int("qps", 1, "QPS per channel, for each type of RPC")
+	rpc                    = flag.String("rpc", "UnaryCall", "Types of RPCs to make, ',' separated string. RPCs can be EmptyCall or UnaryCall. Deprecated: Use Configure RPC to XdsUpdateClientConfigureServiceServer instead.")
+	rpcMetadata            = flag.String("metadata", "", "The metadata to send with RPC, in format EmptyCall:key1:value1,UnaryCall:key2:value2. Deprecated: Use Configure RPC to XdsUpdateClientConfigureServiceServer instead.")
+	rpcTimeout             = flag.Duration("rpc_timeout", 20*time.Second, "Per RPC timeout")
+	server                 = flag.String("server", "localhost:8080", "Address of server to connect to")
+	statsPort              = flag.Int("stats_port", 8081, "Port to expose peer distribution stats service")
+	secureMode             = flag.Bool("secure_mode", false, "If true, retrieve security configuration from the management server. Else, use insecure credentials.")
 	enableCSMObservability = flag.Bool("enable_csm_observability", false, "Whether to enable CSM Observability")
-	requestPayloadSize = flag.Int("request_payload_size", 0, "Ask the server to respond with SimpleResponse.payload.body of the given length (may not be implemented on the server).")
-	responsePayloadSize = flag.Int("response_payload_size", 0, "Ask the server to respond with SimpleResponse.payload.body of the given length (may not be implemented on the server).")
+	requestPayloadSize     = flag.Int("request_payload_size", 0, "Ask the server to respond with SimpleResponse.payload.body of the given length (may not be implemented on the server).")
+	responsePayloadSize    = flag.Int("response_payload_size", 0, "Ask the server to respond with SimpleResponse.payload.body of the given length (may not be implemented on the server).")
 
 	rpcCfgs atomic.Value
 
@@ -381,15 +381,17 @@ func main() {
 	if *enableCSMObservability {
 		exporter, err := prometheus.New()
 		if err != nil {
-			// fail binary?
+			// fail binary? also add Stanley's check on response size?
+			logger.Fatalf("Failed to start prometheus exporter: %v", err)
 		}
 		provider := metric.NewMeterProvider(
 			metric.WithReader(exporter),
 		)
-		http.ListenAndServe("0.0.0.0:9464", promhttp.Handler())
+		go http.ListenAndServe("0.0.0.0:9464", promhttp.Handler())
 
-
-		cleanup := csm.Observability(opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
+		defer cancel()
+		cleanup := csm.Observability(ctx, opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
 		defer cleanup()
 	}
 

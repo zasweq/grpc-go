@@ -57,7 +57,7 @@ func Observability(ctx context.Context, options opentelemetry.Options) func() {
 
 	serverSideOTelWithCSM := serverOptionWithCSMPluginOption(options, csmPluginOption)
 
-	internal.AddGlobalPerTargetDialOptions.(func(opt any))(perTargetDialOption)
+	internal.AddGlobalPerTargetDialOptions.(func(opt any))(perTargetDialOption{})
 
 	internal.AddGlobalServerOptions.(func(opt ...grpc.ServerOption))(serverSideOTelWithCSM)
 
@@ -65,9 +65,18 @@ func Observability(ctx context.Context, options opentelemetry.Options) func() {
 		internal.ClearGlobalServerOptions()
 		internal.ClearGlobalPerTargetDialOptions()
 	}
-}
+} // fail, can run it locally and on cloudtop, replace to point to this stats/opentelemetry (replace grpc or something else)?
 
-func perTargetDialOption(parsedTarget url.URL) grpc.DialOption {
+// make it's own go mod
+// go get a random version using hash
+// then replace
+// try and build docker image using that docker run thing, this is the hook into interop scripts...
+
+// replace grpc module and otel module I guess
+
+type perTargetDialOption struct {}
+
+func (perTargetDialOption) DialOptionForTarget(parsedTarget url.URL) grpc.DialOption {
 	if determineTargetCSM(&parsedTarget) {
 		return clientSideOTelWithCSM
 	}
@@ -75,7 +84,7 @@ func perTargetDialOption(parsedTarget url.URL) grpc.DialOption {
 }
 
 func dialOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.DialOption {
-	options.MetricsOptions.OptionalLabels = []string{"csm.service_name", "csm.service_namespace"} // Attach the two xDS Optional Labels for this component to not filter out.
+	options.MetricsOptions.OptionalLabels = []string{"csm.service_name", "csm.service_namespace_name"} // Attach the two xDS Optional Labels for this component to not filter out.
 	otelinternal.SetPluginOption.(func(options *opentelemetry.Options, po otelinternal.PluginOption))(&options, po)
 	return opentelemetry.DialOption(options)
 }
