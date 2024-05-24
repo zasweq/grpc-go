@@ -381,14 +381,17 @@ func main() {
 	if *enableCSMObservability {
 		exporter, err := prometheus.New()
 		if err != nil {
-			// fail binary?
+			// fail binary? also add Stanley's check on response size?
+			logger.Fatalf("Failed to start prometheus exporter: %v", err)
 		}
 		provider := metric.NewMeterProvider(
 			metric.WithReader(exporter),
 		)
-		http.ListenAndServe("0.0.0.0:9464", promhttp.Handler())
+		go http.ListenAndServe("0.0.0.0:9464", promhttp.Handler())
 
-		cleanup := csm.Observability(context.Background(), opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
+		defer cancel()
+		cleanup := csm.Observability(ctx, opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
 		defer cleanup()
 	}
 

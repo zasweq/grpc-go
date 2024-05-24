@@ -49,7 +49,10 @@ func (csh *clientStatsHandler) initializeMetrics() {
 		return
 	}
 
-	setOfMetrics := csh.o.MetricsOptions.Metrics.metrics
+	setOfMetrics := DefaultMetrics.metrics
+	if csh.o.MetricsOptions.Metrics != nil {
+		setOfMetrics = csh.o.MetricsOptions.Metrics.metrics
+	} // Need to add to probably testing PR (4th)
 
 	csh.clientMetrics.attemptStarted = createInt64Counter(setOfMetrics, "grpc.client.attempt.started", meter, otelmetric.WithUnit("attempt"), otelmetric.WithDescription("Number of client call attempts started."))
 	csh.clientMetrics.attemptDuration = createFloat64Histogram(setOfMetrics, "grpc.client.attempt.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))

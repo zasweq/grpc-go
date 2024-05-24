@@ -231,14 +231,17 @@ func main() {
 
 		exporter, err := prometheus.New()
 		if err != nil {
-			// fail binary?
+			// fail binary? also add Stanley's check on response size?
+			logger.Fatalf("Failed to start prometheus exporter: %v", err)
 		}
-		http.ListenAndServe("0.0.0.0:9464", promhttp.Handler())
+		go http.ListenAndServe("0.0.0.0:9464", promhttp.Handler()) // how do I make sure this cleans up?
 
 		provider := metric.NewMeterProvider(
 			metric.WithReader(exporter),
 		)
-		cleanup := csm.Observability(context.Background(), opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
+		defer cancel()
+		cleanup := csm.Observability(ctx, opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
 		defer cleanup()
 	}
 
