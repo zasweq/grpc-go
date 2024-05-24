@@ -37,11 +37,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/health"
-	"google.golang.org/grpc/internal/status"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/stats/opentelemetry"
 	"google.golang.org/grpc/stats/opentelemetry/csm"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/xds"
 
 	xdscreds "google.golang.org/grpc/credentials/xds"
@@ -56,11 +56,11 @@ import (
 )
 
 var (
-	port             = flag.Int("port", 8080, "Listening port for test service")
-	maintenancePort  = flag.Int("maintenance_port", 8081, "Listening port for maintenance services like health, reflection, channelz etc when -secure_mode is true. When -secure_mode is false, all these services will be registered on -port")
-	serverID         = flag.String("server_id", "go_server", "Server ID included in response")
-	secureMode       = flag.Bool("secure_mode", false, "If true, retrieve security configuration from the management server. Else, use insecure credentials.")
-	hostNameOverride = flag.String("host_name_override", "", "If set, use this as the hostname instead of the real hostname")
+	port                   = flag.Int("port", 8080, "Listening port for test service")
+	maintenancePort        = flag.Int("maintenance_port", 8081, "Listening port for maintenance services like health, reflection, channelz etc when -secure_mode is true. When -secure_mode is false, all these services will be registered on -port")
+	serverID               = flag.String("server_id", "go_server", "Server ID included in response")
+	secureMode             = flag.Bool("secure_mode", false, "If true, retrieve security configuration from the management server. Else, use insecure credentials.")
+	hostNameOverride       = flag.String("host_name_override", "", "If set, use this as the hostname instead of the real hostname")
 	enableCSMObservability = flag.Bool("enable_csm_observability", false, "Whether to enable CSM Observability")
 
 	logger = grpclog.Component("interop")
@@ -107,7 +107,6 @@ func (s *testServiceImpl) UnaryCall(ctx context.Context, in *testpb.SimpleReques
 			Body: make([]byte, in.ResponseSize),
 		}
 	} // I think I do these here...
-
 
 forLoop:
 	for _, headerVal := range getRPCBehaviorMetadata(ctx) {
@@ -175,7 +174,7 @@ forLoop:
 	}
 
 	grpc.SetHeader(ctx, metadata.Pairs("hostname", s.hostname))
-	return response, status.Err(codes.OK, "")
+	return response, status.Error(codes.OK, "")
 }
 
 func getRPCBehaviorMetadata(ctx context.Context) []string {

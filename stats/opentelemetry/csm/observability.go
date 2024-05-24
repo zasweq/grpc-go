@@ -65,7 +65,14 @@ func Observability(ctx context.Context, options opentelemetry.Options) func() {
 		internal.ClearGlobalServerOptions()
 		internal.ClearGlobalPerTargetDialOptions()
 	}
-}
+} // fail, can run it locally and on cloudtop, replace to point to this stats/opentelemetry (replace grpc or something else)?
+
+// make it's own go mod
+// go get a random version using hash
+// then replace
+// try and build docker image using that docker run thing, this is the hook into interop scripts...
+
+// replace grpc module and otel module I guess
 
 func perTargetDialOption(parsedTarget url.URL) grpc.DialOption {
 	if determineTargetCSM(&parsedTarget) {
