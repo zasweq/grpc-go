@@ -195,6 +195,12 @@ var (
 // exchange labels.
 func constructMetadataFromEnv(ctx context.Context) (map[string]string, string) {
 	set := getAttrSetFromResourceDetector(ctx)
+	for _, val := range set.ToSlice() {
+		print("key:", val.Key, "\n")
+		print("val:", val.Value.AsString(), "\n")
+	}
+	// print("set as a slice: ", set.ToSlice())
+	print("set contains k8s namespace name: ", set.HasValue("k8s.namespace.name"))
 
 	labels := make(map[string]string)
 	labels["type"] = getFromResource("cloud.platform", set)
@@ -323,7 +329,8 @@ func determineTargetCSM(parsedTarget *url.URL) bool {
 // bugs:
 // DialOption thing (Represent this in OTel CSM o11y PR)
 // Any bugs that came up here (look at diff)
-// These are the interop changes...
+// grpc-go, version bug
+// These are the interop changes...persist the go.mod and everything around
 
+// Figure out the otel plumbing thing - perhaps scale up e2e test (merge this with PR's taken off the big PR in flight)
 
-// OTel team needs to emit "scope" add a TODO:
