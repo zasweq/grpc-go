@@ -74,7 +74,7 @@ func Observability(ctx context.Context, options opentelemetry.Options) func() {
 
 // replace grpc module and otel module I guess
 
-func perTargetDialOption(parsedTarget url.URL) grpc.DialOption {
+func DialOptionForTarget(parsedTarget url.URL) grpc.DialOption {
 	if determineTargetCSM(&parsedTarget) {
 		return clientSideOTelWithCSM
 	}
