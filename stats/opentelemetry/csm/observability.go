@@ -57,7 +57,7 @@ func Observability(ctx context.Context, options opentelemetry.Options) func() {
 
 	serverSideOTelWithCSM := serverOptionWithCSMPluginOption(options, csmPluginOption)
 
-	internal.AddGlobalPerTargetDialOptions.(func(opt any))(perTargetDialOption)
+	internal.AddGlobalPerTargetDialOptions.(func(opt any))(perTargetDialOption{})
 
 	internal.AddGlobalServerOptions.(func(opt ...grpc.ServerOption))(serverSideOTelWithCSM)
 
@@ -74,7 +74,9 @@ func Observability(ctx context.Context, options opentelemetry.Options) func() {
 
 // replace grpc module and otel module I guess
 
-func DialOptionForTarget(parsedTarget url.URL) grpc.DialOption {
+type perTargetDialOption struct {}
+
+func (perTargetDialOption) DialOptionForTarget(parsedTarget url.URL) grpc.DialOption {
 	if determineTargetCSM(&parsedTarget) {
 		return clientSideOTelWithCSM
 	}
