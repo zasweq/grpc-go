@@ -44,7 +44,7 @@ func (csh *clientStatsHandler) initializeMetrics() {
 		return
 	}
 
-	meter := csh.o.MetricsOptions.MeterProvider.Meter("grpc-go " + grpc.Version)
+	meter := csh.o.MetricsOptions.MeterProvider.Meter("grpc-go", otelmetric.WithInstrumentationVersion(grpc.Version))
 	if meter == nil {
 		return
 	}

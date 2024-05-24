@@ -44,7 +44,7 @@ func (ssh *serverStatsHandler) initializeMetrics() {
 		return
 	}
 
-	meter := ssh.o.MetricsOptions.MeterProvider.Meter("grpc-go " + grpc.Version)
+	meter := ssh.o.MetricsOptions.MeterProvider.Meter("grpc-go", metric.WithInstrumentationVersion(grpc.Version)) // so I have this bug, the external facing O11y bug, and then the bug in the _name
 	if meter == nil {
 		return
 	}

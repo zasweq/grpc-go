@@ -135,6 +135,7 @@ func (cpo *pluginOption) GetLabels(md metadata.MD) map[string]string {
 	// GKE only labels.
 	labels["csm.remote_workload_cluster_name"] = getFromMetadata("cluster_name", fields)
 	labels["csm.remote_workload_namespace_name"] = getFromMetadata("namespace_name", fields)
+	print("setting csm.remote_workload_namespace_name to: ", getFromMetadata("namespace_name", fields))
 	return labels
 }
 
@@ -224,6 +225,7 @@ func constructMetadataFromEnv(ctx context.Context) (map[string]string, string) {
 
 	// GKE specific labels:
 	labels["namespace_name"] = getFromResource("k8s.namespace.name", set)
+	print("setting namespace_name to :", getFromResource("k8s.namespace.name", set))
 	labels["cluster_name"] = getFromResource("k8s.cluster.name", set)
 	return initializeLocalAndMetadataLabels(labels)
 }
@@ -307,3 +309,21 @@ func determineTargetCSM(parsedTarget *url.URL) bool {
 	// as described below.
 	return parsedTarget.Scheme == "xds" && (parsedTarget.Host == "" || parsedTarget.Host == "traffic-director-global.xds.googleapis.com")
 }
+
+// Two bugs: csm.service_namespace_name (need to add "_name" for this in the client)
+
+// is this on client or server side? Orthogonal
+// 'csm_remote_workload_namespace_name': 'psm-csm-server-20240524-2116-krqeq' != 'unknown'
+
+// csm.remote_workload_namespace_name is based of metadat exchange key "namespace_name"
+
+// "namespace_name" is from resource "k8s.namespace.name", "unknown" if unset
+// only for GKE
+
+// bugs:
+// DialOption thing (Represent this in OTel CSM o11y PR)
+// Any bugs that came up here (look at diff)
+// These are the interop changes...
+
+
+// OTel team needs to emit "scope" add a TODO:
