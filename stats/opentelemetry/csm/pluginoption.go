@@ -178,7 +178,7 @@ func getEnv(name string) string {
 var (
 	// This function will be overridden in unit tests.
 	getAttrSetFromResourceDetector = func(ctx context.Context) *attribute.Set {
-		r, err := resource.New(ctx, resource.WithDetectors(gcp.NewDetector()), resource.WithFromEnv())
+		r, err := resource.New(ctx, resource.WithFromEnv(), resource.WithDetectors(gcp.NewDetector()))
 		if err != nil {
 			logger.Errorf("error reading OpenTelemetry resource: %v", err)
 			return nil
