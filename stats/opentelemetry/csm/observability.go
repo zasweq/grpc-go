@@ -84,7 +84,7 @@ func (perTargetDialOption) DialOptionForTarget(parsedTarget url.URL) grpc.DialOp
 }
 
 func dialOptionWithCSMPluginOption(options opentelemetry.Options, po otelinternal.PluginOption) grpc.DialOption {
-	options.MetricsOptions.OptionalLabels = []string{"csm.service_name", "csm.service_namespace"} // Attach the two xDS Optional Labels for this component to not filter out.
+	options.MetricsOptions.OptionalLabels = []string{"csm.service_name", "csm.service_namespace_name"} // Attach the two xDS Optional Labels for this component to not filter out.
 	otelinternal.SetPluginOption.(func(options *opentelemetry.Options, po otelinternal.PluginOption))(&options, po)
 	return opentelemetry.DialOption(options)
 }
