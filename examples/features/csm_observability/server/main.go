@@ -37,8 +37,8 @@ import (
 )
 
 var (
-	addr     = flag.String("addr", ":50051", "the server address to connect to")
-	promAddr = flag.String("promAddr", ":9464", "the Prometheus exporter endpoint")
+	addr     = flag.String("server_addr", ":50051", "the server address to connect to")
+	promAddr = flag.String("prom_addr", ":9464", "the Prometheus exporter endpoint")
 )
 
 type echoServer struct {
@@ -55,9 +55,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to start prometheus exporter: %v", err)
 	}
-	provider := metric.NewMeterProvider(
-		metric.WithReader(exporter),
-	)
+	provider := metric.NewMeterProvider(metric.WithReader(exporter))
 	go http.ListenAndServe(*promAddr, promhttp.Handler())
 
 	cleanup := csm.EnableObservability(context.Background(), opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
@@ -65,16 +63,14 @@ func main() {
 
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Fatalf("Failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
-	pb.RegisterEchoServer(s, &echoServer{
-		addr: *addr,
-	})
+	pb.RegisterEchoServer(s, &echoServer{addr: *addr})
 
-	log.Printf("serving on %s\n", *addr)
+	log.Printf("Serving on %s\n", *addr)
 
 	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+		log.Fatalf("Failed to serve: %v", err)
 	}
 }

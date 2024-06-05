@@ -39,8 +39,8 @@ import (
 )
 
 var (
-	addr     = flag.String("addr", "xds:///helloworld:50051", "the server address to connect to")
-	promAddr = flag.String("promAddr", ":9464", "the Prometheus exporter endpoint")
+	addr     = flag.String("server_addr", "xds:///helloworld:50051", "the server address to connect to")
+	promAddr = flag.String("prom_addr", ":9464", "the Prometheus exporter endpoint")
 )
 
 func main() {
@@ -48,13 +48,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to start prometheus exporter: %v", err)
 	}
-	provider := metric.NewMeterProvider(
-		metric.WithReader(exporter),
-	)
+	provider := metric.NewMeterProvider(metric.WithReader(exporter))
 	go http.ListenAndServe(*promAddr, promhttp.Handler())
 
-	ctx := context.Background()
-	cleanup := csm.EnableObservability(ctx, opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
+	cleanup := csm.EnableObservability(context.Background(), opentelemetry.Options{MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: provider}})
 	defer cleanup()
 
 	cc, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -67,11 +64,13 @@ func main() {
 	// Make a RPC every second. This should trigger telemetry to be emitted from
 	// the client and the server.
 	for {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		r, err := c.UnaryEcho(ctx, &echo.EchoRequest{Message: "this is examples/opentelemetry"})
 		if err != nil {
 			log.Fatalf("UnaryEcho failed: %v", err)
 		}
 		fmt.Println(r)
 		time.Sleep(time.Second)
+		cancel()
 	}
 }
