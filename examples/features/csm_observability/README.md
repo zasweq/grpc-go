@@ -18,8 +18,8 @@ go run server/main.go
 go run client/main.go
 ```
 
-```
 Curl to the port where Prometheus exporter is outputting metrics data:
+```
 curl localhost:9464/metrics
 ```
 
@@ -31,3 +31,8 @@ docker build -t <TAG> -f examples/features/csm_observability/client/Dockerfile .
 
 Server:
 docker build -t <TAG> -f examples/features/csm_observability/server/Dockerfile .
+
+Note that this example will not work by default, as the client uses an xDS
+Scheme and thus needs xDS Resources to connect to the server. Deploy the built
+client and server containers within Cloud Service Mesh in order for this example
+to work, or overwrite target to point to :<server serving port>.
