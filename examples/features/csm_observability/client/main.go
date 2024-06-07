@@ -68,7 +68,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		r, err := c.UnaryEcho(ctx, &echo.EchoRequest{Message: "this is examples/opentelemetry"})
 		if err != nil {
-			log.Fatalf("UnaryEcho failed: %v", err)
+			log.Printf("UnaryEcho failed: %v", err)
 		}
 		fmt.Println(r)
 		time.Sleep(time.Second)
