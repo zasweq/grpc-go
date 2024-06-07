@@ -17,6 +17,8 @@
 # docker build -t <TAG> -f examples/features/csm_observability/client/Dockerfile .
 FROM golang:1.21-alpine as build
 
+RUN apk --no-cache add curl
+
 # Make a grpc-go directory and copy the repo into it.
 WORKDIR /go/src/grpc-go
 COPY . .
@@ -26,6 +28,7 @@ COPY . .
 RUN cd examples/features/csm_observability/client && go build -tags osusergo,netgo .
 
 FROM alpine
+RUN apk --no-cache add curl
 COPY --from=build /go/src/grpc-go/examples/features/csm_observability/client/client .
 ENV GRPC_GO_LOG_VERBOSITY_LEVEL=99
 ENV GRPC_GO_LOG_SEVERITY_LEVEL="info"
