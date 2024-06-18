@@ -253,7 +253,23 @@ type clientMetrics struct {
 
 	// "grpc.client.call.duration"
 	callDuration metric.Float64Histogram
-}
+
+
+	// global instrument registry metrics
+	// intCount
+	intCounts []metric.Int64Counter
+	// floatCount
+	floatCounts []metric.Float64Counter
+	//int64 histo
+	intHistos []metric.Int64Histogram
+	// float64 histo
+	floatHistos []metric.Float64Histogram
+
+	// typecasting a generic downward would feel weird to me
+	// would need to be any and typecast it down, eh
+	intGauges []metric.Int64Gauge
+
+} // same thing needed server side but finish this for now...
 
 type serverMetrics struct {
 	// "grpc.server.call.started"
@@ -265,6 +281,14 @@ type serverMetrics struct {
 	// "grpc.server.call.duration"
 	callDuration metric.Float64Histogram
 }
+
+// what happens if non per call collide with fixed metrics (aka defined in A66)
+// read those? Add to set at beginning?
+
+// or build out a list of default metrics (create list to ask Yash)
+// and use this creation...
+
+// Add to default metrics
 
 func createInt64Counter(setOfMetrics map[Metric]bool, metricName Metric, meter metric.Meter, options ...metric.Int64CounterOption) metric.Int64Counter {
 	if _, ok := setOfMetrics[metricName]; !ok {
@@ -301,6 +325,17 @@ func createFloat64Histogram(setOfMetrics map[Metric]bool, metricName Metric, met
 	}
 	return ret
 }
+// Above is strongly typed, so perhaps strongly type instrument registry as well...
+
+func createInt64Gauge(setOfMetrics map[Metric]bool, metricName Metric, meter metric.Meter, options ...metric.Int64GaugeOption) metric.Int64Gauge {
+	ret, err := meter.Int64Gauge(string(metricName), options...)
+	if err != nil {
+		logger.Errorf("failed to register metric \"%v\", will not record", metricName)
+		return noop.Int64Gauge{}
+	}
+	ret.Record() // it's same thing you record a value, and I'm assuming that gets represented in OpenTelemetry...
+	return ret
+}
 
 // Users of this component should use these bucket boundaries as part of their
 // SDK MeterProvider passed in. This component sends this as "advice" to the
@@ -315,3 +350,15 @@ var (
 	// DefaultMetrics are the default metrics provided by this module.
 	DefaultMetrics = NewMetrics(ClientAttemptStarted, ClientAttemptDuration, ClientAttemptSentCompressedTotalMessageSize, ClientAttemptRcvdCompressedTotalMessageSize, ClientCallDuration, ServerCallStarted, ServerCallSentCompressedTotalMessageSize, ServerCallRcvdCompressedTotalMessageSize, ServerCallDuration)
 )
+
+// Update default metrics and create new string
+
+// Ok I'll a. scale up default metrics as registered
+// b. not export name consts from otel for registered metrics - create a symbol in component using or have useres read docs
+// wait this takes a dependency on OTel, move to another place
+// opentelemetry.Metric wrapping it,
+// or have user take it and wrap it in ^^^, or put it in shared area or something...
+
+
+
+// c. try and add a compile time check for labels/optional labels, if not just eat call and log at warning/info
