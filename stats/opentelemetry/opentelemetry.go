@@ -46,7 +46,9 @@ var canonicalString = internal.CanonicalString.(func(codes.Code) string)
 var joinDialOptions = internal.JoinDialOptions.(func(...grpc.DialOption) grpc.DialOption)
 
 // Metric is an identifier for a metric provided by this package.
-type Metric string
+type Metric string // top level stats?
+
+//
 
 // Metrics is a set of metrics to record. Once created, Metrics is immutable,
 // however Add and Remove can make copies with specific metrics added or
@@ -247,6 +249,13 @@ type clientMetrics struct {
 
 	// "grpc.client.call.duration"
 	callDuration metric.Float64Histogram
+
+	// Non per call metrics:
+	intCounts []metric.Int64Counter
+	floatCounts []metric.Float64Counter
+	intHistos []metric.Int64Histogram
+	floatHistos []metric.Float64Histogram
+	intGauges []metric.Int64Gauge
 }
 
 type serverMetrics struct {
@@ -296,6 +305,15 @@ func createFloat64Histogram(setOfMetrics map[Metric]bool, metricName Metric, met
 	return ret
 }
 
+func createInt64Gauge(setOfMetrics map[Metric]bool, metricName Metric, meter metric.Meter, options ...metric.Int64GaugeOption) metric.Int64Gauge {
+	ret, err := meter.Int64Gauge(string(metricName), options...)
+	if err != nil {
+		logger.Errorf("failed to register metric \"%v\", will not record", metricName)
+		return noop.Int64Gauge{}
+	}
+	return ret
+}
+
 // Users of this component should use these bucket boundaries as part of their
 // SDK MeterProvider passed in. This component sends this as "advice" to the
 // API, which works, however this stability is not guaranteed, so for safety the
@@ -308,4 +326,17 @@ var (
 	DefaultSizeBounds = []float64{0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
 	// DefaultMetrics are the default metrics provided by this module.
 	DefaultMetrics = NewMetrics(ClientAttemptStarted, ClientAttemptDuration, ClientAttemptSentCompressedTotalMessageSize, ClientAttemptRcvdCompressedTotalMessageSize, ClientCallDuration, ServerCallStarted, ServerCallSentCompressedTotalMessageSize, ServerCallRcvdCompressedTotalMessageSize, ServerCallDuration)
+	// Extend above for non per call...
+
+	// default metrics as a function that looks into instrument registry,
+	// default npc set goes into experimental (use package names)
+	// stats., stats.instrumentregistry. (and set hierarchy)
+	// Metric string, generalization (stats or subpackage)
+
+
+	// Alias -> internal.InstrumentRegistry (default metrics set expermental as well)
+	// reference seperately ever? merge them
+
+	// Default set in instrument registry...
+
 )

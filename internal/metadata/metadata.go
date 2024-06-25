@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/metadata" // this is an example of internal depending on external, symbols that are exported that users can see...
 	"google.golang.org/grpc/resolver"
 )
 

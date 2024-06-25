@@ -30,7 +30,7 @@ import (
 	"slices"
 	"strings"
 
-	"google.golang.org/grpc"
+	"google.golang.org/grpc" // so many non internal dependencies...
 	"google.golang.org/grpc/credentials/tls/certprovider"
 	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/internal/envconfig"

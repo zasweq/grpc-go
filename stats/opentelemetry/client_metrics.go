@@ -18,6 +18,7 @@ package opentelemetry
 
 import (
 	"context"
+	"google.golang.org/grpc/internal/instrumentregistry"
 	"sync/atomic"
 	"time"
 
@@ -64,6 +65,26 @@ func (h *clientStatsHandler) initializeMetrics() {
 	h.clientMetrics.attemptSentTotalCompressedMessageSize = createInt64Histogram(metrics.metrics, "grpc.client.attempt.sent_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes sent per client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.clientMetrics.attemptRcvdTotalCompressedMessageSize = createInt64Histogram(metrics.metrics, "grpc.client.attempt.rcvd_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes received per call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.clientMetrics.callDuration = createFloat64Histogram(metrics.metrics, "grpc.client.call.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("Time taken by gRPC to complete an RPC from application's perspective."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
+
+
+
+	// Non per call...vvv
+	for _, inst := range instrumentregistry.Int64CountInsts {
+		ic := createInt64Counter(metrics.metrics, Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.clientMetrics.intCounts = append(h.clientMetrics.intCounts, ic)
+	}
+	for _, inst := range instrumentregistry.Int64HistoInsts {
+		ih := createInt64Histogram(metrics.metrics, Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.clientMetrics.intHistos = append(h.clientMetrics.intHistos, ih)
+	}
+	for _, inst := range instrumentregistry.Float64HistoInsts {
+		fh := createFloat64Histogram(metrics.metrics, Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.clientMetrics.floatHistos = append(h.clientMetrics.floatHistos, fh)
+	}
+	for _, inst := range instrumentregistry.Int64GaugeInsts {
+		ig := createInt64Gauge(metrics.metrics, Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.clientMetrics.intGauges = append(h.clientMetrics.intGauges, ig)
+	}
 }
 
 func (h *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
