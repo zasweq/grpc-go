@@ -16,6 +16,8 @@
  *
  */
 
+// Package instrumentregistry is a instrument registry that gRPC components can
+// use to register instruments (metrics).
 package instrumentregistry
 
 import "log"
