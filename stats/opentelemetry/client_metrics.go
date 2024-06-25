@@ -53,6 +53,11 @@ func (h *clientStatsHandler) initializeMetrics() {
 	if metrics == nil {
 		metrics = DefaultMetrics
 	}
+	// ^^^ Figure out how to cleanly merge defaults...
+
+
+
+
 
 	h.clientMetrics.attemptStarted = createInt64Counter(metrics.metrics, "grpc.client.attempt.started", meter, otelmetric.WithUnit("attempt"), otelmetric.WithDescription("Number of client call attempts started."))
 	h.clientMetrics.attemptDuration = createFloat64Histogram(metrics.metrics, "grpc.client.attempt.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))

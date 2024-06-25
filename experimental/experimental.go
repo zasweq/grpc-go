@@ -28,6 +28,7 @@ package experimental
 import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/internal"
+	"google.golang.org/grpc/internal/instrumentregistry"
 )
 
 // WithRecvBufferPool returns a grpc.DialOption that configures the use of
@@ -64,10 +65,23 @@ func RecvBufferPool(bufferPool grpc.SharedBufferPool) grpc.ServerOption {
 	return internal.RecvBufferPool.(func(grpc.SharedBufferPool) grpc.ServerOption)(bufferPool)
 }
 
-type MetricsRecorder interface {}
+// MetricsRecorder...
+type MetricsRecorder interface {
+	RecordIntCount(instrumentregistry.Int64CountHandle, []instrumentregistry.Label, []instrumentregistry.Label, int64)
+
+	RecordFloatCount(instrumentregistry.Float64CountHandle, []instrumentregistry.Label, []instrumentregistry.Label, float64)
+
+	RecordIntHisto(instrumentregistry.Int64HistoHandle, []instrumentregistry.Label, []instrumentregistry.Label, int64)
+
+	RecordFloatHisto(instrumentregistry.Float64CountHandle, []instrumentregistry.Label, []instrumentregistry.Label, float64)
+
+	RecordIntGauge(instrumentregistry.Int64GaugeHandle, []instrumentregistry.Label, []instrumentregistry.Label, int64)
+}
 
 // This PR: OpenTelemetry usage of this...OTel reads instrument registry including defaults...
 // where to define Metric?
+
+
 
 
 // PR after:
@@ -77,4 +91,9 @@ type MetricsRecorder interface {}
 // Create a component inline in NewClient that typecasts all set local and
 // global dial options to this, builds a component inline to send to the
 // balancers...
+
+// MetricsRecorder list from full musing, eats labels/optional labels for
+// programmer error iteration as well...
+
+// Then pick first/rls metrics :)
 
