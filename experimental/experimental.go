@@ -63,3 +63,18 @@ func WithRecvBufferPool(bufferPool grpc.SharedBufferPool) grpc.DialOption {
 func RecvBufferPool(bufferPool grpc.SharedBufferPool) grpc.ServerOption {
 	return internal.RecvBufferPool.(func(grpc.SharedBufferPool) grpc.ServerOption)(bufferPool)
 }
+
+type MetricsRecorder interface {}
+
+// This PR: OpenTelemetry usage of this...OTel reads instrument registry including defaults...
+// where to define Metric?
+
+
+// PR after:
+// Dial Option? Not needed since typecast
+
+
+// Create a component inline in NewClient that typecasts all set local and
+// global dial options to this, builds a component inline to send to the
+// balancers...
+
