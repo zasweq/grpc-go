@@ -151,23 +151,58 @@ func (s) TestInstrumentRegistry(t *testing.T) {
 	}
 	if diff := cmp.Diff(fmr.int64counts, intWithLabelsWant, cmp.AllowUnexported(int64WithLabels{})); diff != "" {
 		t.Fatalf("fmr.int64counts (-got, +want): %v", diff)
-	} // Get this working? ...make sure it compiles (see diff against master).
-
-	// 11 21 flow from other test
-
+	}
 
 	fmr.RecordFloatCount(floatCountHandle1, []Label{{Key: "float counter label", Value: "some value"}}, []Label{{Key: "float counter optional label", Value: "some value"}}, 1.2)
 	// assert 1.2...
 	// fmr.float64counts
+	floatWithLabelsWant := []float64WithLabels{
+		{
+			value: 1.2,
+			labels: []string{"float counter label"},
+			optionalLabels: []string{"float counter optional label"},
+		},
+	}
+	if diff := cmp.Diff(fmr.float64counts, floatWithLabelsWant, cmp.AllowUnexported(float64WithLabels{})); diff != "" {
+		t.Fatalf("fmr.float64counts (-got, +want): %v", diff)
+	}
 
-	fmr.RecordIntHisto(intHistoHandle1, []Label{{Key: "int histo label", Value: "some value"}}, []Label{{Key: "int histo optional label", Value: "some value"}}, 1)
-	// fmr.int64histos
+	fmr.RecordIntHisto(intHistoHandle1, []Label{{Key: "int histo label", Value: "some value"}}, []Label{{Key: "int histo optional label", Value: "some value"}}, 3)
+	intHistoWithLabelsWant := []int64WithLabels{
+		{
+			value: 3,
+			labels: []string{"int histo label"},
+			optionalLabels: []string{"int histo optional label"},
+		},
+	}
+	if diff := cmp.Diff(fmr.int64histos, intHistoWithLabelsWant, cmp.AllowUnexported(int64WithLabels{})); diff != "" {
+		t.Fatalf("fmr.int64histos (-got, +want): %v", diff)
+	}
 
-	fmr.RecordFloatHisto(floatHistoHandle1, []Label{{Key: "float histo label", Value: "some value"}}, []Label{{Key: "float histo optional label", Value: "some value"}}, 1.2)
-	// fmr.float64histos
+	fmr.RecordFloatHisto(floatHistoHandle1, []Label{{Key: "float histo label", Value: "some value"}}, []Label{{Key: "float histo optional label", Value: "some value"}}, 4)
+	floatHistoWithLabelsWant := []float64WithLabels{
+		{
+			value: 4,
+			labels: []string{"float histo label"},
+			optionalLabels: []string{"float histo optional label"},
+		},
+	}
+	if diff := cmp.Diff(fmr.float64histos, floatHistoWithLabelsWant, cmp.AllowUnexported(float64WithLabels{})); diff != "" {
+		t.Fatalf("fmr.float64histos (-got, +want): %v", diff)
+	}
 
-	fmr.RecordIntGauge(intGaugeHandle1, []Label{{Key: "int gauge label", Value: "some value"}}, []Label{{Key: "int gauge optional label", Value: "some value"}}, 3)
-	// fmr.int64gauges
+	fmr.RecordIntGauge(intGaugeHandle1, []Label{{Key: "int gauge label", Value: "some value"}}, []Label{{Key: "int gauge optional label", Value: "some value"}}, 7)
+	intGaugeWithLabelsWant := []int64WithLabels{
+		{
+			value: 7,
+			labels: []string{"int gauge label"},
+			optionalLabels: []string{"int gauge optional label"},
+		},
+	}
+	if diff := cmp.Diff(fmr.int64gauges, intGaugeWithLabelsWant, cmp.AllowUnexported(int64WithLabels{})); diff != "" {
+		t.Fatalf("fmr.int64gauges (-got, +want): %v", diff)
+	}
+
 
 	// maybe have this robust 11111
 } // what happens in the failure case
@@ -177,9 +212,6 @@ func (s) TestInstrumentRegistry(t *testing.T) {
 
 func (s) TestNumerousIntCounts(t *testing.T) {
 	defer ClearInstrumentRegistryForTesting()
-	// register int count 1
-	// register int count 2
-	// register int count 3
 	intCountHandle1 := RegisterInt64Count("int counter", "number of times recorded on tests", "calls", []string{"int counter label"}, []string{"int counter optional label"}, false)
 	intCountHandle2 := RegisterInt64Count("int counter 2", "number of times recorded on tests", "calls", []string{"int counter 2 label"}, []string{"int counter 2 optional label"}, false)
 	intCountHandle3 := RegisterInt64Count("int counter 3", "number of times recorded on tests", "calls", []string{"int counter 3 label"}, []string{"int counter 3 optional label"}, false)
@@ -188,19 +220,95 @@ func (s) TestNumerousIntCounts(t *testing.T) {
 
 	// 100
 	fmr.RecordIntCount(intCountHandle1, []Label{{Key: "int counter label", Value: "some value"}}, []Label{{Key: "int counter optional label", Value: "some value"}}, 1)
-
+	intWithLabelsWant := []int64WithLabels{
+		{
+			value: 1,
+			labels: []string{"int counter label"},
+			optionalLabels: []string{"int counter optional label"},
+		},
+		{
+			value: 0,
+			labels: []string{"int counter 2 label"},
+			optionalLabels: []string{"int counter 2 optional label"},
+		},
+		{
+			value: 0,
+			labels: []string{"int counter 3 label"},
+			optionalLabels: []string{"int counter 3 optional label"},
+		},
+	}
+	if diff := cmp.Diff(fmr.int64counts, intWithLabelsWant, cmp.AllowUnexported(int64WithLabels{})); diff != "" {
+		t.Fatalf("fmr.int64counts (-got, +want): %v", diff)
+	}
 
 	// 110
 	fmr.RecordIntCount(intCountHandle2, []Label{{Key: "int counter 2 label", Value: "some value"}}, []Label{{Key: "int counter 2 optional label", Value: "some value"}}, 1)
-
+	intWithLabelsWant = []int64WithLabels{
+		{
+			value: 1,
+			labels: []string{"int counter label"},
+			optionalLabels: []string{"int counter optional label"},
+		},
+		{
+			value: 1,
+			labels: []string{"int counter 2 label"},
+			optionalLabels: []string{"int counter 2 optional label"},
+		},
+		{
+			value: 0,
+			labels: []string{"int counter 3 label"},
+			optionalLabels: []string{"int counter 3 optional label"},
+		},
+	}
+	if diff := cmp.Diff(fmr.int64counts, intWithLabelsWant, cmp.AllowUnexported(int64WithLabels{})); diff != "" {
+		t.Fatalf("fmr.int64counts (-got, +want): %v", diff)
+	}
 
 	// 111
 	fmr.RecordIntCount(intCountHandle3, []Label{{Key: "int counter 3 label", Value: "some value"}}, []Label{{Key: "int counter 3 optional label", Value: "some value"}}, 1)
-
+	intWithLabelsWant = []int64WithLabels{
+		{
+			value: 1,
+			labels: []string{"int counter label"},
+			optionalLabels: []string{"int counter optional label"},
+		},
+		{
+			value: 1,
+			labels: []string{"int counter 2 label"},
+			optionalLabels: []string{"int counter 2 optional label"},
+		},
+		{
+			value: 1,
+			labels: []string{"int counter 3 label"},
+			optionalLabels: []string{"int counter 3 optional label"},
+		},
+	}
+	if diff := cmp.Diff(fmr.int64counts, intWithLabelsWant, cmp.AllowUnexported(int64WithLabels{})); diff != "" {
+		t.Fatalf("fmr.int64counts (-got, +want): %v", diff)
+	}
 
 	// 112
 	fmr.RecordIntCount(intCountHandle3, []Label{{Key: "int counter 3 label", Value: "some value"}}, []Label{{Key: "int counter 3 optional label", Value: "some value"}}, 1)
-
+	intWithLabelsWant = []int64WithLabels{
+		{
+			value: 1,
+			labels: []string{"int counter label"},
+			optionalLabels: []string{"int counter optional label"},
+		},
+		{
+			value: 1,
+			labels: []string{"int counter 2 label"},
+			optionalLabels: []string{"int counter 2 optional label"},
+		},
+		{
+			value: 2,
+			labels: []string{"int counter 3 label"},
+			optionalLabels: []string{"int counter 3 optional label"},
+		},
+	}
+	if diff := cmp.Diff(fmr.int64counts, intWithLabelsWant, cmp.AllowUnexported(int64WithLabels{})); diff != "" {
+		t.Fatalf("fmr.int64counts (-got, +want): %v", diff)
+	}
 
 
 	// ...
