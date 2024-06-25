@@ -23,49 +23,51 @@ import "log"
 // InstrumentDescriptor is a data of a registered instrument (metric).
 type InstrumentDescriptor struct {
 	// Name is the name of this metric.
-	Name           string
+	Name string
 	// Description is the description of this metric.
-	Description    string
+	Description string
 	// Unit is the unit of this metric.
-	Unit           string
+	Unit string
 	// Labels are the required label keys for this metric.
-	Labels         []string
+	Labels []string
 	// OptionalLabels are the optional label keys for this
 	// metric.
 	OptionalLabels []string
 	// Default is whether this metric is on by default.
-	Default bool // whether the metric is on by default
+	Default bool
 }
 
+// All of these globals are written to at initialization time only, and are read
+// only after initialization.
 // Int64CountInsts is information about registered int 64 count instruments in
 // order of registration.
 var Int64CountInsts []InstrumentDescriptor
+
 // Float64CountInsts is information about registered float 64 count instruments
 // in order of registration.
 var Float64CountInsts []InstrumentDescriptor
+
 // Int64HistoInsts is information about registered int 64 histo instruments in
 // order of registration.
 var Int64HistoInsts []InstrumentDescriptor
+
 // Float64HistoInsts is information about registered float 64 histo instruments
 // in order of registration.
 var Float64HistoInsts []InstrumentDescriptor
+
 // Int64GaugeInsts is information about registered int 64 gauge instruments in
 // order of registration.
 var Int64GaugeInsts []InstrumentDescriptor
 
+// registeredInsts are the registered instrument descriptor names.
+var registeredInsts = make(map[string]bool)
 
-// this func is for testing purposes only
+// DefaultNonPerCallMetrics are the instruments registered that are on by
+// default.
+var DefaultNonPerCallMetrics = make(map[string]bool)
 
-// set it to it's original state - return a snapshot?
-
-// defer func () { = oldstate }
-
-// clear full? I don't think it'll ever want to leave instruments around...
-
-// return to it's old?
-// but same as it's old
-// shouldn't have instruments except from init
-
+// ClearInstrumentRegistry clears the instrument registry for testing purposes
+// only.
 func ClearInstrumentRegistryForTesting() {
 	Int64CountInsts = nil
 	Float64CountInsts = nil
@@ -76,38 +78,13 @@ func ClearInstrumentRegistryForTesting() {
 	DefaultNonPerCallMetrics = make(map[string]bool)
 }
 
-
-
-
-
-
 // Label represents a string attribute/label to attach to metrics.
 type Label struct {
 	// Key is the key of the label.
 	Key string
-	// Value is the value of the label
+	// Value is the value of the label.
 	Value string
-} // Repeat this with the public API, underneath the hood it's just a string so you're fine here...
-
-// Int64CountHandle is a typed handle for a int count instrument. This handle is
-// passed at the recording point in order to know which instrument to record on.
-type Int64CountHandle struct {
-	Index int
 }
-
-// comment about thread safety here...cannot be read at init time (or used) i.e.
-// create a channel with OTel, which will read this...
-
-// registeredInsts are the registered instrument descriptor names.
-var registeredInsts = make(map[string]bool)
-
-// If default, set this.
-
-// DefaultNonPerCallMetrics are the metrics registered that are on by default.
-// (alias against it and declare Metric somewhere...) either combine or expect users to set both...
-
-var DefaultNonPerCallMetrics = make(map[string]bool) // built as a map, switching to slice would be easy enough...
-// OTel can read this global too
 
 func registerInst(name string, def bool) {
 	if registeredInsts[name] {
@@ -115,8 +92,14 @@ func registerInst(name string, def bool) {
 	}
 	registeredInsts[name] = true
 	if def {
-		DefaultNonPerCallMetrics[name] = true // two things needed 1. alias, 2. Metrics defined somewhere shared (link Metric symbol...) (could put this in this PR...coupled with logic from other PR)
+		DefaultNonPerCallMetrics[name] = true
 	}
+}
+
+// Int64CountHandle is a typed handle for a int count instrument. This handle is
+// passed at the recording point in order to know which instrument to record on.
+type Int64CountHandle struct {
+	Index int
 }
 
 // RegisterInt64Count registers the int count instrument description onto the
@@ -133,7 +116,7 @@ func RegisterInt64Count(name string, desc string, unit string, labels []string, 
 		Unit:           unit,
 		Labels:         labels,
 		OptionalLabels: optionalLabels,
-		Default:        def, // read at creation time, combine with logic of Metrics (unset get all defaults) set passed into OpenTelemetry
+		Default:        def,
 	})
 	return Int64CountHandle{
 		Index: len(Int64CountInsts) - 1,
@@ -161,7 +144,7 @@ func RegisterFloat64Count(name string, desc string, unit string, labels []string
 		Unit:           unit,
 		Labels:         labels,
 		OptionalLabels: optionalLabels,
-		Default:        def, // do I need to persist this default thing around?
+		Default:        def,
 	})
 	return Float64CountHandle{
 		Index: len(Float64CountInsts) - 1,
@@ -225,6 +208,8 @@ func RegisterFloat64Histo(name string, desc string, unit string, labels []string
 	}
 }
 
+// Int64GaugeHandle is a typed handle for a int gauge instrument. This handle is
+// passed at the recording point in order to know which instrument to record on.
 type Int64GaugeHandle struct {
 	Index int
 }
@@ -243,7 +228,7 @@ func RegisterInt64Gauge(name string, desc string, unit string, labels []string, 
 		Unit:           unit,
 		Labels:         labels,
 		OptionalLabels: optionalLabels,
-		Default:        def, // read at creation time, combine with logic of Metrics (unset get all defaults) set passed into OpenTelemetry
+		Default:        def,
 	})
 	return Int64GaugeHandle{
 		Index: len(Int64GaugeInsts) - 1,
