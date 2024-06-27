@@ -18,6 +18,7 @@ package opentelemetry_test
 
 import (
 	"context"
+	"google.golang.org/grpc/internal/stats/instrumentregistry"
 	"io"
 	"testing"
 	"time"
@@ -179,7 +180,7 @@ func (s) TestMethodAttributeFilter(t *testing.T) {
 // OpenTelemetry SDK's Meter Provider. It then makes an RPC that is unregistered
 // on the Client (no StaticMethodCallOption set) and Server. The method
 // attribute on subsequent metrics should be bucketed in "other".
-func (s) TestAllMetricsOneFunction(t *testing.T) {
+func (s) TestAllMetricsOneFunction(t *testing.T) { // Switch to All Per Call Metrics?
 	reader, ss := setup(t, nil)
 	defer ss.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -306,3 +307,67 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		}
 	}
 }
+
+// document required to call clear for every test that reigstered with inst
+// registry Doug might want to set to before? return snapshot or something
+// (mentorship)
+
+func (s) TestNonPerCallMetrics(t *testing.T) {
+	// Create new instruments which can be verified on (look at inst. registry tests for inspiration as to what can verify?)
+	instrumentregistry.RegisterInt64Count() // basic count...make this a helper nah it's fine
+
+
+
+
+	// Create OTel - will create instruments based on ^^^
+
+	// record non per call metrics on OTel...
+
+}
+
+func (s) CreateMetricsAtoms() {
+	// What is an atom corresponding to non per call metric...
+
+	// See per call for examples of counts/gauges
+
+	// after recording expect atoms...should this helper take interesting options...what are options to plumb through
+
+
+	// reuse for rls and pick first tests, but that might be best defined by inlining the expectations...
+
+
+	// Concretely here's what one looks like:
+	/*
+	{
+				Name:        "grpc.client.call.duration",
+				Description: "Time taken by gRPC to complete an RPC from application's perspective.",
+				Unit:        "s",
+				Data: metricdata.Histogram[float64]{
+					DataPoints: []metricdata.HistogramDataPoint[float64]{
+						{
+							Attributes: attribute.NewSet(methodAttr, targetAttr, statusAttr),
+							Count:      1,
+							Bounds:     DefaultLatencyBounds,
+						},
+					},
+					Temporality: metricdata.CumulativeTemporality,
+				},
+			},
+	*/
+
+	metricdata.Metrics{
+		Name: "some counter",
+		Description: "Number of calls from test",
+		Unit: "calls",
+		Data: metricdata.Sum[int64]{
+
+		},
+	}
+
+
+	// Gauge is just current value?
+}
+
+// Could I merge stuff with the testutils?
+
+

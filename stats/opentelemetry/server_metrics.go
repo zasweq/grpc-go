@@ -18,6 +18,9 @@ package opentelemetry
 
 import (
 	"context"
+	estats "google.golang.org/grpc/experimental/stats"
+	einstrumentregistry "google.golang.org/grpc/experimental/stats/instrumentregistry"
+	"google.golang.org/grpc/internal/stats/instrumentregistry"
 	"sync/atomic"
 	"time"
 
@@ -50,14 +53,68 @@ func (h *serverStatsHandler) initializeMetrics() {
 	}
 	metrics := h.options.MetricsOptions.Metrics
 	if metrics == nil {
-		metrics = DefaultMetrics
+		metrics = DefaultMetrics // switch this to a runtime call - alongside thing exposed to users...
 	}
 
 	h.serverMetrics.callStarted = createInt64Counter(metrics.metrics, "grpc.server.call.started", meter, otelmetric.WithUnit("call"), otelmetric.WithDescription("Number of server calls started."))
 	h.serverMetrics.callSentTotalCompressedMessageSize = createInt64Histogram(metrics.metrics, "grpc.server.call.sent_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes sent per server call."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.serverMetrics.callRcvdTotalCompressedMessageSize = createInt64Histogram(metrics.metrics, "grpc.server.call.rcvd_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes received per server call."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.serverMetrics.callDuration = createFloat64Histogram(metrics.metrics, "grpc.server.call.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a call from server transport's perspective."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
+
+	// Non per call metrics:
+	for _, inst := range instrumentregistry.Int64CountInsts {
+		ic := createInt64Counter(metrics.metrics, stats.Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.serverMetrics.intCounts = append(h.serverMetrics.intCounts, ic)
+	}
+	for _, inst := range instrumentregistry.Float64CountInsts {
+		fc := createFloat64Counter(metrics.metrics, stats.Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.serverMetrics.floatCounts = append(h.serverMetrics.floatCounts, fc)
+	}
+	for _, inst := range instrumentregistry.Int64HistoInsts {
+		ih := createInt64Histogram(metrics.metrics, stats.Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.serverMetrics.intHistos = append(h.serverMetrics.intHistos, ih)
+	}
+	for _, inst := range instrumentregistry.Float64HistoInsts {
+		fh := createFloat64Histogram(metrics.metrics, stats.Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.serverMetrics.floatHistos = append(h.serverMetrics.floatHistos, fh)
+	}
+	for _, inst := range instrumentregistry.Int64GaugeInsts {
+		ig := createInt64Gauge(metrics.metrics, stats.Metric(inst.Name), meter, otelmetric.WithUnit(inst.Unit), otelmetric.WithDescription(inst.Description))
+		h.serverMetrics.intGauges = append(h.serverMetrics.intGauges, ig)
+	}
 }
+
+// on the stats handler not the interceptor - built in component of server too
+// (top level component that all components exist under)
+
+func (h *serverStatsHandler) RecordIntCount(handle einstrumentregistry.Int64CountHandle, labels []estats.Label, optionalLabels []estats.Label, incr int64) {
+	ao := createAttributeOptionFromLabels(labels, optionalLabels)
+	h.serverMetrics.intCounts[handle.Index].Add(context.Background()/*switch to background from client/server*/, incr, ao)
+}
+
+func (h *serverStatsHandler) RecordFloatCount(handle einstrumentregistry.Float64CountHandle, labels []estats.Label, optionalLabels []estats.Label, incr float64) {
+	ao := createAttributeOptionFromLabels(labels, optionalLabels)
+	h.serverMetrics.floatCounts[handle.Index].Add(context.Background() /*switch to background from client/server*/, incr, ao)
+}
+
+func (h *serverStatsHandler) RecordIntHisto(handle einstrumentregistry.Int64HistoHandle, labels []estats.Label, optionalLabels []estats.Label, incr int64) {
+	ao := createAttributeOptionFromLabels(labels, optionalLabels)
+
+	h.serverMetrics.intHistos[handle.Index].Record(context.Background()/*switch to background from client/server*/, incr, ao)
+}
+
+func (h *serverStatsHandler) RecordFloatHisto(handle einstrumentregistry.Float64CountHandle, labels []estats.Label, optionalLabels []estats.Label, incr float64) {
+	ao := createAttributeOptionFromLabels(labels, optionalLabels)
+
+	h.serverMetrics.floatHistos[handle.Index].Record(context.Background()/*switch to background from client/server*/, incr, ao) // store contexts through tree, shouldn't require context when there's no context for certain operations...this will "break" go style guide but Doug is ok with that :)
+}
+
+func (h *serverStatsHandler) RecordIntGauge(handle einstrumentregistry.Int64GaugeHandle, labels []estats.Label, optionalLabels []estats.Label, incr int64) {
+	ao := createAttributeOptionFromLabels(labels, optionalLabels)
+
+	h.serverMetrics.intGauges[handle.Index].Record(context.Background()/*switch to background from client/server*/, incr, ao)
+}
+
 
 // attachLabelsTransportStream intercepts SetHeader and SendHeader calls of the
 // underlying ServerTransportStream to attach metadataExchangeLabels.

@@ -20,17 +20,20 @@ package opentelemetry
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	estats "google.golang.org/grpc/experimental/stats"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/stats"
-	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
 
-	"go.opentelemetry.io/otel/metric"
+	otelattribute "go.opentelemetry.io/otel/attribute"
+	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
+	otelmetric "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 )
 
@@ -81,10 +84,25 @@ func (m *Metrics) Add(metrics ...stats.Metric) *Metrics {
 	}
 }
 
+// bring this to PR in flight, also move this to external stats package...
+// set operations and adding and removing from default metrics are common
+
+// Join joins the metrics passed in with the metrics set, and returns a new copy
+// with the merged metrics.
+func (m *Metrics) Join(metrics *Metrics) *Metrics { // move this out (after saving progress to stats/)
+	newMetrics := make(map[stats.Metric]bool)
+	maps.Copy(newMetrics, m.metrics)
+	maps.Copy(newMetrics, metrics.metrics)
+	return &Metrics{
+		metrics: newMetrics,
+	}
+} // used to just mess with Metrics alias but this exports operations...publicly needed I guess...
+
 // Remove removes the metrics from the metrics set and returns a new copy with
 // the metrics removed.
 func (m *Metrics) Remove(metrics ...stats.Metric) *Metrics {
 	newMetrics := make(map[stats.Metric]bool)
+	maps.Copy(newMetrics, m.metrics) // test this to see if it works? Do I have unit tests for this?
 	for metric := range m.metrics {
 		newMetrics[metric] = true
 	}
@@ -110,7 +128,7 @@ type MetricsOptions struct {
 	// unset, no metrics will be recorded. Any implementation knobs (i.e. views,
 	// bounds) set in the MeterProvider take precedence over the API calls from
 	// this interface. (i.e. it will create default views for unset views).
-	MeterProvider metric.MeterProvider
+	MeterProvider otelmetric.MeterProvider
 
 	// Metrics are the metrics to instrument. Will create instrument and record telemetry
 	// for corresponding metric supported by the client and server
@@ -235,30 +253,44 @@ type attemptInfo struct {
 
 type clientMetrics struct {
 	// "grpc.client.attempt.started"
-	attemptStarted metric.Int64Counter
+	attemptStarted otelmetric.Int64Counter
 	// "grpc.client.attempt.duration"
-	attemptDuration metric.Float64Histogram
+	attemptDuration otelmetric.Float64Histogram
 	// "grpc.client.attempt.sent_total_compressed_message_size"
-	attemptSentTotalCompressedMessageSize metric.Int64Histogram
+	attemptSentTotalCompressedMessageSize otelmetric.Int64Histogram
 	// "grpc.client.attempt.rcvd_total_compressed_message_size"
-	attemptRcvdTotalCompressedMessageSize metric.Int64Histogram
+	attemptRcvdTotalCompressedMessageSize otelmetric.Int64Histogram
 
 	// "grpc.client.call.duration"
-	callDuration metric.Float64Histogram
+	callDuration otelmetric.Float64Histogram
+
+	// Non per call metrics:
+	intCounts []otelmetric.Int64Counter
+	floatCounts []otelmetric.Float64Counter
+	intHistos []otelmetric.Int64Histogram
+	floatHistos []otelmetric.Float64Histogram
+	intGauges []otelmetric.Int64Gauge
 }
 
 type serverMetrics struct {
 	// "grpc.server.call.started"
-	callStarted metric.Int64Counter
+	callStarted otelmetric.Int64Counter
 	// "grpc.server.call.sent_total_compressed_message_size"
-	callSentTotalCompressedMessageSize metric.Int64Histogram
+	callSentTotalCompressedMessageSize otelmetric.Int64Histogram
 	// "grpc.server.call.rcvd_total_compressed_message_size"
-	callRcvdTotalCompressedMessageSize metric.Int64Histogram
+	callRcvdTotalCompressedMessageSize otelmetric.Int64Histogram
 	// "grpc.server.call.duration"
-	callDuration metric.Float64Histogram
+	callDuration otelmetric.Float64Histogram
+
+	// Non per call metrics:
+	intCounts []otelmetric.Int64Counter
+	floatCounts []otelmetric.Float64Counter
+	intHistos []otelmetric.Int64Histogram
+	floatHistos []otelmetric.Float64Histogram
+	intGauges []otelmetric.Int64Gauge
 }
 
-func createInt64Counter(setOfMetrics map[stats.Metric]bool, metricName stats.Metric, meter metric.Meter, options ...metric.Int64CounterOption) metric.Int64Counter {
+func createInt64Counter(setOfMetrics map[stats.Metric]bool, metricName stats.Metric, meter otelmetric.Meter, options ...otelmetric.Int64CounterOption) otelmetric.Int64Counter {
 	if _, ok := setOfMetrics[metricName]; !ok {
 		return noop.Int64Counter{}
 	}
@@ -270,7 +302,19 @@ func createInt64Counter(setOfMetrics map[stats.Metric]bool, metricName stats.Met
 	return ret
 }
 
-func createInt64Histogram(setOfMetrics map[stats.Metric]bool, metricName stats.Metric, meter metric.Meter, options ...metric.Int64HistogramOption) metric.Int64Histogram {
+func createFloat64Counter(setOfMetrics map[stats.Metric]bool, metricName stats.Metric, meter otelmetric.Meter, options ...otelmetric.Float64CounterOption) otelmetric.Float64Counter {
+	if _, ok := setOfMetrics[metricName]; !ok {
+		return noop.Float64Counter{}
+	}
+	ret, err := meter.Float64Counter(string(metricName), options...) // I could typecast at callsite too
+	if err != nil {
+		logger.Errorf("failed to register metric \"%v\", will not record", metricName)
+		return noop.Float64Counter{}
+	}
+	return ret
+}
+
+func createInt64Histogram(setOfMetrics map[stats.Metric]bool, metricName stats.Metric, meter otelmetric.Meter, options ...otelmetric.Int64HistogramOption) otelmetric.Int64Histogram {
 	if _, ok := setOfMetrics[metricName]; !ok {
 		return noop.Int64Histogram{}
 	}
@@ -282,7 +326,7 @@ func createInt64Histogram(setOfMetrics map[stats.Metric]bool, metricName stats.M
 	return ret
 }
 
-func createFloat64Histogram(setOfMetrics map[stats.Metric]bool, metricName stats.Metric, meter metric.Meter, options ...metric.Float64HistogramOption) metric.Float64Histogram {
+func createFloat64Histogram(setOfMetrics map[stats.Metric]bool, metricName stats.Metric, meter otelmetric.Meter, options ...otelmetric.Float64HistogramOption) otelmetric.Float64Histogram {
 	if _, ok := setOfMetrics[metricName]; !ok {
 		return noop.Float64Histogram{}
 	}
@@ -292,6 +336,26 @@ func createFloat64Histogram(setOfMetrics map[stats.Metric]bool, metricName stats
 		return noop.Float64Histogram{}
 	}
 	return ret
+}
+
+func createInt64Gauge(setOfMetrics map[stats.Metric]bool, metricName stats.Metric, meter otelmetric.Meter, options ...otelmetric.Int64GaugeOption) otelmetric.Int64Gauge {
+	ret, err := meter.Int64Gauge(string(metricName), options...)
+	if err != nil {
+		logger.Errorf("failed to register metric \"%v\", will not record", metricName)
+		return noop.Int64Gauge{}
+	}
+	return ret
+}
+
+func createAttributeOptionFromLabels(labels []estats.Label, optionalLabels []estats.Label) otelmetric.MeasurementOption { // move to opentelemetry.go - side agnostic
+	var attributes []otelattribute.KeyValue
+	for _, label := range labels { // where does it check if labels/optional labels add up to what is being emitted from system? layer underneath
+		attributes = append(attributes, otelattribute.String(label.Key, label.Value))
+	}
+	for _, optLabel := range labels {
+		attributes = append(attributes, otelattribute.String(optLabel.Key, optLabel.Value))
+	}
+	return otelmetric.WithAttributes(attributes...)
 }
 
 // Users of this component should use these bucket boundaries as part of their
