@@ -18,6 +18,7 @@ package opentelemetry_test
 
 import (
 	"context"
+	"google.golang.org/grpc/experimental/stats"
 	"google.golang.org/grpc/internal/stats/instrumentregistry"
 	"io"
 	"testing"
@@ -308,22 +309,80 @@ func (s) TestAllMetricsOneFunction(t *testing.T) { // Switch to All Per Call Met
 	}
 }
 
+func (s) TestDefaultMetrics(t *testing.T) {
+	// register default metric
+
+	// unset gets default metric...
+
+	// and record on it...test below can make default
+
+	// otherwise need to explicitly specify and scale up...
+
+	// adding or removing to default?
+}
+
 // document required to call clear for every test that reigstered with inst
 // registry Doug might want to set to before? return snapshot or something
 // (mentorship)
 
 func (s) TestNonPerCallMetrics(t *testing.T) {
 	// Create new instruments which can be verified on (look at inst. registry tests for inspiration as to what can verify?)
-	instrumentregistry.RegisterInt64Count() // basic count...make this a helper nah it's fine
+	intCountHandle := instrumentregistry.RegisterInt64Count("some counter", "Number of calls from test", "calls", []string{"some label key"}, []string{"some optional label key"}, true) // basic count...make this a helper nah it's fine
 
 
-
+	// Same options as usual? Manual everything...
 
 	// Create OTel - will create instruments based on ^^^
+	opentelemetry.DialOption() // create it here - doesn't need per call callouts since will call below...
+	// Above returns something that contains 3 under the hood, could also just reach into ssh directly...
+
+	// same options as passed above...
+
+	// pass it here, just use this directly...
+	ssh := &serverStatsHandler{options: o} // doesn't have access to this - so don't make e2e test?
+	ssh.initializeMetrics() // move to OTel package if want to access this symbol...
+
+
+
+
+	// this returns a dial option with 3 (interceptor, interceptor, stats
+	// handler) <- need a ref to stats handler, how to typecast downward?
+
+	// in client conn this will be able to typecast downward because of sh global + local...
+	// convert otel somehow to vvv (not a helper to look into it)
+	var mr stats.MetricsRecorder
+
+	mr.RecordIntCount(intCountHandle, []stats.Label{{Key: "some label key", Value: "some label val"}}, []stats.Label{{Key: "some optional label key", Value: "some optional label val"}}, 1) // labels get eaten a a lower level, so this level is assumed to get the right labels...
+
+
+	// Pass sh downward in a list like I had?
+
+
+
+	// Typecast this down to MetricsRecorder()...will teach me how to typecast this in client and server
+
 
 	// record non per call metrics on OTel...
 
+
+
+	// Do I need to poll? Is it eventually consistent or can I just check I
+	// think latter since record doesn't come in goroutine just happens sync
+	// above...
+
+	// on manual reader, check like metrics atoms below, need to make the
+	// metrics atoms reusable/extensible
+
 }
+
+// Maybe just treat this like a smoke test, and leave full plumbing/specifics to RLS/Pick First Metrics or something like that:
+// 1. Default Metrics Logic
+// 2. Maybe record one of each metric and expect it (merge with defaults somehow)...
+// including gauges which will be just the most recent recording point...
+
+
+
+// I think this is same thing but metrics set isn't moved yet...
 
 func (s) CreateMetricsAtoms() {
 	// What is an atom corresponding to non per call metric...
@@ -360,7 +419,19 @@ func (s) CreateMetricsAtoms() {
 		Description: "Number of calls from test",
 		Unit: "calls",
 		Data: metricdata.Sum[int64]{
-
+			DataPoints: []metricdata.DataPoint[int64]{
+				{
+					// Key value pairs pass keys to inst registry...
+					Attributes: attribute.NewSet(unaryMethodAttr), // attibutes come from labels so arbitrary
+					Value:      1,
+				},
+				{
+					Attributes: attribute.NewSet(duplexMethodAttr), // attibutes come from labels so arbitrary
+					Value:      1,
+				},
+			},
+			Temporality: metricdata.CumulativeTemporality,
+			IsMonotonic: true,
 		},
 	}
 

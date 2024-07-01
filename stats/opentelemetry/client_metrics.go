@@ -99,30 +99,30 @@ type clientStatsHandler struct {
 // on top of client/servers context, but this gets passed through API anyway.
 func (h *clientStatsHandler) RecordIntCount(handle einstrumentregistry.Int64CountHandle, labels []estats.Label, optionalLabels []estats.Label, incr int64) {
 	ao := createAttributeOptionFromLabels(labels, optionalLabels)
-	h.clientMetrics.intCounts[handle.Index].Add(context.Background()/*switch to background from client/server*/, incr, ao)
+	h.clientMetrics.intCounts[handle.Index].Add(h.options.MetricsOptions.Context, incr, ao)
 }
 
 func (h *clientStatsHandler) RecordFloatCount(handle einstrumentregistry.Float64CountHandle, labels []estats.Label, optionalLabels []estats.Label, incr float64) {
 	ao := createAttributeOptionFromLabels(labels, optionalLabels)
-	h.clientMetrics.floatCounts[handle.Index].Add(context.Background() /*switch to background from client/server*/, incr, ao)
+	h.clientMetrics.floatCounts[handle.Index].Add(h.options.MetricsOptions.Context, incr, ao)
 }
 
 func (h *clientStatsHandler) RecordIntHisto(handle einstrumentregistry.Int64HistoHandle, labels []estats.Label, optionalLabels []estats.Label, incr int64) {
 	ao := createAttributeOptionFromLabels(labels, optionalLabels)
 
-	h.clientMetrics.intHistos[handle.Index].Record(context.Background()/*switch to background from client/server*/, incr, ao)
+	h.clientMetrics.intHistos[handle.Index].Record(h.options.MetricsOptions.Context, incr, ao)
 }
 
 func (h *clientStatsHandler) RecordFloatHisto(handle einstrumentregistry.Float64CountHandle, labels []estats.Label, optionalLabels []estats.Label, incr float64) {
 	ao := createAttributeOptionFromLabels(labels, optionalLabels)
 
-	h.clientMetrics.floatHistos[handle.Index].Record(context.Background()/*switch to background from client/server*/, incr, ao) // store contexts through tree, shouldn't require context when there's no context for certain operations...this will "break" go style guide but Doug is ok with that :)
+	h.clientMetrics.floatHistos[handle.Index].Record(h.options.MetricsOptions.Context, incr, ao) // store contexts through tree, shouldn't require context when there's no context for certain operations...this will "break" go style guide but Doug is ok with that :)
 }
 
 func (h *clientStatsHandler) RecordIntGauge(handle einstrumentregistry.Int64GaugeHandle, labels []estats.Label, optionalLabels []estats.Label, incr int64) {
 	ao := createAttributeOptionFromLabels(labels, optionalLabels)
 
-	h.clientMetrics.intGauges[handle.Index].Record(context.Background()/*switch to background from client/server*/, incr, ao)
+	h.clientMetrics.intGauges[handle.Index].Record(h.options.MetricsOptions.Context, incr, ao)
 }
 
 // Do the same thing server side...

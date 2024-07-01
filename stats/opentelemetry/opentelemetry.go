@@ -102,7 +102,6 @@ func (m *Metrics) Join(metrics *Metrics) *Metrics { // move this out (after savi
 // the metrics removed.
 func (m *Metrics) Remove(metrics ...stats.Metric) *Metrics {
 	newMetrics := make(map[stats.Metric]bool)
-	maps.Copy(newMetrics, m.metrics) // test this to see if it works? Do I have unit tests for this?
 	for metric := range m.metrics {
 		newMetrics[metric] = true
 	}
@@ -150,6 +149,9 @@ type MetricsOptions struct {
 
 	// pluginOption is used to get labels to attach to certain metrics, if set.
 	pluginOption otelinternal.PluginOption
+	// Context is the context of the OpenTelemetry plugin. If unset, will
+	// default to a context.Background.
+	Context context.Context
 }
 
 // DialOption returns a dial option which enables OpenTelemetry instrumentation
@@ -165,6 +167,9 @@ type MetricsOptions struct {
 // configured for an individual metric turned on, the API call in this component
 // will create a default view for that metric.
 func DialOption(o Options) grpc.DialOption {
+	if o.MetricsOptions.Context == nil { // This context will be important for tracing too so put it in top level object? This writes to a copied struct so I think we're good here...
+		o.MetricsOptions.Context = context.Background()
+	}
 	csh := &clientStatsHandler{options: o}
 	csh.initializeMetrics()
 	return joinDialOptions(grpc.WithChainUnaryInterceptor(csh.unaryInterceptor), grpc.WithChainStreamInterceptor(csh.streamInterceptor), grpc.WithStatsHandler(csh))
@@ -185,6 +190,9 @@ var joinServerOptions = internal.JoinServerOptions.(func(...grpc.ServerOption) g
 // configured for an individual metric turned on, the API call in this component
 // will create a default view for that metric.
 func ServerOption(o Options) grpc.ServerOption {
+	if o.MetricsOptions.Context == nil { // This context will be important for tracing too so put it in top level object? This writes to a copied struct so I think we're good here...
+		o.MetricsOptions.Context = context.Background()
+	}
 	ssh := &serverStatsHandler{options: o}
 	ssh.initializeMetrics()
 	return joinServerOptions(grpc.ChainUnaryInterceptor(ssh.unaryInterceptor), grpc.ChainStreamInterceptor(ssh.streamInterceptor), grpc.StatsHandler(ssh))
