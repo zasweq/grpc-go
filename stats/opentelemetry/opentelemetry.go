@@ -256,3 +256,14 @@ var (
 	// DefaultMetrics are the default metrics provided by this module.
 	DefaultMetrics = stats.NewMetrics(ClientAttemptStarted, ClientAttemptDuration, ClientAttemptSentCompressedTotalMessageSize, ClientAttemptRcvdCompressedTotalMessageSize, ClientCallDuration, ServerCallStarted, ServerCallSentCompressedTotalMessageSize, ServerCallRcvdCompressedTotalMessageSize, ServerCallDuration)
 )
+
+// same thing as opentelemetry-use-instrument-registry (pull it up on GitHub)...
+
+// implement default metrics as a runtime join...
+// optional label filtering through same API (persists around the label values so I'm good here...)
+// layer below just does length check
+
+// instead of five slices
+// five maps I think...
+// it's a top level map[*MetricDescriptor]->instrument type
+
