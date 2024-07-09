@@ -106,7 +106,11 @@ func (h *Int64GaugeHandle) Record(recorder MetricsRecorder, incr int64, labels .
 // registeredMetrics are the registered metric descriptor names.
 var registeredMetrics = make(map[Metric]bool)
 
+<<<<<<< HEAD
 // metricsRegistry contains all of the registered metrics.
+=======
+// MetricsRegistry contains all of the registered metrics.
+>>>>>>> 046fd277 (Save progress)
 //
 // This is written to only at init time, and read only after that.
 var metricsRegistry = make(map[Metric]*MetricDescriptor)

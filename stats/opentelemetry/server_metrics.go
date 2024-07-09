@@ -18,6 +18,7 @@ package opentelemetry
 
 import (
 	"context"
+	estats "google.golang.org/grpc/experimental/stats"
 	"sync/atomic"
 	"time"
 
@@ -51,13 +52,68 @@ func (h *serverStatsHandler) initializeMetrics() {
 	}
 	metrics := h.options.MetricsOptions.Metrics
 	if metrics == nil {
-		metrics = DefaultMetrics
+		metrics = DefaultMetrics() // dynamic runtime check...
 	}
 
+<<<<<<< HEAD
 	h.serverMetrics.callStarted = createInt64Counter(metrics.Metrics(), "grpc.server.call.started", meter, otelmetric.WithUnit("call"), otelmetric.WithDescription("Number of server calls started."))
 	h.serverMetrics.callSentTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics(), "grpc.server.call.sent_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes sent per server call."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.serverMetrics.callRcvdTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics(), "grpc.server.call.rcvd_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes received per server call."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.serverMetrics.callDuration = createFloat64Histogram(metrics.Metrics(), "grpc.server.call.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a call from server transport's perspective."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
+=======
+	h.serverMetrics.callStarted = createInt64Counter(metrics.Metrics, "grpc.server.call.started", meter, otelmetric.WithUnit("call"), otelmetric.WithDescription("Number of server calls started."))
+	h.serverMetrics.callSentTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics, "grpc.server.call.sent_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes sent per server call."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
+	h.serverMetrics.callRcvdTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics, "grpc.server.call.rcvd_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes received per server call."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
+	h.serverMetrics.callDuration = createFloat64Histogram(metrics.Metrics, "grpc.server.call.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a call from server transport's perspective."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
+
+	// non per call metrics:
+	for _, desc := range estats.MetricsRegistry {
+		switch desc.Type {
+		case estats.MetricTypeIntCount:
+			ic := createInt64Counter(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.serverMetrics.intCounts[desc] = ic
+		case estats.MetricTypeFloatCount:
+			fc := createFloat64Counter(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.serverMetrics.floatCounts[desc] = fc
+		case estats.MetricTypeIntHisto:
+			ih := createInt64Histogram(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.serverMetrics.intHistos[desc] = ih
+		case estats.MetricTypeFloatHisto:
+			fh := createFloat64Histogram(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.serverMetrics.floatHistos[desc] = fh
+		case estats.MetricTypeIntGauge:
+			ig := createInt64Gauge(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.serverMetrics.intGauges[desc] = ig
+		}
+	}
+}
+
+func (h *serverStatsHandler) RecordIntCount(handle estats.Int64CountHandle, incr int64, labels ...string) {
+	// move this to opentelemetry.go since shared, I think passing nil won't create any problems since fors over it
+	// create a set?
+	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.serverMetrics.intCounts[handle.MetricDescriptor].Add(h.options.MetricsOptions.Context, incr, ao)
+}
+
+func (h *serverStatsHandler) RecordFloatCount(handle estats.Float64CountHandle, incr float64, labels ...string) {
+	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.serverMetrics.floatCounts[handle.MetricDescriptor].Add(h.options.MetricsOptions.Context, incr, ao)
+}
+
+func (h *serverStatsHandler) RecordIntHisto(handle estats.Int64HistoHandle, incr int64, labels ...string) {
+	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.serverMetrics.intHistos[handle.MetricDescriptor].Record(h.options.MetricsOptions.Context, incr, ao)
+}
+
+func (h *serverStatsHandler) RecordFloatHisto(handle estats.Float64HistoHandle, incr float64, labels ...string) {
+	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.serverMetrics.floatHistos[handle.MetricDescriptor].Record(h.options.MetricsOptions.Context, incr, ao)
+}
+
+func (h *serverStatsHandler) RecordIntGauge(handle estats.Int64GaugeHandle, incr int64, labels ...string) {
+	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.serverMetrics.intGauges[handle.MetricDescriptor].Record(h.options.MetricsOptions.Context, incr, ao)
+>>>>>>> 046fd277 (Save progress)
 }
 
 // attachLabelsTransportStream intercepts SetHeader and SendHeader calls of the

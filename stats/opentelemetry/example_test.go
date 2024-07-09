@@ -53,7 +53,7 @@ func Example_dialOption() {
 	opts := opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
 			MeterProvider: provider,
-			Metrics:       opentelemetry.DefaultMetrics, // equivalent to unset - distinct from empty
+			Metrics:       opentelemetry.DefaultPerCallMetrics, // equivalent to unset - distinct from empty
 		},
 	}
 	do := opentelemetry.DialOption(opts)
@@ -88,7 +88,7 @@ func ExampleMetrics_excludeSome() {
 	// To exclude specific metrics, initialize Options as follows:
 	opts := opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
-			Metrics: opentelemetry.DefaultMetrics.Remove(opentelemetry.ClientAttemptDuration, opentelemetry.ClientAttemptRcvdCompressedTotalMessageSize),
+			Metrics: opentelemetry.DefaultPerCallMetrics.Remove(opentelemetry.ClientAttemptDuration, opentelemetry.ClientAttemptRcvdCompressedTotalMessageSize),
 		},
 	}
 	do := opentelemetry.DialOption(opts)
