@@ -18,6 +18,7 @@ package opentelemetry_test
 
 import (
 	"context"
+	"google.golang.org/grpc/experimental/stats"
 	"io"
 	"testing"
 	"time"
@@ -74,12 +75,12 @@ func setup(t *testing.T, methodAttributeFilter func(string) bool) (*metric.Manua
 	if err := ss.Start([]grpc.ServerOption{opentelemetry.ServerOption(opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
 			MeterProvider:         provider,
-			Metrics:               opentelemetry.DefaultMetrics,
+			Metrics:               opentelemetry.DefaultPerCallMetrics,
 			MethodAttributeFilter: methodAttributeFilter,
 		}})}, opentelemetry.DialOption(opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
 			MeterProvider: provider,
-			Metrics:       opentelemetry.DefaultMetrics,
+			Metrics:       opentelemetry.DefaultPerCallMetrics,
 		},
 	})); err != nil {
 		t.Fatalf("Error starting endpoint server: %v", err)
@@ -306,3 +307,85 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		}
 	}
 }
+
+// Same thing right pass a handle except method is not on handle so you pass the
+// OTel thing you create...
+
+func (s) TestMetricsRegistryMetrics(t *testing.T) {
+	// Internal linkage to that clear helper thingy...
+	// cleanup := internal.ClearMetricsRegistryForTesting.()
+	// defer cleanup()
+
+	// Register instruments...could test defaults vs. not logic form this register call...
+	intCountHandle1 := stats.RegisterInt64Count(stats.MetricDescriptor{
+		Name: "int counter 1",
+		Description: "Sum of calls from test",
+		Unit: "int",
+		Labels: []string{"int counter 1 key"}, // These show up in emissions...so test this...
+		OptionalLabels: []string{"int counter 1 label key"},
+		Default: true,
+	}) // estats?
+
+	// non default metric.
+	// If not specified in OpenTelemetry constructor, this will become a no-op,
+	// so measurements recorded on it won't show up in emitted metrics.
+	intCountHandle2 := stats.RegisterInt64Count(stats.MetricDescriptor{
+		Name: "int counter 2",
+		Description: "Sum of calls from test",
+		Unit: "int",
+		Labels: []string{"int counter 2 key"}, // These show up in emissions...so test this...
+		OptionalLabels: []string{"int counter 2 label key"},
+		Default: false,
+	})
+
+	// Register another non default metric. This will get added to the default
+	// metrics set in the OpenTelemetry constructor options, so metrics recorded
+	// on this should show up in metrics emissions.
+
+	// Test DefaultMetricsAdd a string so maybe a third intCountHandle
+	intCountHandle3 := stats.RegisterInt64Count(stats.MetricDescriptor{
+		Name: "int counter 3",
+		Description: "Sum of calls from test",
+		Unit: "int",
+		Labels: []string{"int counter 3 key"}, // These show up in emissions...so test this...
+		OptionalLabels: []string{"int counter 3 label key"},
+		Default: false,
+	})
+	// Register the other 4 types...test all emissions just to make sure plumbing works...test more than one label emission?
+
+
+	// and add that to default set other 4 have test for plumbing...create top
+	// level comment that describes sccenario...or maybe wait until after it
+	// works...
+
+
+	// Create an OTel plugin...use defaultMetrics() runtime, we'll see what Doug
+	// says about leaving stuff unexported...
+
+	// Don't have access to ssh in dial option, so just create one directly
+
+	// Pass that OTel plugin to handle...
+
+	// When it hits make sure simulates layer below of eating labels...
+
+	intCountHandle.Record(/*OTel which is at a layer above*/)
+
+}
+
+// What are input variables?
+// 5 different types such as count, histo, and gauge
+
+
+func (s) CreateMetricsAtoms() { // What knobs, what do I pass back or just do this inline...
+
+}
+
+
+// Mark:
+
+// mock test - hits stats handler
+// e2e test - real otel emissions, so keep this layer metrics emissions light and just test plumbing...
+// what unit tests are worth testing here? DefaultMetrics test? Or incorporate that into e2e
+// Try to record and expect no metrics atom because becomes a noop
+
+
