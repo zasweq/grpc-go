@@ -87,8 +87,17 @@ func (h *clientStatsHandler) initializeMetrics() {
 	// name...no need for fast access or should I iterate through metrics set
 	// (ToSlice()?) passed into this
 
+	// Need to switch to this and GetDesc out of the metrics registry...
+	for metric := range metrics.Metrics { // This switched to GetMetrics...
+		// don't create the non default ones, when get a handle for it won't be present
+		// gets handle uncondtionally then otel won't record on anything
+		// read nil in recording point
+
+	}
+
+
 	// Need to typecast the desc type...I think this is determiner, could persist this as just a set then...
-	for _, desc := range estats.MetricsRegistry {
+	for _, desc := range estats.MetricsRegistry { // this will need to use metrics to read from the metrics reigstry...creates a count
 		desc.Type // this type is what typecast
 		// create and set for each type based off typecast above...
 

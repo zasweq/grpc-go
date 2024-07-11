@@ -313,8 +313,13 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 
 func (s) TestMetricsRegistryMetrics(t *testing.T) {
 	// Internal linkage to that clear helper thingy...
-	// cleanup := internal.ClearMetricsRegistryForTesting.()
-	// defer cleanup()
+	// internal.ClearMetricsRegistryForTesting.(t)
+
+	// Only difference is don't start from fresh slate, start from an instrument
+	// registry with stuff already in it, but test should be robust enough where
+	// that doesn't affect it...
+
+
 
 	// Register instruments...could test defaults vs. not logic form this register call...
 	intCountHandle1 := stats.RegisterInt64Count(stats.MetricDescriptor{
@@ -352,15 +357,34 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 		Default: false,
 	})
 	// Register the other 4 types...test all emissions just to make sure plumbing works...test more than one label emission?
+	floatCountHandle1 := stats.RegisterFloat64Count(stats.MetricDescriptor{
+		Name: "float counter 1",
+		Description: "Sum of calls from test",
+		Unit: "float",
+		Labels: []string{"float counter 1 key"}, // There's a lot of knobs for emissions, I think just hardcode one per test....
+		OptionalLabels: []string{"float counter 1 label key"},
+		Default: true,
+	})
 
+	// Oh and takes pointers now...
 
 	// and add that to default set other 4 have test for plumbing...create top
 	// level comment that describes sccenario...or maybe wait until after it
 	// works...
 
+	opts := opentelemetry.MetricsOptions{
+		Context: context.Background(), // Should this have timeout might fail vet
+		Metrics: opentelemetry.DefaultMetrics().Add(stats.Metric("int counter 3")),
+		OptionalLabels: []string{}, // Setup some optional labels from tests...
+	}
 
 	// Create an OTel plugin...use defaultMetrics() runtime, we'll see what Doug
 	// says about leaving stuff unexported...
+	// How to test client/server split - or say they hit the same helpers
+	ssh := &serverStatsHandler{options: opts}
+	ssh.initializeMetrics() // need to do context.Background() dance too
+
+
 
 	// Don't have access to ssh in dial option, so just create one directly
 
@@ -368,8 +392,17 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 
 	// When it hits make sure simulates layer below of eating labels...
 
-	intCountHandle.Record(/*OTel which is at a layer above*/)
+	intCountHandle1.Record(/*OTel which is at a layer above so labels are guaranteed to match...*/)
+	// Not part of metrics specified (not default), so this call shouldn't show up in emissions...
+	intCountHandle2.Record()
+	// Part of metrics specified, so this call should show up in emissions...
+	intCountHandle3.Record()
 
+	// These recording points should show up in emissions as they are defaults...
+	floatCountHandle1.Record(ssh, )
+
+
+	// check metrics atoms...probably define metrics atoms inline...
 }
 
 // What are input variables?
