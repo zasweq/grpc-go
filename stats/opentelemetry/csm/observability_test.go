@@ -206,13 +206,13 @@ func (s) TestCSMPluginOptionUnary(t *testing.T) {
 				serverOptionWithCSMPluginOption(opentelemetry.Options{
 					MetricsOptions: opentelemetry.MetricsOptions{
 						MeterProvider: provider,
-						Metrics:       opentelemetry.DefaultMetrics,
+						Metrics:       opentelemetry.DefaultPerCallMetrics,
 					}}, po),
 			}
 			dopts := []grpc.DialOption{dialOptionWithCSMPluginOption(opentelemetry.Options{
 				MetricsOptions: opentelemetry.MetricsOptions{
 					MeterProvider:  provider,
-					Metrics:        opentelemetry.DefaultMetrics,
+					Metrics:        opentelemetry.DefaultPerCallMetrics,
 					OptionalLabels: []string{"csm.service_name", "csm.service_namespace_name"},
 				},
 			}, po)}
@@ -368,13 +368,13 @@ func (s) TestCSMPluginOptionStreaming(t *testing.T) {
 				serverOptionWithCSMPluginOption(opentelemetry.Options{
 					MetricsOptions: opentelemetry.MetricsOptions{
 						MeterProvider: provider,
-						Metrics:       opentelemetry.DefaultMetrics,
+						Metrics:       opentelemetry.DefaultPerCallMetrics,
 					}}, po),
 			}
 			dopts := []grpc.DialOption{dialOptionWithCSMPluginOption(opentelemetry.Options{
 				MetricsOptions: opentelemetry.MetricsOptions{
 					MeterProvider:  provider,
-					Metrics:        opentelemetry.DefaultMetrics,
+					Metrics:        opentelemetry.DefaultPerCallMetrics,
 					OptionalLabels: []string{"csm.service_name", "csm.service_namespace_name"},
 				},
 			}, po)}
@@ -460,7 +460,7 @@ func (s) TestXDSLabels(t *testing.T) {
 	dopts := []grpc.DialOption{dialOptionWithCSMPluginOption(opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
 			MeterProvider:  provider,
-			Metrics:        opentelemetry.DefaultMetrics,
+			Metrics:        opentelemetry.DefaultPerCallMetrics,
 			OptionalLabels: []string{"csm.service_name", "csm.service_namespace_name"},
 		},
 	}, po), grpc.WithUnaryInterceptor(unaryInterceptorAttachXDSLabels)}
@@ -602,9 +602,6 @@ func (s) TestXDSLabels(t *testing.T) {
 // without error. The actual functionality of this function will be verified in
 // interop tests.
 func (s) TestObservability(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
-	defer cancel()
-
-	cleanup := EnableObservability(ctx, opentelemetry.Options{})
+	cleanup := EnableObservability(context.Background(), opentelemetry.Options{})
 	cleanup()
 }
