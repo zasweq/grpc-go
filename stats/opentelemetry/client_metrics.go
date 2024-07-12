@@ -30,6 +30,7 @@ import (
 
 	otelattribute "go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 type clientStatsHandler struct {
@@ -56,22 +57,15 @@ func (h *clientStatsHandler) initializeMetrics() {
 		metrics = DefaultMetrics() // switch to runtime check...users can also see this, what do I want the returned type to be?
 	}
 
-<<<<<<< HEAD
 	h.clientMetrics.attemptStarted = createInt64Counter(metrics.Metrics(), "grpc.client.attempt.started", meter, otelmetric.WithUnit("attempt"), otelmetric.WithDescription("Number of client call attempts started."))
 	h.clientMetrics.attemptDuration = createFloat64Histogram(metrics.Metrics(), "grpc.client.attempt.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
 	h.clientMetrics.attemptSentTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics(), "grpc.client.attempt.sent_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes sent per client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.clientMetrics.attemptRcvdTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics(), "grpc.client.attempt.rcvd_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes received per call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.clientMetrics.callDuration = createFloat64Histogram(metrics.Metrics(), "grpc.client.call.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("Time taken by gRPC to complete an RPC from application's perspective."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
-=======
-	h.clientMetrics.attemptStarted = createInt64Counter(metrics.Metrics, "grpc.client.attempt.started", meter, otelmetric.WithUnit("attempt"), otelmetric.WithDescription("Number of client call attempts started."))
-	h.clientMetrics.attemptDuration = createFloat64Histogram(metrics.Metrics, "grpc.client.attempt.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
-	h.clientMetrics.attemptSentTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics, "grpc.client.attempt.sent_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes sent per client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
-	h.clientMetrics.attemptRcvdTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics, "grpc.client.attempt.rcvd_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes received per call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
-	h.clientMetrics.callDuration = createFloat64Histogram(metrics.Metrics, "grpc.client.call.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("Time taken by gRPC to complete an RPC from application's perspective."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
 
 	// users wraps string with Metrics...?
 
-	estats.DefaultMetrics // Combine this with a join against our own
+	/*estats.DefaultMetrics // Combine this with a join against our own
 
 	// experimental dependent on experimental
 	estats.MetricsRegistry // map[stats.Metric]->metric descriptor
@@ -83,7 +77,7 @@ func (h *clientStatsHandler) initializeMetrics() {
 		desc.OptionalLabels
 		desc.Name // how it links with configuration...I discussed this all with Doug...
 		desc // *desc - used as map pointer
-	} // reuse with server - metrics set configuration, global...return a metrics set...type it out first...
+	}*/ // reuse with server - metrics set configuration, global...return a metrics set...type it out first...
 
 	// Does it look like five seperate helpers...also figure out default metrics thingy...
 	// yeah except set it as map key yeah five seperate helpers called from client and server
@@ -94,17 +88,47 @@ func (h *clientStatsHandler) initializeMetrics() {
 	// name...no need for fast access or should I iterate through metrics set
 	// (ToSlice()?) passed into this
 
+	// I think that's the OpenTelemetry usage piece, still need to write test...
+
 	// Need to switch to this and GetDesc out of the metrics registry...
-	for metric := range metrics.Metrics { // This switched to GetMetrics...
+	for metric := range metrics.Metrics() { // This switched to GetMetrics...
 		// don't create the non default ones, when get a handle for it won't be present
 		// gets handle uncondtionally then otel won't record on anything
 		// read nil in recording point
+		desc := estats.DescriptorForMetric(metric) // *MetricDescriptor
+		// the create call will unconditioanlly create
+		switch desc.Type {
+		case estats.MetricTypeIntCount:
+			ic := createInt64Counter(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.clientMetrics.intCounts[desc] = ic
+		case estats.MetricTypeFloatCount:
+			fc := createFloat64Counter(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.clientMetrics.floatCounts[desc] = fc
+		case estats.MetricTypeIntHisto:
+			ih := createInt64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.clientMetrics.intHistos[desc] = ih
+		case estats.MetricTypeFloatHisto:
+			fh := createFloat64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.clientMetrics.floatHistos[desc] = fh
+		case estats.MetricTypeIntGauge:
+			ig := createInt64Gauge(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			h.clientMetrics.intGauges[desc] = ig
+		}
+	} // flip it, and then recording point does that alloc thing to avoid nils...so def avoid nil check for top level component and make it no-op
 
-	}
+
+	// because nil checks you can forget then nil panic...
+
+
+
+	// Doug mentioned keep nil receiver, rewrite it to pointer allocation with nothing in struct...
+	// if noop counter doesn't have data, it is also a viable thing to just alloc a pointer to it...
+
+
 
 
 	// Need to typecast the desc type...I think this is determiner, could persist this as just a set then...
-	for _, desc := range estats.MetricsRegistry { // this will need to use metrics to read from the metrics reigstry...creates a count
+	/*for _, desc := range estats.MetricsRegistry { // this will need to use metrics to read from the metrics reigstry...creates a count
 		desc.Type // this type is what typecast
 		// create and set for each type based off typecast above...
 
@@ -116,22 +140,22 @@ func (h *clientStatsHandler) initializeMetrics() {
 
 		switch desc.Type {
 		case estats.MetricTypeIntCount: // These create calls encode the no-op logic as well...yeah if user doesn't set and htis gets hit with a record call calls a no-op...simpler?
-			ic := createInt64Counter(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			ic := createInt64Counter(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
 			h.clientMetrics.intCounts[desc] = ic
 		case estats.MetricTypeFloatCount:
-			fc := createFloat64Counter(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			fc := createFloat64Counter(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
 			h.clientMetrics.floatCounts[desc] = fc
 		case estats.MetricTypeIntHisto:
-			ih := createInt64Histogram(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			ih := createInt64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
 			h.clientMetrics.intHistos[desc] = ih
 		case estats.MetricTypeFloatHisto:
-			fh := createFloat64Histogram(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			fh := createFloat64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
 			h.clientMetrics.floatHistos[desc] = fh
 		case estats.MetricTypeIntGauge:
-			ig := createInt64Gauge(metrics.Metrics, stats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			ig := createInt64Gauge(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
 			h.clientMetrics.intGauges[desc] = ig
 		}
-	}
+	}*/
 
 	// Do this server side too...tests are the same except added dimension of
 	// optional label being configured and default metric test that
@@ -141,81 +165,70 @@ func (h *clientStatsHandler) initializeMetrics() {
 
 }
 
-func (h *clientStatsHandler) RecordIntCount(handle estats.Int64CountHandle, incr int64, labels ...string) {
-	// Already verified in layer below...
-	/*handle.MetricDescriptor.Labels // []string - Combine this and OptionalLabels with the labels var arg to create attribute option, but another input optional labels...
+func (h *clientStatsHandler) RecordIntCount(handle *estats.Int64CountHandle, incr int64, labels ...string) {
+	desc := (*estats.MetricDescriptor)(handle)
+	ao := createAttributeOptionFromLabels(desc.Labels, desc.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.getInt64Counter(desc).Add(h.options.MetricsOptions.Context, incr, ao)
+}
 
-	// User configured opitonal labels - combine as an input, if specified in
-	// optional labels (loop through at each optional labels recording point...)
-
-	h.options.MetricsOptions.OptionalLabels // []string
-	handle.MetricDescriptor.OptionalLabels // []string -
-
-	// values come in as a var arg string...
-
-	// eventually I want an []otelattribute.KeyValue WithAttributes
-
-	var attributes []otelattribute.KeyValue
-
-	// Once it hits here lower level has guaranteed length
-	// Algo (maybe pull out into helper):
-	// always do label + label value
-	for i, label := range handle.MetricDescriptor.Labels { // ordering encoded in append
-		labels[i] // value...
-		labels // []string, variadic args
-
-		attributes = append(attributes, otelattribute.String(label, labels[i]))
+func (h *clientStatsHandler) getInt64Counter(desc *estats.MetricDescriptor) otelmetric.Int64Counter {
+	if ic, ok := h.clientMetrics.intCounts[desc]; ok {
+		return ic
 	}
+	return noop.Int64Counter{}
+}
 
-	// i + len (labels)
 
-	for i, label := range handle.MetricDescriptor.OptionalLabels {
-		for _, optLabel := range h.options.MetricsOptions.OptionalLabels {
-			if label == optLabel { // represent opt label as a set to avoid string compares but this is capped at one anyway...or could build a set before for extra space complexity to save time...
-				attributes = append(attributes, otelattribute.String(label, labels[i + len(handle.MetricDescriptor.Labels)]))
-			}
-		}
+func (h *clientStatsHandler) RecordFloatCount(handle *estats.Float64CountHandle, incr float64, labels ...string) {
+	desc := (*estats.MetricDescriptor)(handle)
+	ao := createAttributeOptionFromLabels(desc.Labels, desc.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.getFloat64Counter(desc).Add(h.options.MetricsOptions.Context, incr, ao)
+}
+
+func (h *clientStatsHandler) getFloat64Counter(desc *estats.MetricDescriptor) otelmetric.Float64Counter {
+	if fc, ok := h.clientMetrics.floatCounts[desc]; ok {
+		return fc
 	}
-
-
-	// optional labels are also conditional on what the user configures with...
-	ao := otelmetric.WithAttributes(attributes...)*/
-
-	// Figure out a clean way to refactor the attribute creation...
-	// Here and everywhere else...what if these reads give nil
-	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
-
-
-	h.clientMetrics.intCounts[handle.MetricDescriptor].Add(h.options.MetricsOptions.Context, incr, ao)
-
+	return noop.Float64Counter{}
 }
 
-// Copy this over to server too...
-func (h *clientStatsHandler) RecordFloatCount(handle estats.Float64CountHandle, incr float64, labels ...string) {
-	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
-	h.clientMetrics.floatCounts[handle.MetricDescriptor].Add(h.options.MetricsOptions.Context, incr, ao)
+func (h *clientStatsHandler) RecordIntHisto(handle *estats.Int64HistoHandle, incr int64, labels ...string) {
+	desc := (*estats.MetricDescriptor)(handle)
+	ao := createAttributeOptionFromLabels(desc.Labels, desc.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.getInt64Histo(desc).Record(h.options.MetricsOptions.Context, incr, ao)
 }
 
-func (h *clientStatsHandler) RecordIntHisto(handle estats.Int64HistoHandle, incr int64, labels ...string) {
-	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
-
-	// what happens if this read panics? It shouldn't...but be defensive at the cost of speed?
-	// e.g. but many others intHistos[handle.MetricDescriptor] returns nil or something...
-
-	h.clientMetrics.intHistos[handle.MetricDescriptor].Record(h.options.MetricsOptions.Context, incr, ao)
+func (h *clientStatsHandler) getInt64Histo(desc *estats.MetricDescriptor) otelmetric.Int64Histogram {
+	if ih, ok := h.clientMetrics.intHistos[desc]; ok {
+		return ih
+	}
+	return noop.Int64Histogram{}
 }
 
-func (h *clientStatsHandler) RecordFloatHisto(handle estats.Float64HistoHandle, incr float64, labels ...string) {
-	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
-	h.clientMetrics.floatHistos[handle.MetricDescriptor].Record(h.options.MetricsOptions.Context, incr, ao)
+func (h *clientStatsHandler) RecordFloatHisto(handle *estats.Float64HistoHandle, incr float64, labels ...string) {
+	desc := (*estats.MetricDescriptor)(handle)
+	ao := createAttributeOptionFromLabels(desc.Labels, desc.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.getFloat64Histo(desc).Record(h.options.MetricsOptions.Context, incr, ao)
 }
 
-func (h *clientStatsHandler) RecordIntGauge(handle estats.Int64GaugeHandle, incr int64, labels ...string) {
-	ao := createAttributeOptionFromLabels(handle.MetricDescriptor.Labels, handle.MetricDescriptor.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+func (h *clientStatsHandler) getFloat64Histo(desc *estats.MetricDescriptor) otelmetric.Float64Histogram {
+	if fh, ok := h.clientMetrics.floatHistos[desc]; ok {
+		return fh
+	}
+	return noop.Float64Histogram{}
+}
 
-	// what happens if this read panics? It shouldn't...but be defensive at the cost of speed?
+func (h *clientStatsHandler) RecordIntGauge(handle *estats.Int64GaugeHandle, incr int64, labels ...string) {
+	desc := (*estats.MetricDescriptor)(handle)
+	ao := createAttributeOptionFromLabels(desc.Labels, desc.OptionalLabels, h.options.MetricsOptions.OptionalLabels, labels...)
+	h.getInt64Gauge(desc).Record(h.options.MetricsOptions.Context, incr, ao)
+}
 
-	h.clientMetrics.intGauges[handle.MetricDescriptor].Record(h.options.MetricsOptions.Context, incr, ao)
+func (h *clientStatsHandler) getInt64Gauge(desc *estats.MetricDescriptor) otelmetric.Int64Gauge {
+	if ig, ok := h.clientMetrics.intGauges[desc]; ok {
+		return ig
+	}
+	return noop.Int64Gauge{}
 }
 
 func createAttributeOptionFromLabels(labelKeys []string, optionalLabelKeys []string, optionalLabels []string, labelVals ...string) otelmetric.MeasurementOption {
@@ -246,7 +259,6 @@ func createAttributeOptionFromLabels(labelKeys []string, optionalLabelKeys []str
 
 
 	return otelmetric.WithAttributes(attributes...)
->>>>>>> 046fd277 (Save progress)
 }
 
 func (h *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {

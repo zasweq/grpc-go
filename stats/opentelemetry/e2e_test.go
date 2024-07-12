@@ -53,9 +53,7 @@ func Test(t *testing.T) {
 // component and the server.
 func setup(t *testing.T, methodAttributeFilter func(string) bool) (*metric.ManualReader, *stubserver.StubServer) {
 	reader := metric.NewManualReader()
-	provider := metric.NewMeterProvider(
-		metric.WithReader(reader),
-	)
+	provider := metric.NewMeterProvider(metric.WithReader(reader))
 	ss := &stubserver.StubServer{
 		UnaryCallF: func(ctx context.Context, in *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
 			return &testpb.SimpleResponse{Payload: &testpb.Payload{
@@ -400,6 +398,7 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 		Context: context.Background(), // Should this have timeout might fail vet
 		Metrics: opentelemetry.DefaultMetrics().Add(stats.Metric("int counter 3")),
 		OptionalLabels: []string{}, // Setup some optional labels from tests...
+		MeterProvider: , // This still needs a manual reader...and move to non per call test...
 	}
 
 	// Create an OTel plugin...use defaultMetrics() runtime, we'll see what Doug
