@@ -81,44 +81,44 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 	// Test DefaultMetricsAdd a string so maybe a third intCountHandle
 	intCountHandle3 := stats.RegisterInt64Count(stats.MetricDescriptor{
 		Name: "int counter 3",
-		Description: "Sum of calls from test",
+		Description: "sum of calls from test",
 		Unit: "int",
 		Labels: []string{"int counter 3 key"}, // These show up in emissions...so test this...
 		OptionalLabels: []string{"int counter 3 label key"},
 		Default: false,
 	})
 	// Register the other 4 types...test all emissions just to make sure plumbing works...test more than one label emission?
-	floatCountHandle1 := stats.RegisterFloat64Count(stats.MetricDescriptor{
-		Name: "float counter 1",
-		Description: "Sum of calls from test",
+	floatCountHandle := stats.RegisterFloat64Count(stats.MetricDescriptor{
+		Name: "float counter",
+		Description: "sum of calls from test",
 		Unit: "float",
 		Labels: []string{"float counter key"}, // There's a lot of knobs for emissions, I think just hardcode one per test....
 		OptionalLabels: []string{"float counter label key"},
 		Default: true,
 	})
-	intHistoHandle1 := stats.RegisterInt64Histo(stats.MetricDescriptor{
+	intHistoHandle := stats.RegisterInt64Histo(stats.MetricDescriptor{
 		Name:           "int histo",
-		Description:    "sum of all emissions from tests",
+		Description:    "histogram of call values from tests",
 		Unit:           "int",
 		Labels:         []string{"int histo label"},
 		OptionalLabels: []string{"int histo optional label"},
-		Default:        false,
+		Default:        true,
 	})
-	floatHistoHandle1 := stats.RegisterFloat64Histo(stats.MetricDescriptor{
+	floatHistoHandle := stats.RegisterFloat64Histo(stats.MetricDescriptor{
 		Name:           "float histo",
-		Description:    "sum of all emissions from tests",
+		Description:    "histogram of call values from tests",
 		Unit:           "float",
 		Labels:         []string{"float histo label"},
 		OptionalLabels: []string{"float histo optional label"},
-		Default:        false,
+		Default:        true,
 	})
-	intGaugeHandle1 := stats.RegisterInt64Gauge(stats.MetricDescriptor{
+	intGaugeHandle := stats.RegisterInt64Gauge(stats.MetricDescriptor{
 		Name:           "simple gauge",
 		Description:    "the most recent int emitted by test",
 		Unit:           "int",
 		Labels:         []string{"int gauge label"},
 		OptionalLabels: []string{"int gauge optional label"},
-		Default:        false,
+		Default:        true,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -161,10 +161,11 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 	// These recording points should show up in emissions as they are defaults...
 
 	// Test permutations of optional label values logic...configure only some, only those should show up...
-	floatCountHandle1.Record(ssh, 1.2, []string{"float counter label value", "float counter optional label value"}...) // these labels should be specific, make specific
-	intHistoHandle1.Record(ssh, 3, []string{"int histo label value", "int histo optional label value"}...)
-	floatHistoHandle1.Record(ssh, 4.3, []string{"float histo label value", "float histo optional label value"}...)
-	intGaugeHandle1.Record(ssh, 7, []string{"int histo label value", "int histo optional label value"}...) // size should match, below does this for us no need to verify...
+	floatCountHandle.Record(ssh, 1.2, []string{"float counter label value", "float counter optional label value"}...) // these labels should be specific, make specific
+	intHistoHandle.Record(ssh, 3, []string{"int histo label value", "int histo optional label value"}...)
+	floatHistoHandle.Record(ssh, 4.3, []string{"float histo label value", "float histo optional label value"}...)
+	intGaugeHandle.Record(ssh, 7, []string{"int histo label value", "int histo optional label value"}...) // size should match, below does this for us no need to verify...
+	intGaugeHandle.Record(ssh, 8, []string{"int histo label value", "int histo optional label value"}...)
 	// In metrics registry test: (label values get tested in emission...)
 
 	// other 4:
@@ -217,7 +218,7 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 		},
 		{
 			Name: "int counter 3",
-			Description: "Sum of calls from test",
+			Description: "sum of calls from test",
 			Unit: "int",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
@@ -231,8 +232,8 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 			},
 		},
 		{ // Drop the numbers...
-			Name: "float counter 1",
-			Description: "Sum of calls from test",
+			Name: "float counter",
+			Description: "sum of calls from test",
 			Unit: "float",
 			Data: metricdata.Sum[float64]{
 				DataPoints: []metricdata.DataPoint[float64]{
@@ -244,6 +245,27 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 				Temporality: metricdata.CumulativeTemporality,
 				IsMonotonic: true,
 			},
+		},
+		{
+			Name:           "int histo",
+			Description:    "histogram of call values from tests",
+			Unit:           "int", // I think this is still the right unit just aggregated as a histo...
+			// Define bucket counts too? argh
+		},
+		{
+			Name:           "float histo",
+			Description:    "histogram of call values from tests",
+			Unit:           "float",
+			// Define bucket counts too? argh
+		},
+		{
+			Name:           "simple gauge",
+			Description:    "the most recent int emitted by test",
+			Unit:           "int",
+			// Record twice and make sure this is most recent...OTel concept but OTel is stable :).
+
+			// 8 is most recent emission...
+
 		},
 	}
 
