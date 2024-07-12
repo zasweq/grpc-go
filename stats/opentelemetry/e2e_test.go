@@ -361,9 +361,33 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 		Name: "float counter 1",
 		Description: "Sum of calls from test",
 		Unit: "float",
-		Labels: []string{"float counter 1 key"}, // There's a lot of knobs for emissions, I think just hardcode one per test....
-		OptionalLabels: []string{"float counter 1 label key"},
+		Labels: []string{"float counter key"}, // There's a lot of knobs for emissions, I think just hardcode one per test....
+		OptionalLabels: []string{"float counter label key"},
 		Default: true,
+	})
+	intHistoHandle1 := stats.RegisterInt64Histo(stats.MetricDescriptor{
+		Name:           "int histo",
+		Description:    "sum of all emissions from tests",
+		Unit:           "int",
+		Labels:         []string{"int histo label"},
+		OptionalLabels: []string{"int histo optional label"},
+		Default:        false,
+	})
+	floatHistoHandle1 := stats.RegisterFloat64Histo(stats.MetricDescriptor{
+		Name:           "float histo",
+		Description:    "sum of all emissions from tests",
+		Unit:           "float",
+		Labels:         []string{"float histo label"},
+		OptionalLabels: []string{"float histo optional label"},
+		Default:        false,
+	})
+	intGaugeHandle1 := stats.RegisterInt64Gauge(stats.MetricDescriptor{
+		Name:           "simple gauge",
+		Description:    "the most recent int emitted by test",
+		Unit:           "int",
+		Labels:         []string{"int gauge label"},
+		OptionalLabels: []string{"int gauge optional label"},
+		Default:        false,
 	})
 
 	// Oh and takes pointers now...
@@ -382,7 +406,7 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 	// says about leaving stuff unexported...
 	// How to test client/server split - or say they hit the same helpers
 	ssh := &serverStatsHandler{options: opts}
-	ssh.initializeMetrics() // need to do context.Background() dance too
+	ssh.initializeMetrics() // need to do context.Background() dance too, nah set in options...initalize reads the global registry...
 
 
 
@@ -392,17 +416,39 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 
 	// When it hits make sure simulates layer below of eating labels...
 
-	intCountHandle1.Record(/*OTel which is at a layer above so labels are guaranteed to match...*/)
+	intCountHandle1.Record(fmr, 1, []string{"int counter 1 label value", "int counter 1 optional label value"}...)
 	// Not part of metrics specified (not default), so this call shouldn't show up in emissions...
-	intCountHandle2.Record()
+	intCountHandle2.Record(fmr, 2, []string{"int counter 2 label value", "int counter 2 optional label value"}...)
 	// Part of metrics specified, so this call should show up in emissions...
-	intCountHandle3.Record()
+	intCountHandle3.Record(fmr, 4, []string{"int counter 3 label value", "int counter 3 optional label value"}...) // record the same values...
 
 	// These recording points should show up in emissions as they are defaults...
-	floatCountHandle1.Record(ssh, )
+
+	// Test permutations of optional label values logic...configure only some, only those should show up...
+	floatCountHandle1.Record(fmr, 1.2, []string{"float counter label value", "float counter optional label value"}...) // these labels should be specific, make specific
+	intHistoHandle1.Record(fmr, 3, []string{"int histo label value", "int histo optional label value"}...)
+	floatHistoHandle1.Record(fmr, 4.3, []string{"float histo label value", "float histo optional label value"}...)
+	intGaugeHandle1.Record(fmr, 7, []string{"int histo label value", "int histo optional label value"}...) // size should match, below does this for us no need to verify...
+	// In metrics registry test: (label values get tested in emission...)
+
+	// other 4:
+	// float count handle is 1.2
+	// int histo handle is 3
+	// float histo handle is 4.3
+	// int gauge handle is 7
+	// buckets and also label keys and values get attached...I could also squash and rebase onto instrument registry...
+	// for the getters and the typecasts of handle (just do the typecasts in this layer I guess)
+
+	// Yeah so label keys/vals unconditional...
+	// optional label key/vals conditional...
 
 
-	// check metrics atoms...probably define metrics atoms inline...
+
+
+	// check metrics atoms...probably define metrics atoms inline...can't use
+	// mock stats handler here because this is the stats handler will learn how
+	// to define metris atoms
+
 }
 
 // What are input variables?
@@ -420,5 +466,12 @@ func (s) CreateMetricsAtoms() { // What knobs, what do I pass back or just do th
 // e2e test - real otel emissions, so keep this layer metrics emissions light and just test plumbing...
 // what unit tests are worth testing here? DefaultMetrics test? Or incorporate that into e2e
 // Try to record and expect no metrics atom because becomes a noop
+
+
+
+// I think handles changed and getter changed so will have to base off passed in user set for iteration (noops becomes !- nil checks does this merge with per call well)
+// If want to do it the other way expose keys (set already built out or a slice) for no-op way...can talk to Doug about this...
+
+// Tests are orthogonal so will always be applicable
 
 
