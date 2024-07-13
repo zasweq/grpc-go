@@ -18,7 +18,6 @@ package opentelemetry
 
 import (
 	"context"
-	"go.opentelemetry.io/otel/metric/noop"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 
 	otelattribute "go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 type serverStatsHandler struct {
@@ -52,7 +52,7 @@ func (h *serverStatsHandler) initializeMetrics() {
 	}
 	metrics := h.options.MetricsOptions.Metrics
 	if metrics == nil {
-		metrics = DefaultMetrics() // dynamic runtime check...
+		metrics = DefaultMetrics()
 	}
 
 	h.serverMetrics.callStarted = createInt64Counter(metrics.Metrics(), "grpc.server.call.started", meter, otelmetric.WithUnit("call"), otelmetric.WithDescription("Number of server calls started."))
@@ -66,10 +66,12 @@ func (h *serverStatsHandler) initializeMetrics() {
 	h.serverMetrics.floatHistos = make(map[*estats.MetricDescriptor]otelmetric.Float64Histogram)
 	h.serverMetrics.intGauges = make(map[*estats.MetricDescriptor]otelmetric.Int64Gauge)
 
-	// metric registry? metrics:
+	// Metric registry metrics:
 	for metric := range metrics.Metrics() {
-		desc := estats.DescriptorForMetric(metric) // *MetricDescriptor
-		if desc == nil { // Per call and metrics not registered...so when gets a handle it's a no-op record...
+		desc := estats.DescriptorForMetric(metric)
+		// Per call or metrics not registered, when gets a handle corresponding
+		// it will be a no-op record.
+		if desc == nil {
 			continue
 		}
 		switch desc.Type {

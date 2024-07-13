@@ -72,12 +72,12 @@ func setup(t *testing.T, methodAttributeFilter func(string) bool) (*metric.Manua
 	if err := ss.Start([]grpc.ServerOption{opentelemetry.ServerOption(opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
 			MeterProvider:         provider,
-			Metrics:               opentelemetry.DefaultPerCallMetrics,
+			Metrics:               opentelemetry.DefaultMetrics(),
 			MethodAttributeFilter: methodAttributeFilter,
 		}})}, opentelemetry.DialOption(opentelemetry.Options{
 		MetricsOptions: opentelemetry.MetricsOptions{
 			MeterProvider: provider,
-			Metrics:       opentelemetry.DefaultPerCallMetrics,
+			Metrics:       opentelemetry.DefaultMetrics(),
 		},
 	})); err != nil {
 		t.Fatalf("Error starting endpoint server: %v", err)
@@ -304,19 +304,3 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		}
 	}
 }
-
-// Mark:
-
-// mock test - hits stats handler
-// e2e test - real otel emissions, so keep this layer metrics emissions light and just test plumbing...
-// what unit tests are worth testing here? DefaultMetrics test? Or incorporate that into e2e
-// Try to record and expect no metrics atom because becomes a noop
-
-
-
-// I think handles changed and getter changed so will have to base off passed in user set for iteration (noops becomes !- nil checks does this merge with per call well)
-// If want to do it the other way expose keys (set already built out or a slice) for no-op way...can talk to Doug about this...
-
-// Tests are orthogonal so will always be applicable
-
-

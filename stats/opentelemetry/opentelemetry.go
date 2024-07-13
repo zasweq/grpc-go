@@ -20,7 +20,6 @@ package opentelemetry
 
 import (
 	"context"
-	otelattribute "go.opentelemetry.io/otel/attribute"
 	"strings"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	"google.golang.org/grpc/internal"
 	otelinternal "google.golang.org/grpc/stats/opentelemetry/internal"
 
+	otelattribute "go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 )
@@ -100,7 +100,7 @@ type MetricsOptions struct {
 // configured for an individual metric turned on, the API call in this component
 // will create a default view for that metric.
 func DialOption(o Options) grpc.DialOption {
-	if o.MetricsOptions.Context == nil { // This context will be important for tracing too so put it in top level object? This writes to a copied struct so I think we're good here...
+	if o.MetricsOptions.Context == nil {
 		o.MetricsOptions.Context = context.Background()
 	}
 	csh := &clientStatsHandler{options: o}
@@ -123,7 +123,7 @@ var joinServerOptions = internal.JoinServerOptions.(func(...grpc.ServerOption) g
 // configured for an individual metric turned on, the API call in this component
 // will create a default view for that metric.
 func ServerOption(o Options) grpc.ServerOption {
-	if o.MetricsOptions.Context == nil { // This context will be important for tracing too so put it in top level object? This writes to a copied struct so I think we're good here...
+	if o.MetricsOptions.Context == nil {
 		o.MetricsOptions.Context = context.Background()
 	}
 	ssh := &serverStatsHandler{options: o}
@@ -205,7 +205,7 @@ type clientMetrics struct {
 	// "grpc.client.call.duration"
 	callDuration otelmetric.Float64Histogram
 
-	// Metrics from metrics registry
+	// Metrics from metrics registry:
 	intCounts   map[*estats.MetricDescriptor]otelmetric.Int64Counter
 	floatCounts map[*estats.MetricDescriptor]otelmetric.Float64Counter
 	intHistos   map[*estats.MetricDescriptor]otelmetric.Int64Histogram
@@ -223,13 +223,13 @@ type serverMetrics struct {
 	// "grpc.server.call.duration"
 	callDuration otelmetric.Float64Histogram
 
+	// Metrics from metrics registry:
 	intCounts   map[*estats.MetricDescriptor]otelmetric.Int64Counter
 	floatCounts map[*estats.MetricDescriptor]otelmetric.Float64Counter
 	intHistos   map[*estats.MetricDescriptor]otelmetric.Int64Histogram
 	floatHistos map[*estats.MetricDescriptor]otelmetric.Float64Histogram
 	intGauges   map[*estats.MetricDescriptor]otelmetric.Int64Gauge
 }
-
 
 func createInt64Counter(setOfMetrics map[estats.Metric]bool, metricName estats.Metric, meter otelmetric.Meter, options ...otelmetric.Int64CounterOption) otelmetric.Int64Counter {
 	if _, ok := setOfMetrics[metricName]; !ok {
@@ -243,12 +243,11 @@ func createInt64Counter(setOfMetrics map[estats.Metric]bool, metricName estats.M
 	return ret
 }
 
-
 func createFloat64Counter(setOfMetrics map[estats.Metric]bool, metricName estats.Metric, meter otelmetric.Meter, options ...otelmetric.Float64CounterOption) otelmetric.Float64Counter {
 	if _, ok := setOfMetrics[metricName]; !ok {
 		return noop.Float64Counter{}
 	}
-	ret, err := meter.Float64Counter(string(metricName), options...) // I could typecast at callsite too
+	ret, err := meter.Float64Counter(string(metricName), options...)
 	if err != nil {
 		logger.Errorf("failed to register metric \"%v\", will not record: %v", metricName, err)
 		return noop.Float64Counter{}
@@ -283,7 +282,7 @@ func createFloat64Histogram(setOfMetrics map[estats.Metric]bool, metricName esta
 
 func createInt64Gauge(setOfMetrics map[estats.Metric]bool, metricName estats.Metric, meter otelmetric.Meter, options ...otelmetric.Int64GaugeOption) otelmetric.Int64Gauge {
 	if _, ok := setOfMetrics[metricName]; !ok {
-		return noop.Int64Gauge{} // the noops will never hit but that's fine...
+		return noop.Int64Gauge{}
 	}
 	ret, err := meter.Int64Gauge(string(metricName), options...)
 	if err != nil {
@@ -296,29 +295,21 @@ func createInt64Gauge(setOfMetrics map[estats.Metric]bool, metricName estats.Met
 func createAttributeOptionFromLabels(labelKeys []string, optionalLabelKeys []string, optionalLabels []string, labelVals ...string) otelmetric.MeasurementOption {
 	var attributes []otelattribute.KeyValue
 
-
-	// Or just have it be a closure on client stats handler for access to optional...
-	// nah just take a string so can be reused on both sides...anything left to do for this except test it?
-
-
-	// Once it hits here lower level has guaranteed length
-	// Algo (maybe pull out into helper):
-	// always do label + label value
+	// Once it hits here lower level has guaranteed length of labelVals matches
+	// labelKeys + optionalLabelKeys.
 	for i, label := range labelKeys {
 		attributes = append(attributes, otelattribute.String(label, labelVals[i]))
 	}
 
 	for i, label := range optionalLabelKeys {
-		for _, optLabel := range optionalLabels { // 2 of each is undefined...think of more scenarios for this...
-			if label == optLabel { // represent opt label as a set to avoid string compares but this is capped at one anyway...or could build a set before for extra space complexity to save time...
-				attributes = append(attributes, otelattribute.String(label, labelVals[i + len(labelKeys)]))
+		for _, optLabel := range optionalLabels { // o(n) could build out a set but n is currently capped at < 5
+			if label == optLabel {
+				attributes = append(attributes, otelattribute.String(label, labelVals[i+len(labelKeys)]))
 			}
 		}
-	} // unit test or test this as part of emission with corner casey scenarios...leave to e2e test I guess...
+	}
 	return otelmetric.WithAttributes(attributes...)
 }
-
-
 
 // Users of this component should use these bucket boundaries as part of their
 // SDK MeterProvider passed in. This component sends this as "advice" to the
@@ -330,14 +321,14 @@ var (
 	DefaultLatencyBounds = []float64{0, 0.00001, 0.00005, 0.0001, 0.0003, 0.0006, 0.0008, 0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.008, 0.01, 0.013, 0.016, 0.02, 0.025, 0.03, 0.04, 0.05, 0.065, 0.08, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8, 1, 2, 5, 10, 20, 50, 100} // provide "advice" through API, SDK should set this too
 	// DefaultSizeBounds are the default bounds for metrics which record size.
 	DefaultSizeBounds = []float64{0, 1024, 2048, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824, 4294967296}
-	// DefaultPerCallMetrics are the default metrics provided by this module.
-	DefaultPerCallMetrics = estats.NewMetrics(ClientAttemptStarted, ClientAttemptDuration, ClientAttemptSentCompressedTotalMessageSize, ClientAttemptRcvdCompressedTotalMessageSize, ClientCallDuration, ServerCallStarted, ServerCallSentCompressedTotalMessageSize, ServerCallRcvdCompressedTotalMessageSize, ServerCallDuration)
-) // make per call internal
+	// defaultPerCallMetrics are the default metrics provided by this module.
+	defaultPerCallMetrics = estats.NewMetrics(ClientAttemptStarted, ClientAttemptDuration, ClientAttemptSentCompressedTotalMessageSize, ClientAttemptRcvdCompressedTotalMessageSize, ClientCallDuration, ServerCallStarted, ServerCallSentCompressedTotalMessageSize, ServerCallRcvdCompressedTotalMessageSize, ServerCallDuration)
+)
 
 // DefaultMetrics returns a set of default metrics for per call joined with any
 // default metrics registered through metrics registry.
 //
 // This should only be invoked after init time.
 func DefaultMetrics() *estats.Metrics {
-	return DefaultPerCallMetrics.Join(estats.DefaultMetrics)
+	return defaultPerCallMetrics.Join(estats.DefaultMetrics)
 }

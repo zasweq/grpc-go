@@ -26,6 +26,10 @@ import (
 	"google.golang.org/grpc/internal"
 )
 
+func init() {
+	internal.SnapshotMetricRegistryForTesting = snapshotMetricsRegistryForTesting
+}
+
 var logger = grpclog.Component("metrics-registry")
 
 // DefaultMetrics are the default metrics registered through global metrics
@@ -54,16 +58,10 @@ type MetricDescriptor struct {
 	Default bool
 	// The type of metric. This is set by the metric registry, and not intended
 	// to be set by a component registering a metric.
-	Type MetricType // encode config also in this enum...
-
-	// two fields
-
-	// Only applies to Histo metrics
-
-	// If unset or len(0), fallback to "default" default = exponential or not
-
+	Type MetricType
 	// Bounds are the bounds of this metric. This only applies to histogram
-	// metrics. If unset, stats handlers will fall back to default bounds.
+	// metrics. If unset or set with length 0, stats handlers will fall back to
+	// default bounds.
 	Bounds []float64
 }
 
@@ -76,7 +74,7 @@ const (
 	MetricTypeIntHisto
 	MetricTypeFloatHisto
 	MetricTypeIntGauge
-) // len == 0 for unset...
+)
 
 // Int64CountHandle is a typed handle for a int count metric. This handle
 // is passed at the recording point in order to know which metric to record
@@ -218,10 +216,6 @@ func RegisterInt64Gauge(descriptor MetricDescriptor) *Int64GaugeHandle {
 	descPtr := &descriptor
 	metricsRegistry[descriptor.Name] = descPtr
 	return (*Int64GaugeHandle)(descPtr)
-}
-
-func init() {
-	internal.SnapshotMetricRegistryForTesting = snapshotMetricsRegistryForTesting
 }
 
 // snapshotMetricsRegistryForTesting snapshots the global data of the metrics

@@ -53,17 +53,14 @@ func (h *clientStatsHandler) initializeMetrics() {
 
 	metrics := h.options.MetricsOptions.Metrics
 	if metrics == nil {
-		// should I switch the examples to use this - for users to set...
 		metrics = DefaultMetrics()
 	}
 
 	h.clientMetrics.attemptStarted = createInt64Counter(metrics.Metrics(), "grpc.client.attempt.started", meter, otelmetric.WithUnit("attempt"), otelmetric.WithDescription("Number of client call attempts started."))
-	h.clientMetrics.attemptDuration = createFloat64Histogram(metrics.Metrics(), "grpc.client.attempt.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...)) // Creates with Default Bounds here...OTel allows you to set an extra one. Ignore this problem for now?
+	h.clientMetrics.attemptDuration = createFloat64Histogram(metrics.Metrics(), "grpc.client.attempt.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("End-to-end time taken to complete a client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
 	h.clientMetrics.attemptSentTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics(), "grpc.client.attempt.sent_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes sent per client call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.clientMetrics.attemptRcvdTotalCompressedMessageSize = createInt64Histogram(metrics.Metrics(), "grpc.client.attempt.rcvd_total_compressed_message_size", meter, otelmetric.WithUnit("By"), otelmetric.WithDescription("Compressed message bytes received per call attempt."), otelmetric.WithExplicitBucketBoundaries(DefaultSizeBounds...))
 	h.clientMetrics.callDuration = createFloat64Histogram(metrics.Metrics(), "grpc.client.call.duration", meter, otelmetric.WithUnit("s"), otelmetric.WithDescription("Time taken by gRPC to complete an RPC from application's perspective."), otelmetric.WithExplicitBucketBoundaries(DefaultLatencyBounds...))
-
-	// users wraps string with Metrics...? yes it seems write example showing how to?
 
 	h.clientMetrics.intCounts = make(map[*estats.MetricDescriptor]otelmetric.Int64Counter)
 	h.clientMetrics.floatCounts = make(map[*estats.MetricDescriptor]otelmetric.Float64Counter)
@@ -73,9 +70,11 @@ func (h *clientStatsHandler) initializeMetrics() {
 
 	for metric := range metrics.Metrics() {
 		desc := estats.DescriptorForMetric(metric)
-		if desc == nil { // Per call and metrics not registered...so when gets a handle it's a no-op record...
+		// Per call or metrics not registered, when gets a handle corresponding
+		// it will be a no-op record.
+		if desc == nil {
 			continue
-		} // How do I test client and server? Just test two created shs?
+		}
 		switch desc.Type {
 		case estats.MetricTypeIntCount:
 			ic := createInt64Counter(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
@@ -102,12 +101,6 @@ func (h *clientStatsHandler) initializeMetrics() {
 			h.clientMetrics.intGauges[desc] = ig
 		}
 	}
-
-
-
-	// Doug mentioned keep nil receiver, rewrite it to pointer allocation with nothing in struct...
-	// if noop counter doesn't have data, it is also a viable thing to just alloc a pointer to it...
-
 }
 
 func (h *clientStatsHandler) RecordInt64Count(handle *estats.Int64CountHandle, incr int64, labels ...string) {
@@ -122,7 +115,6 @@ func (h *clientStatsHandler) getInt64Counter(desc *estats.MetricDescriptor) otel
 	}
 	return noop.Int64Counter{}
 }
-
 
 func (h *clientStatsHandler) RecordFloat64Count(handle *estats.Float64CountHandle, incr float64, labels ...string) {
 	desc := (*estats.MetricDescriptor)(handle)
