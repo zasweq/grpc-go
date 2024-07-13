@@ -84,10 +84,18 @@ func (h *clientStatsHandler) initializeMetrics() {
 			fc := createFloat64Counter(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
 			h.clientMetrics.floatCounts[desc] = fc
 		case estats.MetricTypeIntHisto:
-			ih := createInt64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			opts := []otelmetric.Int64HistogramOption{otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description)}
+			if len(desc.Bounds) != 0 {
+				opts = append(opts, otelmetric.WithExplicitBucketBoundaries(desc.Bounds...))
+			}
+			ih := createInt64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, opts...)
 			h.clientMetrics.intHistos[desc] = ih
 		case estats.MetricTypeFloatHisto:
-			fh := createFloat64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			opts := []otelmetric.Float64HistogramOption{otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description)}
+			if len(desc.Bounds) != 0 {
+				opts = append(opts, otelmetric.WithExplicitBucketBoundaries(desc.Bounds...))
+			}
+			fh := createFloat64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, opts...)
 			h.clientMetrics.floatHistos[desc] = fh
 		case estats.MetricTypeIntGauge:
 			ig := createInt64Gauge(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
@@ -166,36 +174,6 @@ func (h *clientStatsHandler) getInt64Gauge(desc *estats.MetricDescriptor) otelme
 		return ig
 	}
 	return noop.Int64Gauge{}
-}
-
-func createAttributeOptionFromLabels(labelKeys []string, optionalLabelKeys []string, optionalLabels []string, labelVals ...string) otelmetric.MeasurementOption {
-	var attributes []otelattribute.KeyValue
-
-
-	// Or just have it be a closure on client stats handler for access to optional...
-	// nah just take a string so can be reused on both sides...anything left to do for this except test it?
-
-
-	// Once it hits here lower level has guaranteed length
-	// Algo (maybe pull out into helper):
-	// always do label + label value
-	for i, label := range labelKeys {
-		attributes = append(attributes, otelattribute.String(label, labelVals[i]))
-	}
-
-	for i, label := range optionalLabelKeys {
-		for _, optLabel := range optionalLabels { // 2 of each is undefined...think of more scenarios for this...
-			if label == optLabel { // represent opt label as a set to avoid string compares but this is capped at one anyway...or could build a set before for extra space complexity to save time...
-				attributes = append(attributes, otelattribute.String(label, labelVals[i + len(labelKeys)]))
-			}
-		}
-	} // unit test or test this as part of emission with corner casey scenarios...leave to e2e test I guess...
-
-
-
-
-
-	return otelmetric.WithAttributes(attributes...)
 }
 
 func (h *clientStatsHandler) unaryInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {

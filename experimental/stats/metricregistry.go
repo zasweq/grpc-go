@@ -61,6 +61,9 @@ type MetricDescriptor struct {
 	// Only applies to Histo metrics
 
 	// If unset or len(0), fallback to "default" default = exponential or not
+
+	// Bounds are the bounds of this metric. This only applies to histogram
+	// metrics. If unset, stats handlers will fall back to default bounds.
 	Bounds []float64
 }
 

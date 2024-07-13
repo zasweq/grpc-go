@@ -100,6 +100,9 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 		OptionalLabels: []string{"float counter optional label key"},
 		Default: true,
 	}) // labels provided should match up, since lower layer gives you that guarantee
+
+	bounds := []float64{0, 5, 10}
+
 	intHistoHandle := stats.RegisterInt64Histo(stats.MetricDescriptor{
 		Name:           "int-histo",
 		Description:    "histogram of call values from tests",
@@ -107,6 +110,7 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 		Labels:         []string{"int histo label key"},
 		OptionalLabels: []string{"int histo optional label key"},
 		Default:        true,
+		Bounds:         bounds,
 	})
 	floatHistoHandle := stats.RegisterFloat64Histo(stats.MetricDescriptor{
 		Name:           "float-histo",
@@ -115,6 +119,7 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 		Labels:         []string{"float histo label key"},
 		OptionalLabels: []string{"float histo optional label key"},
 		Default:        true,
+		Bounds:         bounds,
 	})
 	intGaugeHandle := stats.RegisterInt64Gauge(stats.MetricDescriptor{
 		Name:           "simple-gauge",
@@ -253,18 +258,47 @@ func (s) TestMetricsRegistryMetrics(t *testing.T) {
 				IsMonotonic: true,
 			},
 		},
-		/*{
-			Name:           "int histo",
+		// bucket counts: 3 buckets with 1 0 0 - use different bounds for ints/floats though...
+		{
+			Name:           "int-histo",
 			Description:    "histogram of call values from tests",
 			Unit:           "int", // I think this is still the right unit just aggregated as a histo...
 			// Define bucket counts too? argh should this just be default bounds? Looks like I may need to plumb bucket bounds through registry calls...
+			Data: metricdata.Histogram[int64]{
+				DataPoints: []metricdata.HistogramDataPoint[int64]{
+					{
+						Attributes:   attribute.NewSet(attribute.String("int histo label key", "int histo label value")),
+						Count:        1,
+						Bounds:       bounds,
+						BucketCounts: []uint64{0, 1, 0, 0},
+						Min:          metricdata.NewExtrema(int64(3)),
+						Max:          metricdata.NewExtrema(int64(3)),
+						Sum:          3,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+			},
 		},
 		{
-			Name:           "float histo",
+			Name:           "float-histo",
 			Description:    "histogram of call values from tests",
 			Unit:           "float",
 			// Define bucket counts too? argh
-		},*/
+			Data: metricdata.Histogram[float64]{
+				DataPoints: []metricdata.HistogramDataPoint[float64]{
+					{
+						Attributes:   attribute.NewSet(attribute.String("float histo label key", "float histo label value"), attribute.String("float histo optional label key", "float histo optional label value")),
+						Count:        1,
+						Bounds:       bounds,
+						BucketCounts: []uint64{0, 1, 0, 0},
+						Min:          metricdata.NewExtrema(float64(4.3)),
+						Max:          metricdata.NewExtrema(float64(4.3)),
+						Sum:          4.3,
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+			},
+		},
 		{ // What does a gauge emission even look like...I'll have to do this regardless just do it...
 			Name:           "simple-gauge",
 			Description:    "the most recent int emitted by test",

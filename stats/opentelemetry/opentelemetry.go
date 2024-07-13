@@ -20,6 +20,7 @@ package opentelemetry
 
 import (
 	"context"
+	otelattribute "go.opentelemetry.io/otel/attribute"
 	"strings"
 	"time"
 
@@ -291,6 +292,33 @@ func createInt64Gauge(setOfMetrics map[estats.Metric]bool, metricName estats.Met
 	}
 	return ret
 }
+
+func createAttributeOptionFromLabels(labelKeys []string, optionalLabelKeys []string, optionalLabels []string, labelVals ...string) otelmetric.MeasurementOption {
+	var attributes []otelattribute.KeyValue
+
+
+	// Or just have it be a closure on client stats handler for access to optional...
+	// nah just take a string so can be reused on both sides...anything left to do for this except test it?
+
+
+	// Once it hits here lower level has guaranteed length
+	// Algo (maybe pull out into helper):
+	// always do label + label value
+	for i, label := range labelKeys {
+		attributes = append(attributes, otelattribute.String(label, labelVals[i]))
+	}
+
+	for i, label := range optionalLabelKeys {
+		for _, optLabel := range optionalLabels { // 2 of each is undefined...think of more scenarios for this...
+			if label == optLabel { // represent opt label as a set to avoid string compares but this is capped at one anyway...or could build a set before for extra space complexity to save time...
+				attributes = append(attributes, otelattribute.String(label, labelVals[i + len(labelKeys)]))
+			}
+		}
+	} // unit test or test this as part of emission with corner casey scenarios...leave to e2e test I guess...
+	return otelmetric.WithAttributes(attributes...)
+}
+
+
 
 // Users of this component should use these bucket boundaries as part of their
 // SDK MeterProvider passed in. This component sends this as "advice" to the

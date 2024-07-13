@@ -74,16 +74,24 @@ func (h *serverStatsHandler) initializeMetrics() {
 		}
 		switch desc.Type {
 		case estats.MetricTypeIntCount:
-			ic := createInt64Counter(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			ic := createInt64Counter(metrics.Metrics(), desc.Name, meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
 			h.serverMetrics.intCounts[desc] = ic
 		case estats.MetricTypeFloatCount:
-			fc := createFloat64Counter(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			fc := createFloat64Counter(metrics.Metrics(), desc.Name, meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
 			h.serverMetrics.floatCounts[desc] = fc
 		case estats.MetricTypeIntHisto:
-			ih := createInt64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			opts := []otelmetric.Int64HistogramOption{otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description)}
+			if len(desc.Bounds) != 0 {
+				opts = append(opts, otelmetric.WithExplicitBucketBoundaries(desc.Bounds...))
+			}
+			ih := createInt64Histogram(metrics.Metrics(), desc.Name, meter, opts...)
 			h.serverMetrics.intHistos[desc] = ih
 		case estats.MetricTypeFloatHisto:
-			fh := createFloat64Histogram(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
+			opts := []otelmetric.Float64HistogramOption{otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description)}
+			if len(desc.Bounds) != 0 {
+				opts = append(opts, otelmetric.WithExplicitBucketBoundaries(desc.Bounds...))
+			}
+			fh := createFloat64Histogram(metrics.Metrics(), desc.Name, meter, opts...)
 			h.serverMetrics.floatHistos[desc] = fh
 		case estats.MetricTypeIntGauge:
 			ig := createInt64Gauge(metrics.Metrics(), estats.Metric(desc.Name), meter, otelmetric.WithUnit(desc.Unit), otelmetric.WithDescription(desc.Description))
