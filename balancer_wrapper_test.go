@@ -79,3 +79,19 @@ func (s) TestBalancer_StateListenerBeforeConnect(t *testing.T) {
 	// Wait for the LB policy to call NewSubConn and cc.Close.
 	wg.Wait()
 }
+
+// this just forwards...do I need such a heavyweight test?
+func (s) TestMetricsRecorderList(t *testing.T) {
+
+}
+
+
+// Fake stats handler...more general purpose? This def needs to be shared with e2e test (for specific, plumbing tests e2e with OTel configured inside)
+
+// Fake balancer that's deployed as top level balancer of channel? Call operations on it which forward
+// to all MetricsRecorders? specific to test...
+
+// Do I even want to go down this route oftesting?
+
+// Server will provide xDS Client with ref to metrics recorder list somehow...
+

@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/internal/stats"
 	"math"
 	"net/url"
 	"slices"
@@ -197,6 +198,11 @@ func NewClient(target string, opts ...DialOption) (conn *ClientConn, err error) 
 
 	cc.initIdleStateLocked() // Safe to call without the lock, since nothing else has a reference to cc.
 	cc.idlenessMgr = idle.NewManager((*idler)(cc), cc.dopts.idleTimeout)
+
+	// Rename to istats?
+	// Why do I persist in connect options should I persist somewhere else?
+	cc.metricsRecorderList = stats.NewMetricsRecorderList(cc.dopts.copts.StatsHandlers) // doesn't modify just typecasts so this read is safe...
+
 	return cc, nil
 }
 
@@ -598,6 +604,7 @@ type ClientConn struct {
 	channelz        *channelz.Channel // Channelz object.
 	resolverBuilder resolver.Builder  // See initParsedTargetAndResolverBuilder().
 	idlenessMgr     *idle.Manager
+	metricsRecorderList *stats.MetricsRecorderList // estats? Why a pointer?
 
 	// The following provide their own synchronization, and therefore don't
 	// require cc.mu to be held to access them.
