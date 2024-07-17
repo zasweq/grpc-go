@@ -83,6 +83,16 @@ func (s) TestBalancer_StateListenerBeforeConnect(t *testing.T) {
 // this just forwards...do I need such a heavyweight test?
 func (s) TestMetricsRecorderList(t *testing.T) {
 
+	// Scenario:
+
+	// Balancer (in it's own file that registers it's own instruments) deployed as top level of the channel...
+
+	// Two stats plugins which implement MetricsRecorder through local/global dial option (make sure both get called)
+
+	// How to induce balancer operations...pulls from registry (see custom lb for top level balancer or manual resolver?)
+
+	// Fake stats handler with current data structures + another dimension of k/v pairs/labels...
+
 }
 
 

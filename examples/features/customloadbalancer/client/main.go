@@ -56,7 +56,25 @@ func main() {
 			{Addresses: []resolver.Address{{Addr: addr2}}},
 		},
 		ServiceConfig: sc,
-	})
+	}) // This is how you specify the custom lb, eventually will need to deploy RLS and WRR as top level, how to do operations
+
+	// newclient and then makes RPC's on it...UnaryEcho...
+
+	// how to induce balancer operations...could see how WRR/RLS infra is set up,
+	// I'm assuming can do stuff like mess around with control channel etc...
+
+	// do I need any gRPC symbols?
+
+	// manual resolver...
+	// oh duh needs to be a component wihtin gRPC Channel since it gets
+	// metrics recorder list from it...
+
+	// passed through build options, so it needs to save away
+
+	// but then how to induce operations on it? See custom rr?
+
+	// Deterministic assertions...API surface of test helper?
+
 
 	cc, err := grpc.NewClient(mr.Scheme()+":///", grpc.WithResolvers(mr), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

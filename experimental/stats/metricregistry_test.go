@@ -262,7 +262,7 @@ func (r *fakeMetricsRecorder) RecordFloat64Histo(handle *Float64HistoHandle, inc
 
 func (r *fakeMetricsRecorder) RecordInt64Gauge(handle *Int64GaugeHandle, incr int64, labels ...string) {
 	verifyLabels(r.t, (*MetricDescriptor)(handle).Labels, (*MetricDescriptor)(handle).OptionalLabels, labels)
-	r.intValues[(*MetricDescriptor)(handle)] += incr
+	r.intValues[(*MetricDescriptor)(handle)] += incr // just make this == and it'll be functionally equivalent...
 }
 
 // Write a balancer file that registers on instrument registry, records metrics on operations...?
