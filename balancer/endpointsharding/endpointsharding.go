@@ -287,7 +287,7 @@ func (bw *balancerWrapper) UpdateState(state balancer.State) {
 
 func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
 	return gracefulswitch.ParseConfig(cfg)
-}
+} // This thing is a graceful switch
 
 // PickFirstConfig is a pick first config without shuffling enabled.
 const PickFirstConfig = "[{\"pick_first\": {}}]"

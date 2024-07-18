@@ -672,7 +672,7 @@ func NewServer(opt ...ServerOption) *Server {
 		quit:     grpcsync.NewEvent(),
 		done:     grpcsync.NewEvent(),
 		channelz: channelz.RegisterServer(""),
-		metricsRecorderList: istats.NewMetricsRecorderList(opts.statsHandlers), // does it need the same ref I don't think so just typecasts from that so I think I'm fine here...
+		// metricsRecorderList: istats.NewMetricsRecorderList(opts.statsHandlers), // does it need the same ref I don't think so just typecasts from that so I think I'm fine here...
 	}
 	chainUnaryServerInterceptors(s)
 	chainStreamServerInterceptors(s)
@@ -685,6 +685,10 @@ func NewServer(opt ...ServerOption) *Server {
 	if s.opts.numServerWorkers > 0 {
 		s.initServerWorkers()
 	}
+
+	// this metricsRecorderList ignore on server for now...
+	// eventually will need to make it's way to xDS Client...
+	// from xDS Server which wraps this...needs to communicate upward somehow...
 
 	// s.metricsRecorderList = istats.NewMetricsRecorderList(s.opts.statsHandlers) // I guess to keep it inline with how it is declare it in the server allocation on the heap above...
 

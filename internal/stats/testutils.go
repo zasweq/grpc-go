@@ -18,10 +18,11 @@
 
 package stats
 
-import "testing"
+
+// I might want to keep this here...
 
 // I think this component is fine as is...make it more nuanced?
-
+/*
 type FakeMetricsRecorder struct {
 	t *testing.T
 
@@ -50,7 +51,7 @@ func (r *FakeMetricsRecorder) RecordInt64Count(handle *Int64CountHandle, incr in
 	verifyLabels(r.t, (*MetricDescriptor)(handle).Labels, (*MetricDescriptor)(handle).OptionalLabels, labels)
 	// Any other behaviors needed? This mapping seems solid...
 	r.intValues[(*MetricDescriptor)(handle)] += incr
-}
+}*/
 
 // It's a data sink for RLS Metrics, is sum good enough? Older persistence?
 
