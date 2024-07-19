@@ -40,6 +40,7 @@ type MetricsRecorderList struct {
 
 // Talk about functional no-op?
 func NewMetricsRecorderList(shs []stats.Handler) *MetricsRecorderList {
+	print("In new metrics recorder list")
 	var mrs []estats.MetricsRecorder
 
 	for _, sh := range shs {
@@ -47,6 +48,7 @@ func NewMetricsRecorderList(shs []stats.Handler) *MetricsRecorderList {
 			mrs = append(mrs, mr) // Does this operation actually wokr?
 		}
 	}
+	print("new metrics recorder list, len of mrs: ", len(mrs)) // correct length...just doesn't hit record
 
 	return &MetricsRecorderList{
 		metricsRecorders: mrs, // if this length is 0, this is a functional no-op
@@ -60,6 +62,7 @@ func verifyLabels() { // I like this as a function call still rather than length
 // New interface (see estats.MetricsRecorder api) and also
 // it gets labels/optional labels from what is provided, and just does a length check
 func (l *MetricsRecorderList) RecordInt64Count(handle *estats.Int64CountHandle, incr int64, labels ...string) {
+	print("in metric recorder list record int64 count")
 	/*handle // *estats.Int64CountHandle, I don't need to address the registry this has labels/optional labels...
 	handle.Labels // []string
 	handle.OptionalLabels // []string*/
@@ -72,7 +75,8 @@ func (l *MetricsRecorderList) RecordInt64Count(handle *estats.Int64CountHandle, 
 		logger.Infof("length of labels passed to RecordInt64Count incorrect got: %v, want: %v", got, want)
 	} // Assert on a property of this error string in tests? when I "eat" call or just use fact it didn't record...
 
-	for _, metricRecorder := range l.metricsRecorders {
+	for _, metricRecorder := range l.metricsRecorders { // so metric recorder passed to it in build is nil...
+		print("in metric recorder list metric recorder iteration")
 		metricRecorder.RecordInt64Count(handle, incr, labels...)
 	}
 } // Honestly this is orthogonal to the PR in flight...I think I can just treat this as separate...

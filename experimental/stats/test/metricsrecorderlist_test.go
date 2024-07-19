@@ -20,6 +20,7 @@ package test
 
 import (
 	"context"
+	"google.golang.org/grpc/interop/grpc_testing"
 	"log"
 	"testing"
 	"time"
@@ -62,6 +63,7 @@ func (s) TestMetricsRecorderList(t *testing.T) {
 
 	// read from 5 channels of the two fake metrics recorder channels?
 
+	// Does this even work correctly? How to trigger balancer creation?
 	json := `{"loadBalancingConfig": [{"recording_load_balancer":{}}]}`
 	sc := internal.ParseServiceConfig.(func(string) *serviceconfig.ParseResult)(json)
 	mr.InitialState(resolver.State{
@@ -93,7 +95,10 @@ func (s) TestMetricsRecorderList(t *testing.T) {
 	// There's no peer to connect too...
 	// Also what actually triggers the balancer to build...
 	// and the resolver to resolve? First RPC?
-
+	tsc := grpc_testing.NewTestServiceClient(cc)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	tsc.UnaryCall(ctx, &grpc_testing.SimpleRequest{}) // wait for ready?
 	/*
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
@@ -129,12 +134,12 @@ func (s) TestMetricsRecorderList(t *testing.T) {
 	// just do it here
 
 	// both metrics recorders same assertions...
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
-	defer cancel()
 
 
 	mdWant := MetricsData{
 		Handle: (*estats.MetricDescriptor)(intCountHandle), // The handle comes in the lb...just ignore this field?
+
+		IntIncr: 1,
 
 		LabelKeys: []string{"int counter label", "int counter optional label"}, // coupled with balancer registration...
 		LabelVals: []string{"int counter label val", "int counter optional label val"}, // emitted from balancer...same package so access to handle...make consts?
@@ -143,7 +148,66 @@ func (s) TestMetricsRecorderList(t *testing.T) {
 	mr1.WaitForInt64Count(ctx, mdWant) // metrics data want...does it really need to wait for it it's sync...
 	mr2.WaitForInt64Count(ctx, mdWant) // same with this one...
 
+	mdWant = MetricsData{
+		Handle: (*estats.MetricDescriptor)(floatCountHandle),
+
+		FloatIncr: 2,
+
+		LabelKeys: []string{"float counter label", "float counter optional label"},
+		LabelVals: []string{"float counter label val", "float counter optional label val"},
+	}
+	// and scale up all these helpers I guess...
+	mr1.WaitForFloat64Count(ctx, mdWant)
+	mr2.WaitForFloat64Count(ctx, mdWant)
+
+	mdWant = MetricsData{
+		Handle: (*estats.MetricDescriptor)(intHistoHandle),
+
+		IntIncr: 3,
+
+		LabelKeys: []string{"int histo label", "int histo optional label"},
+		LabelVals: []string{"int histo label val", "int histo optional label val"},
+	}
+	mr1.WaitForInt64Histo(ctx, mdWant)
+	mr2.WaitForInt64Histo(ctx, mdWant)
+
+	mdWant = MetricsData{
+		Handle: (*estats.MetricDescriptor)(floatHistoHandle),
+
+		FloatIncr: 4,
+
+		LabelKeys: []string{"float histo label", "float histo optional label"},
+		LabelVals: []string{"float histo label val", "float histo optional label val"},
+	}
+	mr1.WaitForFloat64Histo(ctx, mdWant)
+	mr2.WaitForFloat64Histo(ctx, mdWant)
+	// Should ignore the second gauge call - as labels don't match up so metrics
+	// recorder list should eat it...
+	mdWant = MetricsData{
+		Handle: (*estats.MetricDescriptor)(intGaugeHandle),
+
+		IntIncr: 5, // Should ignore the 7 call since 7 emits wrong number of labels...
+
+		LabelKeys: []string{"int gauge label", "int gauge optional label"},
+		LabelVals: []string{"int gauge label val", "int gauge optional label val"},
+	}
+	mr1.WaitForInt64Gauge(ctx, mdWant)
+	mr2.WaitForInt64Gauge(ctx, mdWant)
 }
+
+// move to internal and balancer to test utils to not populate global
+// namespace...and cleanup, I can send this out as a seperate PR, but needs both
+// for next features...
+
+// so rebase onto in flight PR, squash to one commit though...shouldn't conflict
+// that way can do WRR and RLS immediately...
+
+
+
+// Finish this test with all the assertions...move to internal and I think this is standalone outside clear metrics registry for testing thingy...
+// so can just keep that change...
+
+// Looks like it needs to make an RPC to trigger call...
 
 // Need to upload that 1.65 docker image...
 

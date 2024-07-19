@@ -110,15 +110,9 @@ func (r *TestMetricsRecorder) WaitForInt64Count(ctx context.Context, metricsData
 	// Again can scale up these operations in the future
 	got, err := r.intCountCh.Receive(ctx) // and then what to do with got?
 	if err != nil {
-		// Am I allowed to do this in a separate component?
 		r.t.Fatalf("timeout waiting for int64 count")
 	} // send it on this channel or persist it around to verify later...
 	metricsDataGot := got.(MetricsData)
-	/*
-	if diff := cmp.Diff(gotAddrCount, wantAddrCount); diff != "" {
-				logger.Infof("non-roundrobin, got address count in one iteration: %v, want: %v, Diff: %s", gotAddrCount, wantAddrCount, diff)
-				continue
-	*/
 	if diff := cmp.Diff(metricsDataGot, metricsDataWant); diff != "" {
 		r.t.Fatalf("int64count metricsData received unexpected value (-got, +want): %v", diff)
 	}
@@ -159,6 +153,18 @@ func (r *TestMetricsRecorder) RecordInt64Count(handle *estats.Int64CountHandle, 
 	r.intValues[(*estats.MetricDescriptor)(handle)] += incr // or in the future could scale up this persistence
 }
 
+// Exact same logic except receives from different channel/different log statement...
+func (r *TestMetricsRecorder) WaitForFloat64Count(ctx context.Context, metricsDataWant MetricsData) {
+	got, err := r.floatCountCh.Receive(ctx)
+	if err != nil {
+		r.t.Fatalf("timeout waiting for float64count")
+	}
+	metricsDataGot := got.(MetricsData)
+	if diff := cmp.Diff(metricsDataGot, metricsDataWant); diff != "" {
+		r.t.Fatalf("float64count metricsData received unexpected value (-got, +want): %v", diff)
+	}
+}
+
 func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHandle, incr float64, labels ...string) {
 	r.floatCountCh.Send(MetricsData{
 		Handle: (*estats.MetricDescriptor)(handle),
@@ -175,6 +181,17 @@ func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHand
 
 	// This persistence needs the k/v dimension though...I guess in future...
 	r.floatValues[(*estats.MetricDescriptor)(handle)] += incr
+}
+
+func (r *TestMetricsRecorder) WaitForInt64Histo(ctx context.Context, metricsDataWant MetricsData) {
+	got, err := r.intHistoCh.Receive(ctx)
+	if err != nil {
+		r.t.Fatalf("timeout waiting for int64Histo")
+	}
+	metricsDataGot := got.(MetricsData)
+	if diff := cmp.Diff(metricsDataGot, metricsDataWant); diff != "" {
+		r.t.Fatalf("int64Histo metricsData received unexpected value (-got, +want): %v", diff)
+	}
 }
 
 func (r *TestMetricsRecorder) RecordInt64Histo(handle *estats.Int64HistoHandle, incr int64, labels ...string) {
@@ -195,6 +212,17 @@ func (r *TestMetricsRecorder) RecordInt64Histo(handle *estats.Int64HistoHandle, 
 	r.intValues[(*estats.MetricDescriptor)(handle)] += incr
 }
 
+func (r *TestMetricsRecorder) WaitForFloat64Histo(ctx context.Context, metricsDataWant MetricsData) {
+	got, err := r.floatHistoCh.Receive(ctx)
+	if err != nil {
+		r.t.Fatalf("timeout waiting for float64Histo")
+	}
+	metricsDataGot := got.(MetricsData)
+	if diff := cmp.Diff(metricsDataGot, metricsDataWant); diff != "" {
+		r.t.Fatalf("float64Histo metricsData received unexpected value (-got, +want): %v", diff)
+	}
+}
+
 func (r *TestMetricsRecorder) RecordFloat64Histo(handle *estats.Float64HistoHandle, incr float64, labels ...string) {
 	r.floatHistoCh.Send(MetricsData{
 		Handle: (*estats.MetricDescriptor)(handle),
@@ -210,6 +238,17 @@ func (r *TestMetricsRecorder) RecordFloat64Histo(handle *estats.Float64HistoHand
 	})
 	// This persistence needs the k/v dimension though...I guess in future...
 	r.floatValues[(*estats.MetricDescriptor)(handle)] += incr
+}
+
+func (r *TestMetricsRecorder) WaitForInt64Gauge(ctx context.Context, metricsDataWant MetricsData) {
+	got, err := r.intGaugeCh.Receive(ctx)
+	if err != nil {
+		r.t.Fatalf("timeout waiting for int64Gauge")
+	}
+	metricsDataGot := got.(MetricsData)
+	if diff := cmp.Diff(metricsDataGot, metricsDataWant); diff != "" {
+		r.t.Fatalf("int64Gauge metricsData received unexpected value (-got, +want): %v", diff)
+	}
 }
 
 func (r *TestMetricsRecorder) RecordInt64Gauge(handle *estats.Int64GaugeHandle, incr int64, labels ...string) {

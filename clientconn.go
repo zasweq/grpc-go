@@ -196,12 +196,12 @@ func NewClient(target string, opts ...DialOption) (conn *ClientConn, err error) 
 	cc.csMgr = newConnectivityStateManager(cc.ctx, cc.channelz)
 	cc.pickerWrapper = newPickerWrapper(cc.dopts.copts.StatsHandlers)
 
-	cc.initIdleStateLocked() // Safe to call without the lock, since nothing else has a reference to cc.
-	cc.idlenessMgr = idle.NewManager((*idler)(cc), cc.dopts.idleTimeout)
-
 	// Rename to istats?
 	// Why do I persist in connect options should I persist somewhere else?
 	cc.metricsRecorderList = stats.NewMetricsRecorderList(cc.dopts.copts.StatsHandlers) // doesn't modify just typecasts so this read is safe...
+
+	cc.initIdleStateLocked() // Safe to call without the lock, since nothing else has a reference to cc.
+	cc.idlenessMgr = idle.NewManager((*idler)(cc), cc.dopts.idleTimeout)
 
 	return cc, nil
 }
