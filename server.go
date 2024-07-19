@@ -43,7 +43,6 @@ import (
 	"google.golang.org/grpc/internal/channelz"
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/grpcutil"
-	istats "google.golang.org/grpc/internal/stats"
 	"google.golang.org/grpc/internal/transport"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
@@ -119,8 +118,6 @@ type serviceInfo struct {
 // Server is a gRPC server to serve RPC requests.
 type Server struct {
 	opts serverOptions
-	// set at init time, ready only after that?
-	metricsRecorderList *istats.MetricsRecorderList // estats? Why a pointer?
 
 	mu  sync.Mutex // guards following
 	lis map[net.Listener]bool
@@ -672,7 +669,6 @@ func NewServer(opt ...ServerOption) *Server {
 		quit:     grpcsync.NewEvent(),
 		done:     grpcsync.NewEvent(),
 		channelz: channelz.RegisterServer(""),
-		// metricsRecorderList: istats.NewMetricsRecorderList(opts.statsHandlers), // does it need the same ref I don't think so just typecasts from that so I think I'm fine here...
 	}
 	chainUnaryServerInterceptors(s)
 	chainStreamServerInterceptors(s)
@@ -686,15 +682,9 @@ func NewServer(opt ...ServerOption) *Server {
 		s.initServerWorkers()
 	}
 
-	// this metricsRecorderList ignore on server for now...
-	// eventually will need to make it's way to xDS Client...
-	// from xDS Server which wraps this...needs to communicate upward somehow...
-
-	// s.metricsRecorderList = istats.NewMetricsRecorderList(s.opts.statsHandlers) // I guess to keep it inline with how it is declare it in the server allocation on the heap above...
-
 	channelz.Info(logger, s.channelz, "Server created")
 	return s
-} // How do I test this side? Just that the stats handlers are simply created?
+}
 
 // printf records an event in s's event log, unless s has been stopped.
 // REQUIRES s.mu is held.

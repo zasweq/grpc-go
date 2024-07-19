@@ -85,7 +85,10 @@ func (recordingLoadBalancerBuilder) Build(cc balancer.ClientConn, bOpts balancer
 	intHistoHandle.Record(bOpts.MetricsRecorder, 3, "int histo label val", "int histo optional label val")
 	floatHistoHandle.Record(bOpts.MetricsRecorder, 4, "float histo label val", "float histo optional label val")
 	intGaugeHandle.Record(bOpts.MetricsRecorder, 5, "int gauge label val", "int gauge optional label val")
-	intGaugeHandle.Record(bOpts.MetricsRecorder, 7, "non-existent-label") // should get eaten by metrics recorder list and not end up in the stats handler data...since incorrect number of labels...
+	// This Record call should get eaten by metrics recorder list and not end up
+	// in the stats handler data. This is because this emits the wrong number of
+	// labels.
+	intGaugeHandle.Record(bOpts.MetricsRecorder, 7, "non-existent-label")
 
 	return &recordingLoadBalancer{
 		Balancer: balancer.Get(pickfirst.Name).Build(cc, bOpts),

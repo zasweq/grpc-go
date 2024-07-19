@@ -214,7 +214,7 @@ func newFakeMetricsRecorder(t *testing.T) *fakeMetricsRecorder {
 		floatValues: make(map[*MetricDescriptor]float64),
 	}
 
-	for _, desc := range metricsRegistry { // This is no longer exported - should I make this a knob/configurable or something?
+	for _, desc := range metricsRegistry {
 		switch desc.Type {
 		case MetricTypeIntCount:
 		case MetricTypeIntHisto:
@@ -226,12 +226,7 @@ func newFakeMetricsRecorder(t *testing.T) *fakeMetricsRecorder {
 		}
 	}
 	return fmr
-} // This takes a snapshot of global inst registry *at this components creation time*
-// When you create in test you have a linking snapshot to a component...
-
-// persistence of desc -> int/float seems pretty generalizable...
-
-// Have two of these? Or just one for simplicity
+}
 
 // verifyLabels verifies that the labels received are of the expected length.
 func verifyLabels(t *testing.T, labelsWant []string, optionalLabelsWant []string, labelsGot []string) {
@@ -262,94 +257,5 @@ func (r *fakeMetricsRecorder) RecordFloat64Histo(handle *Float64HistoHandle, inc
 
 func (r *fakeMetricsRecorder) RecordInt64Gauge(handle *Int64GaugeHandle, incr int64, labels ...string) {
 	verifyLabels(r.t, (*MetricDescriptor)(handle).Labels, (*MetricDescriptor)(handle).OptionalLabels, labels)
-	r.intValues[(*MetricDescriptor)(handle)] += incr // just make this == and it'll be functionally equivalent...
+	r.intValues[(*MetricDescriptor)(handle)] += incr
 }
-
-// Write a balancer file that registers on instrument registry, records metrics on operations...?
-// Do I need to get this to work? Deploying as top level balancer?
-// RLS triggers by picker picks, dependent on target etc...
-
-// WRR is scheduler update
-
-// What about a true e2e test...?
-// Test plumbing, needs to be on a channel...as metricsrecorder list is part of the channel, calls hit the one channel provides
-// and hit all the OTel configures on channel
-
-// so will need this deployment/setup infrastructure for e2e test...refactor it that way I guess...
-
-// Deploy RLS/WRR/this balancer as top level - see test infra to see if there is
-// already a way to do this...
-
-
-// switch context to context.TODO don't take it as a component
-
-// follow up with OTel time as to why they take a context in Go but not Java and C
-
-// ignore merging map
-// merge all the logic into an embedded struct, don't even need to declare it on client/server
-
-
-
-// Doug said he's fine with my testing plan
-
-// Global and Local dial option
-// hits the two with the same metrics calls...
-
-// So need to figure out API I want
-
-// honestly same data structures idc about histos as much except
-// need the dimension of key values
-
-
-// counter - count for ** labels values **
-
-// counter - given set of values, what value was recorded, basically just do a counter
-
-// histo - given set of values - list of record calls for label values
-// buckets - more opinionated about values receiving
-
-// gauge - last thing...
-
-// Also need to check based off the labels - Yijie did this by hashing a
-// concatenation of k v pairs (what test labels emit) vs. the assertion needed to
-// happen
-
-// ***For a certain set of labels*** (Yijie represented with hash function)
-// Count is 1, so coupled, so can just check number emitted
-
-// Histo - persists all the most recent (deterministic?)
-
-// Gauge - just the most recent as a gauge would...makes sense...
-
-// When I get back figure out data structures/API's...does it need to be this heavyweight to test plumbing?
-
-
-// The only thing that I will eventually record Histos on is endpoint weights...
-// So I don't think I need to think about too much
-
-// Also per label...test just verifies label...do I really need this for this PR though?
-
-// fake metric recorder 1, fake metric recorder 2
-
-// Verifies emissions upward...
-
-// going to implement fake sh and mr anyway...might as well make the verifications useful?
-
-// How will I do label key value look into map thingy?
-
-// I will need to test the plumbing for 5? So might as well do it...
-// RLS/WRR will need these ideals...
-
-// What metric it actually is...and the values for certain key value pairs for those metrics...
-// map[Metric]map[labels]->a certain value
-
-// sum/gauge but for histos he kept all and verified on the full list
-
-// I don't want to make histos as heavyweight check
-// Just have it how it is now - but needs to scale up labels
-
-
-
-
-
-// Given set of labels, what is the value?

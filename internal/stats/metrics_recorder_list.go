@@ -22,94 +22,65 @@ import (
 	"google.golang.org/grpc/stats"
 )
 
-// Import as istats?
+var logger = grpclog.Component("metrics-recorder-list")
 
-var logger = grpclog.Component("metrics-recorder-list") // oh if I move whole test to internal including test utils won't populate external namespace...
-
-// MetricRecorderList forwards...
-
-
-// Eats and logs if labels don't match up...?
+// MetricRecorderList forwards Record calls to all of it's metricsRecorders.
+//
+// It eats any record calls where the label values provided do not match the
+// number of label keys.
 type MetricsRecorderList struct {
 	// metricsRecorders are the metrics recorders this list will forward to.
-	metricsRecorders []estats.MetricsRecorder // estats?
+	metricsRecorders []estats.MetricsRecorder
 }
 
 // NewMetricsRecorderList creates a new metric recorder list with all the stats
-// handlers provided which implement the MetricsRecorder interface...
-
-// Talk about functional no-op?
+// handlers provided which implement the MetricsRecorder interface.
+// If no stats handlers provided implement the MetricsRecorder interface,
+// the MetricsRecorder list returned is a no-op.
 func NewMetricsRecorderList(shs []stats.Handler) *MetricsRecorderList {
-	print("In new metrics recorder list")
 	var mrs []estats.MetricsRecorder
-
 	for _, sh := range shs {
 		if mr, ok := sh.(estats.MetricsRecorder); ok {
-			mrs = append(mrs, mr) // Does this operation actually wokr?
+			mrs = append(mrs, mr)
 		}
 	}
-	print("new metrics recorder list, len of mrs: ", len(mrs)) // correct length...just doesn't hit record
-
 	return &MetricsRecorderList{
-		metricsRecorders: mrs, // if this length is 0, this is a functional no-op
+		metricsRecorders: mrs,
 	}
 }
 
-func verifyLabels() { // I like this as a function call still rather than length check? Honestly could just length check
-
-}
-
-// New interface (see estats.MetricsRecorder api) and also
-// it gets labels/optional labels from what is provided, and just does a length check
 func (l *MetricsRecorderList) RecordInt64Count(handle *estats.Int64CountHandle, incr int64, labels ...string) {
-	print("in metric recorder list record int64 count")
-	/*handle // *estats.Int64CountHandle, I don't need to address the registry this has labels/optional labels...
-	handle.Labels // []string
-	handle.OptionalLabels // []string*/
-
-	// labels... []string? Keep same API as previous...and then put this in cc/server...
-	// Inline check rather than passing to a helper?
-	if got, want := len(handle.Labels) + len(handle.OptionalLabels), len(labels); got != want { // so var args are a slice...
-		// fmt.Errorf("length of labels passed incorrect got: %v, want: %v",  len(optionalLabelsGot), len(optionalLabelsWant))
-		// logger? an error/warning with got/expected length...
+	if got, want := len(handle.Labels)+len(handle.OptionalLabels), len(labels); got != want {
 		logger.Infof("length of labels passed to RecordInt64Count incorrect got: %v, want: %v", got, want)
-	} // Assert on a property of this error string in tests? when I "eat" call or just use fact it didn't record...
+	}
 
-	for _, metricRecorder := range l.metricsRecorders { // so metric recorder passed to it in build is nil...
-		print("in metric recorder list metric recorder iteration")
+	for _, metricRecorder := range l.metricsRecorders {
 		metricRecorder.RecordInt64Count(handle, incr, labels...)
 	}
-} // Honestly this is orthogonal to the PR in flight...I think I can just treat this as separate...
+}
 
 func (l *MetricsRecorderList) RecordFloat64Count(handle *estats.Float64CountHandle, incr float64, labels ...string) {
-	if got, want := len(handle.Labels) + len(handle.OptionalLabels), len(labels); got != want { // so var args are a slice...
-		// fmt.Errorf("length of labels passed incorrect got: %v, want: %v",  len(optionalLabelsGot), len(optionalLabelsWant))
-		// logger? an error/warning with got/expected length...
-		// I think just a grpc logger as per Doug's comment...
+	if got, want := len(handle.Labels)+len(handle.OptionalLabels), len(labels); got != want {
 		logger.Infof("length of labels passed to RecordFloat64Count incorrect got: %v, want: %v", got, want)
 	}
 
 	for _, metricRecorder := range l.metricsRecorders {
-		metricRecorder.RecordFloat64Count(handle, incr, labels...) // same pointer, typecast the pointer as equivalent, I copied then pointed to new copy...
+		metricRecorder.RecordFloat64Count(handle, incr, labels...)
 	}
 }
 
 func (l *MetricsRecorderList) RecordInt64Histo(handle *estats.Int64HistoHandle, incr int64, labels ...string) {
-	if got, want := len(handle.Labels) + len(handle.OptionalLabels), len(labels); got != want { // so var args are a slice...
-		// fmt.Errorf("length of labels passed incorrect got: %v, want: %v",  len(optionalLabelsGot), len(optionalLabelsWant))
-		// logger? an error/warning with got/expected length...
+	if got, want := len(handle.Labels)+len(handle.OptionalLabels), len(labels); got != want {
 		logger.Infof("length of labels passed to RecordInt64Histo incorrect got: %v, want: %v", got, want)
 	}
 
 	for _, metricRecorder := range l.metricsRecorders {
 		metricRecorder.RecordInt64Histo(handle, incr, labels...)
 	}
-} // do argument names need to match up to implement an interface?
+}
 
 func (l *MetricsRecorderList) RecordFloat64Histo(handle *estats.Float64HistoHandle, incr float64, labels ...string) {
-	if got, want := len(handle.Labels) + len(handle.OptionalLabels), len(labels); got != want { // so var args are a slice...
-		// fmt.Errorf("length of labels passed incorrect got: %v, want: %v",  len(optionalLabelsGot), len(optionalLabelsWant))
-		// logger? an error/warning with got/expected length...
+	if got, want := len(handle.Labels)+len(handle.OptionalLabels), len(labels); got != want {
 		logger.Infof("length of labels passed to RecordFloat64Histo incorrect got: %v, want: %v", got, want)
 	}
 
@@ -119,9 +90,7 @@ func (l *MetricsRecorderList) RecordFloat64Histo(handle *estats.Float64HistoHand
 }
 
 func (l *MetricsRecorderList) RecordInt64Gauge(handle *estats.Int64GaugeHandle, incr int64, labels ...string) {
-	if got, want := len(handle.Labels) + len(handle.OptionalLabels), len(labels); got != want { // so var args are a slice...
-		// fmt.Errorf("length of labels passed incorrect got: %v, want: %v",  len(optionalLabelsGot), len(optionalLabelsWant))
-		// logger? an error/warning with got/expected length...
+	if got, want := len(handle.Labels)+len(handle.OptionalLabels), len(labels); got != want {
 		logger.Infof("length of labels passed to RecordInt64Gauge incorrect got: %v, want: %v", got, want)
 	}
 
@@ -129,9 +98,3 @@ func (l *MetricsRecorderList) RecordInt64Gauge(handle *estats.Int64GaugeHandle, 
 		metricRecorder.RecordInt64Gauge(handle, incr, labels...)
 	}
 }
-
-
-
-// Will I need to reuse some of these fake stats handlers/components for my e2e
-// tests with respect to wrr/rls? I guess try and figure that out...draw it out?
-

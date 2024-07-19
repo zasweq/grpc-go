@@ -39,25 +39,24 @@ type TestMetricsRecorder struct {
 	intValues   map[*estats.MetricDescriptor]int64
 	floatValues map[*estats.MetricDescriptor]float64
 
-	intCountCh *testutils.Channel
+	intCountCh   *testutils.Channel
 	floatCountCh *testutils.Channel
-	intHistoCh *testutils.Channel
+	intHistoCh   *testutils.Channel
 	floatHistoCh *testutils.Channel
-	intGaugeCh *testutils.Channel
-
+	intGaugeCh   *testutils.Channel
 }
 
 func NewTestMetricsRecorder(t *testing.T, metrics []string) *TestMetricsRecorder {
 	tmr := &TestMetricsRecorder{
-		t: t,
-		intValues: make(map[*estats.MetricDescriptor]int64),
+		t:           t,
+		intValues:   make(map[*estats.MetricDescriptor]int64),
 		floatValues: make(map[*estats.MetricDescriptor]float64),
 
-		intCountCh: testutils.NewChannelWithSize(10),
+		intCountCh:   testutils.NewChannelWithSize(10),
 		floatCountCh: testutils.NewChannelWithSize(10),
-		intHistoCh: testutils.NewChannelWithSize(10),
+		intHistoCh:   testutils.NewChannelWithSize(10),
 		floatHistoCh: testutils.NewChannelWithSize(10),
-		intGaugeCh: testutils.NewChannelWithSize(10),
+		intGaugeCh:   testutils.NewChannelWithSize(10),
 	}
 
 	for _, metric := range metrics {
@@ -80,7 +79,7 @@ type MetricsData struct {
 
 	// Only set based on the type of metric. So only one of IntIncr or FloatIncr
 	// is set.
-	IntIncr int64
+	IntIncr   int64
 	FloatIncr float64
 
 	LabelKeys []string
@@ -90,7 +89,7 @@ type MetricsData struct {
 func (r *TestMetricsRecorder) WaitForInt64Count(ctx context.Context, metricsDataWant MetricsData) {
 	got, err := r.intCountCh.Receive(ctx)
 	if err != nil {
-		r.t.Fatalf("timeout waiting for int64 count")
+		r.t.Fatalf("timeout waiting for int64Count")
 	}
 	metricsDataGot := got.(MetricsData)
 	if diff := cmp.Diff(metricsDataGot, metricsDataWant); diff != "" {
@@ -100,8 +99,8 @@ func (r *TestMetricsRecorder) WaitForInt64Count(ctx context.Context, metricsData
 
 func (r *TestMetricsRecorder) RecordInt64Count(handle *estats.Int64CountHandle, incr int64, labels ...string) {
 	r.intCountCh.Send(MetricsData{
-		Handle: (*estats.MetricDescriptor)(handle),
-		IntIncr: incr,
+		Handle:    (*estats.MetricDescriptor)(handle),
+		IntIncr:   incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
 	})
@@ -112,7 +111,7 @@ func (r *TestMetricsRecorder) RecordInt64Count(handle *estats.Int64CountHandle, 
 func (r *TestMetricsRecorder) WaitForFloat64Count(ctx context.Context, metricsDataWant MetricsData) {
 	got, err := r.floatCountCh.Receive(ctx)
 	if err != nil {
-		r.t.Fatalf("timeout waiting for float64count")
+		r.t.Fatalf("timeout waiting for float64Count")
 	}
 	metricsDataGot := got.(MetricsData)
 	if diff := cmp.Diff(metricsDataGot, metricsDataWant); diff != "" {
@@ -122,7 +121,7 @@ func (r *TestMetricsRecorder) WaitForFloat64Count(ctx context.Context, metricsDa
 
 func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHandle, incr float64, labels ...string) {
 	r.floatCountCh.Send(MetricsData{
-		Handle: (*estats.MetricDescriptor)(handle),
+		Handle:    (*estats.MetricDescriptor)(handle),
 		FloatIncr: incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
@@ -144,8 +143,8 @@ func (r *TestMetricsRecorder) WaitForInt64Histo(ctx context.Context, metricsData
 
 func (r *TestMetricsRecorder) RecordInt64Histo(handle *estats.Int64HistoHandle, incr int64, labels ...string) {
 	r.intHistoCh.Send(MetricsData{
-		Handle: (*estats.MetricDescriptor)(handle),
-		IntIncr: incr,
+		Handle:    (*estats.MetricDescriptor)(handle),
+		IntIncr:   incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
 	})
@@ -166,7 +165,7 @@ func (r *TestMetricsRecorder) WaitForFloat64Histo(ctx context.Context, metricsDa
 
 func (r *TestMetricsRecorder) RecordFloat64Histo(handle *estats.Float64HistoHandle, incr float64, labels ...string) {
 	r.floatHistoCh.Send(MetricsData{
-		Handle: (*estats.MetricDescriptor)(handle),
+		Handle:    (*estats.MetricDescriptor)(handle),
 		FloatIncr: incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
@@ -187,8 +186,8 @@ func (r *TestMetricsRecorder) WaitForInt64Gauge(ctx context.Context, metricsData
 
 func (r *TestMetricsRecorder) RecordInt64Gauge(handle *estats.Int64GaugeHandle, incr int64, labels ...string) {
 	r.intGaugeCh.Send(MetricsData{
-		Handle: (*estats.MetricDescriptor)(handle),
-		IntIncr: incr,
+		Handle:    (*estats.MetricDescriptor)(handle),
+		IntIncr:   incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
 	})

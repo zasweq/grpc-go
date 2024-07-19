@@ -50,8 +50,8 @@ func Test(t *testing.T) {
 // stats handlers implement the MetricsRecorder interface. It also configures a
 // balancer which registers metrics and records on metrics at build time. This
 // test then asserts that the recorded metrics show up on both configured stats
-// handlers, and that metrics calls with the incorrect number of labels does not
-// make it's way to stats handlers.
+// handlers, and that metrics calls with the incorrect number of labels do not
+// make their way to stats handlers.
 func (s) TestMetricsRecorderList(t *testing.T) {
 	mr := manual.NewBuilderWithScheme("test-metrics-recorder-list")
 	defer mr.Close()
@@ -85,8 +85,8 @@ func (s) TestMetricsRecorderList(t *testing.T) {
 	tsc.UnaryCall(ctx, &grpc_testing.SimpleRequest{})
 
 	mdWant := MetricsData{
-		Handle: (*estats.MetricDescriptor)(intCountHandle),
-		IntIncr: 1,
+		Handle:    (*estats.MetricDescriptor)(intCountHandle),
+		IntIncr:   1,
 		LabelKeys: []string{"int counter label", "int counter optional label"},
 		LabelVals: []string{"int counter label val", "int counter optional label val"},
 	}
@@ -94,10 +94,8 @@ func (s) TestMetricsRecorderList(t *testing.T) {
 	mr2.WaitForInt64Count(ctx, mdWant)
 
 	mdWant = MetricsData{
-		Handle: (*estats.MetricDescriptor)(floatCountHandle),
-
+		Handle:    (*estats.MetricDescriptor)(floatCountHandle),
 		FloatIncr: 2,
-
 		LabelKeys: []string{"float counter label", "float counter optional label"},
 		LabelVals: []string{"float counter label val", "float counter optional label val"},
 	}
@@ -105,10 +103,8 @@ func (s) TestMetricsRecorderList(t *testing.T) {
 	mr2.WaitForFloat64Count(ctx, mdWant)
 
 	mdWant = MetricsData{
-		Handle: (*estats.MetricDescriptor)(intHistoHandle),
-
-		IntIncr: 3,
-
+		Handle:    (*estats.MetricDescriptor)(intHistoHandle),
+		IntIncr:   3,
 		LabelKeys: []string{"int histo label", "int histo optional label"},
 		LabelVals: []string{"int histo label val", "int histo optional label val"},
 	}
@@ -116,20 +112,16 @@ func (s) TestMetricsRecorderList(t *testing.T) {
 	mr2.WaitForInt64Histo(ctx, mdWant)
 
 	mdWant = MetricsData{
-		Handle: (*estats.MetricDescriptor)(floatHistoHandle),
-
+		Handle:    (*estats.MetricDescriptor)(floatHistoHandle),
 		FloatIncr: 4,
-
 		LabelKeys: []string{"float histo label", "float histo optional label"},
 		LabelVals: []string{"float histo label val", "float histo optional label val"},
 	}
 	mr1.WaitForFloat64Histo(ctx, mdWant)
 	mr2.WaitForFloat64Histo(ctx, mdWant)
 	mdWant = MetricsData{
-		Handle: (*estats.MetricDescriptor)(intGaugeHandle),
-
-		IntIncr: 5, // Should ignore the 7 metrics recording point emits wrong number of labels.
-
+		Handle:    (*estats.MetricDescriptor)(intGaugeHandle),
+		IntIncr:   5, // Should ignore the 7 metrics recording point because emits wrong number of labels.
 		LabelKeys: []string{"int gauge label", "int gauge optional label"},
 		LabelVals: []string{"int gauge label val", "int gauge optional label val"},
 	}
