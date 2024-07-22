@@ -43,6 +43,29 @@ const serviceNamespaceKeyCSM = "csm.service_namespace_name"
 const serviceNameValue = "grpc-service"
 const serviceNamespaceValue = "grpc-service-namespace"
 
+const localityKey = "grpc.lb.locality" // Label should come in out of the system...
+const localityValue = "" /*locality value from system*/
+
+/*
+{region="${REGION}", zone="${ZONE}", sub_zone="${SUB_ZONE}"}, where ${REGION},
+${ZONE}, and ${SUB_ZONE} are replaced with the actual values. If no locality
+information is available, the label will be set to the empty string.
+
+
+Locality: &v3corepb.Locality{
+				Region:  fmt.Sprintf("region-%d", i+1),
+				Zone:    fmt.Sprintf("zone-%d", i+1),
+				SubZone: fmt.Sprintf("subzone-%d", i+1),
+			},
+
+Will eventually be 1 for all of these - what string will this eventually become,
+maybe run the test and write it to the const...
+
+* Same contention of locality xDS Concept not hardcoded in OTel
+
+*/
+
+
 // TestTelemetryLabels tests that telemetry labels from CDS make their way to
 // the stats handler. The stats handler sets the mutable context value that the
 // cluster impl picker will write telemetry labels to, and then the stats
@@ -132,7 +155,10 @@ func (fsh *fakeStatsHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) {
 		if label, ok := fsh.labels.TelemetryLabels[serviceNamespaceKeyCSM]; !ok || label != serviceNamespaceValue {
 			fsh.t.Fatalf("for telemetry label %v, want: %v, got: %v", serviceNamespaceKeyCSM, serviceNamespaceValue, label)
 		}
-
+		// Scale this up to whatever locality is configured in the resources above - hardcode string? it's just "locality"
+		if label, ok := fsh.labels.TelemetryLabels[localityKey]; !ok || label != localityValue {
+			fsh.t.Fatalf("for telemetry label %v, want: %v, got: %v", localityKey, localityValue, label) // logging label here in the failing case will show me what it looks like/allow me to copy paste
+		} // and it is part of tree and will get called so this test should just work...pass a resolver attribute down in the future...
 	default:
 		// Nothing to assert for the other stats.Handler callouts.
 	}

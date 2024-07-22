@@ -144,7 +144,9 @@ func (h *clientStatsHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo)
 	var labels *istats.Labels
 	if labels = istats.GetLabels(ctx); labels == nil {
 		labels = &istats.Labels{
-			TelemetryLabels: make(map[string]string),
+			TelemetryLabels: map[string]string{
+				"grpc.lb.locality": "", // unconditionally overwrite in cluster impl picker...
+			}, // encode the list of per call optional labels here...this cardinality works since attempt info scoped to all stats handlers anyway...
 		}
 		ctx = istats.SetLabels(ctx, labels)
 	}
@@ -225,11 +227,57 @@ func (h *clientStatsHandler) processRPCEnd(ctx context.Context, ai *attemptInfo,
 		attributes = append(attributes, otelattribute.String(k, v))
 	}
 
-	for _, o := range h.options.MetricsOptions.OptionalLabels {
+	// unknown gets set from the xDS Client...
+	// so the logic of locality label not known set ""...empty locality...what layer?
+
+	// "If no locality information is available, the label will be set to the empty string."
+
+	// unconditionally emit so defer this write?
+
+	for _, o := range h.options.MetricsOptions.OptionalLabels { // Already has plumbing, just set locality, constrained by the only thing that can set this is the xDS tree...now just set the mock in tests...
+
+		// maintains a list of optional labels I support - one in size locality
+		// - default to "" list of per call metrics - scale it up
+
+		// locality populates "", encode the list in the setting of the map, not
+		// set by picker keeps it's default...wrong place to encode for future
+		// setting it there condtionally
+
+		// could say it's how you do it through context...could refactor
+
+
+
+		// it's not that hard to implement an empty method - do this after
+		// (scale up Plugin Option API)
+
+
+
+
+
 		if val, ok := ai.xdsLabels[o]; ok {
 			attributes = append(attributes, otelattribute.String(o, val))
-		}
+			continue
+		} // TODO: Add a filter for converting to unknown if not present in the CSM Plugin Option layer...
+
+
+		// Write a P2 issue for switching this API to take context at the
+		// end...do this after non per call....
+
+
+		if o == "locality" { // this is fine to stick it here...
+			// Special case for locality here...not csm specific, this is in the OTel spec, user of OTel...
+			// "" if unset - now can add tests...configure this *and* set in interceptor, if not present it converts to empty so I don't think it matters
+
+			// expect this out of xDS in the labels test...
+
+			attributes = append(attributes, otelattribute.String("locality", ""))
+		} // either add it to defaults in ctx or write it here...defaults in ctx is logically "the list", can be overwritten by any operation on the per call flow, how it provides it...need to say this is the way I do it...
+		// I prefer it above like JSON defaults, doing it in the place above feels ugly to me...
+
 	}
+	// If the RPC fails...should be recording "unknown" for service name and namespace...empty string for locality...
+	// so special case it in OpenTelemetry
+
 
 	clientAttributeOption := otelmetric.WithAttributes(attributes...)
 	h.clientMetrics.attemptDuration.Record(ctx, latency, clientAttributeOption)

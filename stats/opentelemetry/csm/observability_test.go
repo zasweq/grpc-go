@@ -428,6 +428,7 @@ func unaryInterceptorAttachXDSLabels(ctx context.Context, method string, req, re
 			// mock what the cluster impl would write here ("csm." xDS Labels)
 			"csm.service_name":           "service_name_val",
 			"csm.service_namespace_name": "service_namespace_val",
+			"grpc.lb.locality":           "grpc.lb.locality_val", // how to incorporate this into docstring?
 		},
 	})
 
@@ -443,7 +444,7 @@ func unaryInterceptorAttachXDSLabels(ctx context.Context, method string, req, re
 // expects xDS Labels labels to be attached to emitted relevant metrics. Full
 // xDS System alongside OpenTelemetry will be tested with interop. (there is
 // a test for xDS -> Stats handler and this tests -> OTel -> emission).
-func (s) TestXDSLabels(t *testing.T) {
+func (s) TestXDSLabels(t *testing.T) { // Can I scale this test up...I think that's fine...
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	reader := metric.NewManualReader()
@@ -489,6 +490,8 @@ func (s) TestXDSLabels(t *testing.T) {
 
 	serviceNameAttr := attribute.String("csm.service_name", "service_name_val")
 	serviceNamespaceAttr := attribute.String("csm.service_namespace_name", "service_namespace_val")
+	// add an attr here for locality...
+	localityAttr := attribute.String("grpc.lb.locality", "grpc.lb.locality_val")
 	meshIDAttr := attribute.String("csm.mesh_id", "unknown")
 	workloadCanonicalServiceAttr := attribute.String("csm.workload_canonical_service", "unknown")
 	remoteWorkloadTypeAttr := attribute.String("csm.remote_workload_type", "unknown")
@@ -500,6 +503,7 @@ func (s) TestXDSLabels(t *testing.T) {
 		unaryStatusAttr,
 		serviceNameAttr,
 		serviceNamespaceAttr,
+		localityAttr, // run these two tests, cleanup and then you'll be able to send out (resolver attr passed down from weighted target will come later...)
 		meshIDAttr,
 		workloadCanonicalServiceAttr,
 		remoteWorkloadTypeAttr,
