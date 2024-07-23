@@ -133,14 +133,6 @@ func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 		}
 	}
 
-	// Locality ID comes from this wrapped SubConn and then passed upward...
-	// do we want to unconditionally set...set empty (I think if nil above sets to "unknown")
-
-	// unset/empty/set possibilities passed to stats handler...
-
-	// when do I want to set it, what do I want the possibilities to become
-	// labels wise...
-
 	var lIDStr string
 	pr, err := d.s.Picker.Pick(info)
 	if scw, ok := pr.SubConn.(*scWrapper); ok {
@@ -164,65 +156,11 @@ func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 		return pr, err
 	}
 
-	// " If no locality information is available, the label will be set to the empty string."
-
-	// I think I can do it right here - pick didn't fail (I don't think will be
-	// able to get information from scw if pick fails anyway...)
-
-	// just sets the callback for load reporting...
-
-	lIDStr // empty locality ID will be used possibly, from the if conditional above, otherwise set but otherwise empty "unknown locality"
-
-	if labels := stats.GetLabels(info.Ctx); labels != nil && labels.TelemetryLabels != nil {
-		/*for key, value := range d.telemetryLabels {
-			labels.TelemetryLabels[key] = value
-		}*/
-
-		// I think this key doesn't really matter it's used to access so loses
-		// encoding anyway...add this to e2e test? will need to setup a whole
-		// xDS Config so do unit tests and make xDS e2e test come from WRR
-		// deployment...
-
-		labels.TelemetryLabels["grpc.lb.locality"] = lIDStr // unconditionally overwritten, even if it's overwritten with empty...
-	} // Conflates with numerous labels set...? I don't think so
-
-	// How to test this? Maybe same thing as xDS Labels...but then can't trigger
-	// locality unless you wrap it with a SubConn...this is a two line change
-
-	// for per call...but our per call doesn't have an xDS tree to test this...
-
-	// xDS Labels test Simulates this by writing it in interceptor...so add it
-	// to that for this cluster impl to pick up...
-
-	// ^^^ simulates cluster impl passes it to stats handler...but the issue is we don't have a locality ID Str in this mock yes we do...
-
-	// vvv add OTel functionality and mock the thing in tests too and configure it on as well...yeah need to add OTel functionality that processes it...
-
-	// This is separate so after
-
-	// Get to all of Doug's comments, fix vet (cherry pick commit) for next PR...
-
-	// Then do this - this is honestly standalone...
-
-
-	// It mocks in OTel so add it to this mock too...I think that's good enough for the *OTel functionality*
-	// Simulates this behavior...
-
-	// xDS Tree e2e...
-
-	// so maybe as part of WRR deployed as top level balancer (it'll have stats handlers)
-	// I can check the per call emissions of locality ID
-
-
-
-
-	// for non per call in weighted target resolver attribute that comes with my
-	// next PR....
-
-
-
-	// either I set it to zero in that if or it's just the zero anyway...
-	// zero value for string: "" (the empty string) for strings
+	if info.Ctx != nil {
+		if labels := stats.GetLabels(info.Ctx); labels != nil && labels.TelemetryLabels != nil {
+			labels.TelemetryLabels["grpc.lb.locality"] = lIDStr
+		}
+	}
 
 	if d.loadStore != nil {
 		d.loadStore.CallStarted(lIDStr)
@@ -238,7 +176,7 @@ func (d *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 				return
 			}
 			for n, c := range load.NamedMetrics {
-				d.loadStore.CallServerLoad(lIDStr, n, c) // load reporting on locality string here...
+				d.loadStore.CallServerLoad(lIDStr, n, c)
 			}
 		}
 	}

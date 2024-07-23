@@ -98,8 +98,6 @@ func (b *weightedTargetBalancer) UpdateClientConnState(s balancer.ClientConnStat
 	b.stateAggregator.PauseStateUpdates()
 	defer b.stateAggregator.ResumeStateUpdates()
 
-	b.targets // map[string]Target - string is locality
-
 	// Remove sub-pickers and sub-balancers that are not in the new config.
 	for name := range b.targets {
 		if _, ok := newConfig.Targets[name]; !ok {
@@ -142,12 +140,12 @@ func (b *weightedTargetBalancer) UpdateClientConnState(s balancer.ClientConnStat
 		// TODO: handle error? How to aggregate errors and return?
 		_ = b.bg.UpdateClientConnState(name, balancer.ClientConnState{
 			ResolverState: resolver.State{
-				Addresses:     addressesSplit[name], // splits the address by locality by still need this name...
+				Addresses:     addressesSplit[name],
 				ServiceConfig: s.ResolverState.ServiceConfig,
-				Attributes:    s.ResolverState.Attributes, // essentially stick the name in the attributes here...
+				Attributes:    s.ResolverState.Attributes,
 			},
 			BalancerConfig: newT.ChildPolicy.Config,
-		}) // this attribute is a one line change and small, so don't need an explicit test for it, this can come coupled with WRR e2e tests...with OTel metrics atoms...
+		})
 	}
 
 	b.targets = newConfig.Targets

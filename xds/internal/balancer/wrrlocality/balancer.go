@@ -147,16 +147,6 @@ type wrrLocalityBalancer struct {
 	logger *grpclog.PrefixLogger
 }
 
-// Send down the child name - does this encode locality?
-
-// weighted_target -> child endpoint picking RLS/WRR...I already have WRR test infra...
-
-// through resolver attribute - set it in weighted target it here and read in WRR/RLS on UpdateClientConnStatse
-
-// PR 1 ^^^ PR 2 vvv or merge
-
-// cluster impl passes locality up....through mechanism already have internal stats labels
-
 func (b *wrrLocalityBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	lbCfg, ok := s.BalancerConfig.(*LBConfig)
 	if !ok {
@@ -170,7 +160,7 @@ func (b *wrrLocalityBalancer) UpdateClientConnState(s balancer.ClientConnState) 
 		// shouldn't happen though (this attribute that is set actually gets
 		// used to build localities in the first place), and thus don't error
 		// out, and just build a weighted target with undefined behavior.
-		locality, err := internal.GetLocalityID(addr).ToString() // "a string representation of LocalityID by marshaling it into JSON"
+		locality, err := internal.GetLocalityID(addr).ToString()
 		if err != nil {
 			// Should never happen.
 			logger.Errorf("Failed to marshal LocalityID: %v, skipping this locality in weighted target")
@@ -181,7 +171,7 @@ func (b *wrrLocalityBalancer) UpdateClientConnState(s balancer.ClientConnState) 
 		}
 		weightedTargets[locality] = weightedtarget.Target{Weight: ai.LocalityWeight, ChildPolicy: lbCfg.ChildPolicy}
 	}
-	wtCfg := &weightedtarget.LBConfig{Targets: weightedTargets} // encodes the locality string you want to pass down as the key in this weighted targets map...
+	wtCfg := &weightedtarget.LBConfig{Targets: weightedTargets}
 	wtCfgJSON, err := json.Marshal(wtCfg)
 	if err != nil {
 		// Shouldn't happen.
