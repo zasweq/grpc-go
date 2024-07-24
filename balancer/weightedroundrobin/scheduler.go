@@ -32,6 +32,64 @@ type scheduler interface {
 // will return an Earliest Deadline First (EDF) scheduler implementation that
 // selects the subchannels according to their weights.
 func newScheduler(scWeights []float64, inc func() uint32) scheduler {
+	
+	// does the new scheduler come in after the picker is built?
+	// what is logically a scheduler update...
+	
+	// Do count as well...the rr case is the easiet, declare it at the top level balancer
+	
+	
+	
+	
+
+	// Either scope a variable to this algorithm or just record adhoc as is...
+
+	// Logs locality and target as labels - can change from updateccs but
+	// doesn't blow up cardinality only until locality
+
+	// For target - target hooks the top level balancer/channel, so this is fixed over time
+
+
+	// Counter...can just record ad hoc...
+	/*
+
+	Number of scheduler updates in which there were not enough endpoints with
+	valid weight, which caused the WRR policy to fall back to RR behavior.
+
+	*/
+
+	// Counter which always increases, either seperate callouts 1 2 3 4 5 or
+	// persist and do 5, same from OTel point of view
+
+	/*
+	Number of endpoints from each scheduler update that don't yet have usable
+	weight information (i.e., either the load report has not yet been received,
+	or it is within the blackout period).
+	*/
+
+
+	/*
+
+	Number of endpoints from each scheduler update whose latest weight is older
+	than the expiration period.
+
+	*/ // Count...
+
+
+
+	// Histo:
+	/*
+	Weight of each endpoint, recorded on every scheduler update. Endpoints
+	without usable weights will be recorded as weight 0.
+	*/
+
+	// For target I need to send it down from weighted target through resolver attr,
+
+	// write it (protected by mutex?)...target comes in at build time and is
+	// fixed and is read only after that
+
+
+
 	n := len(scWeights)
 	if n == 0 {
 		return nil
@@ -51,8 +109,17 @@ func newScheduler(scWeights []float64, inc func() uint32) scheduler {
 			numZero++
 		}
 	}
-	if numZero >= n-1 {
-		return &rrScheduler{numSCs: uint32(n), inc: inc}
+
+	// endpoint weight not yet usable...is that just zero ones...I think so...
+
+	// endpoint weight stale...where is this determined
+
+	// weight of each endpoint (so defer a func that happens at each record point that loops through?)
+
+
+	if numZero >= n-1 { // Not enough endpoints with valid weight, is this the only valid emission site?
+		rrFallbackHandle.Record(/*mr*/, 1, /*[]string{target, locality}*/) // how to plumb target and locality here? Do I need to make it a method on some balancer...
+		return &rrScheduler{numSCs: uint32(n), inc: inc} // is this "fallback" to rr?
 	}
 	unscaledMean := sum / float64(n-numZero)
 	scalingFactor := maxWeight / max
@@ -73,9 +140,23 @@ func newScheduler(scWeights []float64, inc func() uint32) scheduler {
 		}
 	}
 
-	if allEqual {
+	if allEqual { // this just happens to be all equal, doesn't count
+		/* Does "all equal" count as "fall back to RR behavior" or is it not 1:1?
+
+		Number of scheduler updates in which there were not enough endpoints
+		with valid weight, which caused the WRR policy to fall back to RR
+		behavior.
+
+		*/
 		return &rrScheduler{numSCs: uint32(n), inc: inc}
 	}
+
+	/*
+	Number of endpoints from each scheduler update that don't yet have usable
+	weight information (i.e., either the load report has not yet been received,
+	or it is within the blackout period).
+	*/
+	// Rewrite the algo? Plumb in scWeights helper already present?
 
 	logger.Infof("using edf scheduler with weights: %v", weights)
 	return &edfScheduler{weights: weights, inc: inc}

@@ -240,14 +240,22 @@ func (s) TestBalancer_TwoAddresses_ReportingEnabledPerCall(t *testing.T) {
 		t.Fatalf("Error starting client: %v", err)
 	}
 	addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
-	srv1.R.UpdateState(resolver.State{Addresses: addrs})
+	srv1.R.UpdateState(resolver.State{Addresses: addrs}) // multiple subconns from addrs...and then mock orca servers that return certain QPS and application utilization? How do those two pieces of information affect sc weights?
+
+	// Superset of rr, so I think simply creates a SubConn for each address...and then can make
+	// weight assertions on the addresses?
+
+	// Through metrics recorder API somehow sets the weights....through QPS and application utilization...
+
+
+
 
 	// Call each backend once to ensure the weights have been received.
 	ensureReached(ctx, t, srv1.Client, 2)
 
 	// Wait for the weight update period to allow the new weights to be processed.
 	time.Sleep(weightUpdatePeriod)
-	checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 10})
+	checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 10}) // Check the weights for both...
 }
 
 // Tests two addresses with OOB ORCA reporting enabled.  Checks the backends

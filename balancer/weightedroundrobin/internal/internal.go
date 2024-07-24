@@ -37,7 +37,7 @@ type LBConfig struct {
 	WeightExpirationPeriod  *string  `json:"weightExpirationPeriod,omitempty"`
 	WeightUpdatePeriod      *string  `json:"weightUpdatePeriod,omitempty"`
 	ErrorUtilizationPenalty *float64 `json:"errorUtilizationPenalty,omitempty"`
-}
+} // Why is this right here?
 
 // TimeNow can be overridden by tests to return a different value for the
 // current iserviceconfig.

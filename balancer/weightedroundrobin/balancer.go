@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	estats "google.golang.org/grpc/experimental/stats"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -45,6 +46,44 @@ import (
 // Name is the name of the weighted round robin balancer.
 const Name = "weighted_round_robin"
 
+var (
+	// Scoped to just this package...
+	rrFallbackHandle = estats.RegisterInt64Count(estats.MetricDescriptor{
+		Name:           "grpc.lb.wrr.rr_fallback",
+		Description:    "Number of scheduler updates in which there were not enough endpoints with valid weight, which caused the WRR policy to fall back to RR behavior.",
+		Unit:           "update",
+		Labels:         []string{"grpc.target", "grpc.lb.locality"},
+		Default:        false, // all are opt in for now...
+	})
+
+	endpointWeightNotYetUsableHandle = estats.RegisterInt64Count(estats.MetricDescriptor{
+		Name:           "grpc.lb.wrr.endpoint_weight_not_yet_usable",
+		Description:    "Number of endpoints from each scheduler update that don't yet have usable weight information (i.e., either the load report has not yet been received, or it is within the blackout period).",
+		Unit:           "endpoint",
+		Labels:         []string{"grpc.target", "grpc.lb.locality"},
+		Default:        false, // all are opt in for now...
+	})
+
+	endpointWeightStaleHandle = estats.RegisterInt64Count(estats.MetricDescriptor{
+		Name:           "grpc.lb.wrr.endpoint_weight_stale",
+		Description:    "Number of endpoints from each scheduler update whose latest weight is older than the expiration period.",
+		Unit:           "endpoint",
+		Labels:         []string{"grpc.target", "grpc.lb.locality"},
+		Default:        false, // all are opt in for now...
+	})
+	// are weights float histo? it rounds it so I think int but might change in future...
+	endpointWeightsHandle = estats.RegisterInt64Histo(estats.MetricDescriptor{
+		Name:           "grpc.lb.wrr.endpoint_weights",
+		Description:    "Weight of each endpoint, recorded on every scheduler update. Endpoints without usable weights will be recorded as weight 0.",
+		Unit:           "endpoint",
+		Labels:         []string{"grpc.target", "grpc.lb.locality"},
+		Default:        false, // all are opt in for now...
+	})
+) // how to induce different behaviors on balancer?
+
+// argh need to build out infra for metrics atoms...
+
+
 func init() {
 	balancer.Register(bb{})
 }
@@ -58,13 +97,27 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 		csEvltr:           &balancer.ConnectivityStateEvaluator{},
 		scMap:             make(map[balancer.SubConn]*weightedSubConn),
 		connectivityState: connectivity.Connecting,
+
+		// persist target from cc
+
 	}
+
+	bOpts.Target.String() // I think it might be this not below
+	cc.Target() // canonical target?
+
+	// gets locality from update ccs - can change
+	// so need a mutex unless the operation is already sync...
+
+	bOpts.MetricsRecorder // also persist this around to record on...either pass it through or have it be a method on an object...
+
 	b.logger = prefixLogger(b)
 	b.logger.Infof("Created")
 	return b
 }
 
 func (bb) ParseConfig(js json.RawMessage) (serviceconfig.LoadBalancingConfig, error) {
+	// This right here is the configuration...
+
 	lbCfg := &lbConfig{
 		// Default values as documented in A58.
 		OOBReportingPeriod:      iserviceconfig.Duration(10 * time.Second),
@@ -338,15 +391,33 @@ type picker struct {
 	scheduler unsafe.Pointer     // *scheduler; accessed atomically
 	v         uint32             // incrementing value used by the scheduler; accessed atomically
 	cfg       *lbConfig          // active config when picker created
-	subConns  []*weightedSubConn // all READY subconns
+	subConns  []*weightedSubConn // all READY subconns...does it do the metrics on just the ready ones?
 }
+
+// It doesn't matter whether recorded all at once or
+// emitted as the
+
+// locality and target - target is fixed? built out at client conn creation
+// time... locality changes as you move it between localities, but caps the
+// cardinality at the number of localities
+
+
+
+// how to rearchitect this?
+// keep a local var per call...to record metrics on (immediate record for one count at a time?)
+
+// needs to have data *scoped to a scheduler update call*
 
 // scWeights returns a slice containing the weights from p.subConns in the same
 // order as p.subConns.
-func (p *picker) scWeights() []float64 {
+func (p *picker) scWeights() []float64 { // this reads sc weights from constantly updating SubConns...
 	ws := make([]float64, len(p.subConns))
 	now := internal.TimeNow()
 	for i, wsc := range p.subConns {
+
+		// In the helper scWeights...
+		// is this on "every" scheduler update I think so hits the new
+
 		ws[i] = wsc.weight(now, time.Duration(p.cfg.WeightExpirationPeriod), time.Duration(p.cfg.BlackoutPeriod))
 	}
 	return ws
@@ -356,13 +427,27 @@ func (p *picker) inc() uint32 {
 	return atomic.AddUint32(&p.v, 1)
 }
 
-func (p *picker) regenerateScheduler() {
-	s := newScheduler(p.scWeights(), p.inc)
+// testing deployment: xDS system with mock stats handlers
+
+// xDS System with OTel as well...Yash wanted to avoid a dependency difference...
+
+// for locality label...add "name" of weighted target as a resolver can it
+// switch localities? If so need synchronization for this locality read? Maybe
+// config
+
+// And in the OTel layer unconditionally do based off what user provides or
+// what? (merge this with Doug discussion about per call labels happening next
+// week)
+
+// I know for sure this emits labels unconditionally...
+
+func (p *picker) regenerateScheduler() { // there's some sort of hook point into this...
+	s := newScheduler(p.scWeights(), p.inc) // picker is fixed, this is a new snapshot of scheduler based of live updating sc weights...
 	atomic.StorePointer(&p.scheduler, unsafe.Pointer(&s))
 }
 
 func (p *picker) start(ctx context.Context) {
-	p.regenerateScheduler()
+	p.regenerateScheduler() // or at start...
 	if len(p.subConns) == 1 {
 		// No need to regenerate weights with only one backend.
 		return
@@ -374,7 +459,7 @@ func (p *picker) start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-ticker.C: // from timer
 				p.regenerateScheduler()
 			}
 		}
@@ -530,18 +615,42 @@ func (w *weightedSubConn) updateConnectivityState(cs connectivity.State) connect
 // will cause the backend weight to be treated as the mean of the weights of
 // the other backends.
 func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackoutPeriod time.Duration) float64 {
-	w.mu.Lock()
+	w.mu.Lock() // why is there a mutex here?
 	defer w.mu.Unlock()
+
+	// Endpoints without usable weights will be recorded as weight 0 - so as
+	// written logic already present...
+	defer endpointWeightsHandle.Record(/*mr - again need to plumb labels/mr here...*/, /*defer the return value...already has all the logic for you*/, /*[]string{target, locality}*/)
+
 	// If the most recent update was longer ago than the expiration period,
 	// reset nonEmptySince so that we apply the blackout period again if we
 	// start getting data again in the future, and return 0.
 	if now.Sub(w.lastUpdated) >= weightExpirationPeriod {
+		// No need to persist around and record at end that would create unnessarily complex code...
+		endpointWeightStaleHandle.Record(/*mr - again need to plumb labels/mr here...*/, 1, /*[]string{target, locality}*/)
 		w.nonEmptySince = time.Time{}
 		return 0
-	}
+	} // load reporting happens at a layer above - how to trigger this operation...?
 	// If we don't have at least blackoutPeriod worth of data, return 0.
-	if blackoutPeriod != 0 && (w.nonEmptySince == (time.Time{}) || now.Sub(w.nonEmptySince) < blackoutPeriod) {
+	if blackoutPeriod != 0 && (w.nonEmptySince == (time.Time{}) || now.Sub(w.nonEmptySince) < blackoutPeriod) { // this is relevant, so need some sort of data store scoped to this function...
+		// Plumb mr through sc local var or have it an object on something else?
+		endpointWeightNotYetUsableHandle.Record(/*mr - again need to plumb labels/mr here...*/, 1, /*[]string{target, locality}*/)
+
 		return 0
 	}
+	// This thing determines the weight 1:1...maybe send Doug implementation PR just to see if it makes sense...
+
+
 	return w.weightVal
-}
+} // does a returned 0 mean the endpoint weight is no longer usable...
+
+// rr fallback behavior is the only thing not emitted from the helper above...
+
+// how to trigger different weight updates/scheduler updates?
+
+
+// "Number of endpoints from each scheduler update whose latest weight is older
+// than the expiration period."
+// Is number of endpoints = number of ready SubConns, can I merge with the algorithm as written?
+
+// Mechanically try appending to resolver attributes with the name iteration in cluster impl...
