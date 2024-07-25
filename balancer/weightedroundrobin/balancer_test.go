@@ -216,6 +216,26 @@ func (s) TestBalancer_TwoAddresses_ReportingDisabled(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		roundrobin.CheckRoundRobinRPCs(ctx, srv1.Client, addrs)
 	}
+
+	// He has assertions on distributions and assertions you can make empty calls etc...
+	// so could plug in the dial option with mock metrics recorder
+
+	// probably should rebase on the one in flight for the most up to date place
+	// where symbols live...
+
+	// Set QPS and Application utilization
+
+	// Figure out derived weights from that...complicated formula, could this be made simpler?
+
+	// How many SubConns are in system...
+
+
+	// And how the operations trigger scheduler updates...is
+	// there a possibility for dynamic updates?
+	// Does it just get a scheduler update the moment it connects>
+
+
+
 }
 
 // Tests two addresses with per-call ORCA reporting enabled.  Checks the
@@ -699,6 +719,14 @@ type srvWeight struct {
 }
 
 const rrIterations = 100
+
+// so he literally makes empty calls on created servers...
+// scale this infra up somehow to also emit stats...
+
+// but before this, I guess plumb locality attr here and also
+
+// metrics recorder etc. (the only thing I need to rebase is the WRR code
+// itself).
 
 // checkWeights does rrIterations RPCs and expects the different backends to be
 // routed in a ratio as determined by the srvWeights passed in.  Allows for

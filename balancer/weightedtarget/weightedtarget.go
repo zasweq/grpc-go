@@ -111,7 +111,23 @@ func (b *weightedTargetBalancer) UpdateClientConnState(s balancer.ClientConnStat
 	// - if it's old, but has a new weight, update weight in balancer group.
 	//
 	// For all sub-balancers, forward the address/balancer config update.
-	for name, newT := range newConfig.Targets {
+
+	/*
+	To support the locality label in the WRR metrics, we will extend the
+	weighted_target LB policy (see A28) to define a resolver attribute that
+	indicates the name of its child. This attribute will be passed down to each
+	of its children with the appropriate value, so that any LB policy that sits
+	underneath the weighted_target policy will be able to use it.
+
+
+	// "Define" a resolver attribute.../
+
+	// Passed down to each of its children with the appropriate value - so just
+	// the locality of the child?
+
+	*/
+
+	for name, newT := range newConfig.Targets { // and this file will need to be rebased...
 		oldT, ok := b.targets[name]
 		if !ok {
 			// If this is a new sub-balancer, add weights to the picker map.
@@ -142,6 +158,9 @@ func (b *weightedTargetBalancer) UpdateClientConnState(s balancer.ClientConnStat
 			ResolverState: resolver.State{
 				Addresses:     addressesSplit[name], // splits the address by locality by still need this name...
 				ServiceConfig: s.ResolverState.ServiceConfig,
+
+				// How do these work...and how to plumb around wrr system...?
+
 				Attributes:    s.ResolverState.Attributes, // essentially stick the name in the attributes here...
 			},
 			BalancerConfig: newT.ChildPolicy.Config,

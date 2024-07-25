@@ -31,14 +31,14 @@ type scheduler interface {
 // len(scWeights)-1 are zero or there is only a single subconn, otherwise it
 // will return an Earliest Deadline First (EDF) scheduler implementation that
 // selects the subchannels according to their weights.
-func newScheduler(scWeights []float64, inc func() uint32) scheduler {
+func (p *picker) newScheduler() scheduler { // and the operation happens from new scheduler...so needs it here
 	
 	// does the new scheduler come in after the picker is built?
 	// what is logically a scheduler update...
 	
 	// Do count as well...the rr case is the easiet, declare it at the top level balancer
 	
-	
+	scWeights := p.scWeights() // only want to compute this once anyway...
 	
 	
 
@@ -91,11 +91,23 @@ func newScheduler(scWeights []float64, inc func() uint32) scheduler {
 
 
 	n := len(scWeights)
-	if n == 0 {
+	if n == 0 { // doesn't count
+		// is the n == 0 and n == 1 case also logically fallback to rr? this is orthogonal to fallback in config...
+		// fallback to rr balancer doesn't make sense because
+		// no concept of a scheduler update there...
+
+		// "When less than two subchannels have load info, all subchannels will
+		// get the same weight and the policy will behave the same as
+		// round_robin." so yeah this one..
+
 		return nil
 	}
 	if n == 1 {
-		return &rrScheduler{numSCs: 1, inc: inc}
+		// Vaugeness - talk to other languages
+
+		// Doug thinks not fallback if one (and zero) - just an optimization...
+
+		return &rrScheduler{numSCs: 1, inc: p.inc}
 	}
 	sum := float64(0)
 	numZero := 0
@@ -117,9 +129,12 @@ func newScheduler(scWeights []float64, inc func() uint32) scheduler {
 	// weight of each endpoint (so defer a func that happens at each record point that loops through?)
 
 
+	// less than 2...
+
+	// ordering matters for labels...
 	if numZero >= n-1 { // Not enough endpoints with valid weight, is this the only valid emission site?
-		rrFallbackHandle.Record(/*mr*/, 1, /*[]string{target, locality}*/) // how to plumb target and locality here? Do I need to make it a method on some balancer...
-		return &rrScheduler{numSCs: uint32(n), inc: inc} // is this "fallback" to rr?
+		rrFallbackHandle.Record(p.metricsRecorder/*mr*/, 1, []string{p.target, p.locality}.../*[]string{target, locality}*/) // how to plumb target and locality here? Do I need to make it a method on some balancer...
+		return &rrScheduler{numSCs: uint32(n), inc: p.inc} // is this "fallback" to rr?
 	}
 	unscaledMean := sum / float64(n-numZero)
 	scalingFactor := maxWeight / max
@@ -148,7 +163,7 @@ func newScheduler(scWeights []float64, inc func() uint32) scheduler {
 		behavior.
 
 		*/
-		return &rrScheduler{numSCs: uint32(n), inc: inc}
+		return &rrScheduler{numSCs: uint32(n), inc: p.inc}
 	}
 
 	/*
@@ -159,7 +174,7 @@ func newScheduler(scWeights []float64, inc func() uint32) scheduler {
 	// Rewrite the algo? Plumb in scWeights helper already present?
 
 	logger.Infof("using edf scheduler with weights: %v", weights)
-	return &edfScheduler{weights: weights, inc: inc}
+	return &edfScheduler{weights: weights, inc: p.inc} // I think ok anyway, always a pointer to function...
 }
 
 const maxWeight = math.MaxUint16

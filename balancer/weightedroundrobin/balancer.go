@@ -72,7 +72,7 @@ var (
 		Default:        false, // all are opt in for now...
 	})
 	// are weights float histo? it rounds it so I think int but might change in future...
-	endpointWeightsHandle = estats.RegisterInt64Histo(estats.MetricDescriptor{
+	endpointWeightsHandle = estats.RegisterFloat64Histo(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.endpoint_weights",
 		Description:    "Weight of each endpoint, recorded on every scheduler update. Endpoints without usable weights will be recorded as weight 0.",
 		Unit:           "endpoint",
@@ -99,7 +99,8 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 		connectivityState: connectivity.Connecting,
 
 		// persist target from cc
-
+		target: bOpts.Target.String(), // this is canonical target according to documentation..."returns the canonical target representation of Target"
+		metricsRecorder: bOpts.MetricsRecorder,
 	}
 
 	bOpts.Target.String() // I think it might be this not below
@@ -108,7 +109,17 @@ func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Ba
 	// gets locality from update ccs - can change
 	// so need a mutex unless the operation is already sync...
 
-	bOpts.MetricsRecorder // also persist this around to record on...either pass it through or have it be a method on an object...
+	// bOpts.MetricsRecorder // also persist this around to record on...either pass it through or have it be a method on an object...
+	// is has to persist it in the balancer right?
+	// What other subcomponents could even get built right here?
+
+	// what two components do the recording picker and...?
+
+	// Give this to picker, which creates scheduler
+
+	// And what component created weighted SubConns, w/e needs both
+
+	// Creates picker from calls *into* balancer...
 
 	b.logger = prefixLogger(b)
 	b.logger.Infof("Created")
@@ -124,7 +135,7 @@ func (bb) ParseConfig(js json.RawMessage) (serviceconfig.LoadBalancingConfig, er
 		BlackoutPeriod:          iserviceconfig.Duration(10 * time.Second),
 		WeightExpirationPeriod:  iserviceconfig.Duration(3 * time.Minute),
 		WeightUpdatePeriod:      iserviceconfig.Duration(time.Second),
-		ErrorUtilizationPenalty: 1,
+		ErrorUtilizationPenalty: 1, // utilization is distinct, this defaults to 1 so doesn't seem to be a factor...all bassed of eps qps and utilization in the default case...
 	}
 	if err := json.Unmarshal(js, lbCfg); err != nil {
 		return nil, fmt.Errorf("wrr: unable to unmarshal LB policy config: %s, error: %v", string(js), err)
@@ -156,6 +167,10 @@ func (bb) Name() string {
 type wrrBalancer struct {
 	cc     balancer.ClientConn
 	logger *grpclog.PrefixLogger
+	// built out at creation time; read only after, so no need for synchronization
+	target string
+	metricsRecorder estats.MetricsRecorder
+
 
 	// The following fields are only accessed on calls into the LB policy, and
 	// do not need a mutex.
@@ -167,6 +182,7 @@ type wrrBalancer struct {
 	resolverErr       error // the last error reported by the resolver; cleared on successful resolution
 	connErr           error // the last connection error; cleared upon leaving TransientFailure
 	stopPicker        func()
+	locality          string // empty locality if unset Otel sets empty locality emission since configures and emits locality label from this component...
 }
 
 func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error {
@@ -178,6 +194,8 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	}
 
 	b.cfg = cfg
+	b.locality = /*resolver attribute...how do these work?*/ // needs to be here for updateAddresses to see it, and for new resolvers I like this...
+	// zero addresses should have right locality next time (although will get locality in next update so I think not an important consideration)
 	b.updateAddresses(ccs.ResolverState.Addresses)
 
 	if len(ccs.ResolverState.Addresses) == 0 {
@@ -185,7 +203,11 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 		return balancer.ErrBadResolverState
 	}
 
-	b.regeneratePicker()
+	// only update locality if new picker but always send locality down
+
+
+	// don't pass because other operations call it also has access to all balancer data
+	b.regeneratePicker() // no sync - could I pass the locality here...or does need to persist on b because other operations present...
 
 	return nil
 }
@@ -224,6 +246,10 @@ func (b *wrrBalancer) updateAddresses(addrs []resolver.Address) {
 				// Initially, we set load reports to off, because they are not
 				// running upon initial weightedSubConn creation.
 				cfg: &lbConfig{EnableOOBLoadReport: false},
+
+				metricsRecorder: b.metricsRecorder,
+				target: b.target,
+				locality: b.locality, // written to before in same operation only sync so ok here...
 			}
 			b.subConns.Set(addr, wsc)
 			b.scMap[sc] = wsc
@@ -374,9 +400,12 @@ func (b *wrrBalancer) regeneratePicker() {
 		v:        rand.Uint32(), // start the scheduler at a random point
 		cfg:      b.cfg,
 		subConns: b.readySubConns(),
+		metricsRecorder: b.metricsRecorder,
+		locality: b.locality, // this doesn't need sync because locality written too only in UpdateCCS
+		target: b.target,
 	}
 	var ctx context.Context
-	ctx, b.stopPicker = context.WithCancel(context.Background())
+	ctx, b.stopPicker = context.WithCancel(context.Background()) // cancels context which exits spawned goroutine...
 	p.start(ctx)
 	b.cc.UpdateState(balancer.State{
 		ConnectivityState: b.connectivityState,
@@ -392,6 +421,12 @@ type picker struct {
 	v         uint32             // incrementing value used by the scheduler; accessed atomically
 	cfg       *lbConfig          // active config when picker created
 	subConns  []*weightedSubConn // all READY subconns...does it do the metrics on just the ready ones?
+
+	// built out at creation time; read only after, so no need for synchronization or accessed atomically
+	// locality can change, but then you'd get a whole new picker object so yeah built out at init time
+	target string
+	locality string
+	metricsRecorder estats.MetricsRecorder
 }
 
 // It doesn't matter whether recorded all at once or
@@ -410,6 +445,10 @@ type picker struct {
 
 // scWeights returns a slice containing the weights from p.subConns in the same
 // order as p.subConns.
+
+// getScWeights for scheduler - document side effect of recording weight
+
+
 func (p *picker) scWeights() []float64 { // this reads sc weights from constantly updating SubConns...
 	ws := make([]float64, len(p.subConns))
 	now := internal.TimeNow()
@@ -418,8 +457,15 @@ func (p *picker) scWeights() []float64 { // this reads sc weights from constantl
 		// In the helper scWeights...
 		// is this on "every" scheduler update I think so hits the new
 
-		ws[i] = wsc.weight(now, time.Duration(p.cfg.WeightExpirationPeriod), time.Duration(p.cfg.BlackoutPeriod))
+		ws[i] = wsc.weight(now, time.Duration(p.cfg.WeightExpirationPeriod), time.Duration(p.cfg.BlackoutPeriod), true)
+		// Added side effects to above...
+
+		// Currently only called here, but make sure not called otherwise...
+
 	}
+
+
+
 	return ws
 }
 
@@ -442,7 +488,17 @@ func (p *picker) inc() uint32 {
 // I know for sure this emits labels unconditionally...
 
 func (p *picker) regenerateScheduler() { // there's some sort of hook point into this...
-	s := newScheduler(p.scWeights(), p.inc) // picker is fixed, this is a new snapshot of scheduler based of live updating sc weights...
+
+	// on the picker, so pass all the info to the picker when it's created from persisted balancer?
+
+	// pass it here, create the wrapped sc
+
+	// Returning the enum value is complicated so do it in the wrapped sc...
+
+	// make below a function on picker, no need to pass it stuff anymore all
+	// data comes out of picker...
+
+	s := p.newScheduler(/*p.scWeights(), p.inc*/) // picker is fixed, this is a new snapshot of scheduler based of live updating sc weights...
 	atomic.StorePointer(&p.scheduler, unsafe.Pointer(&s))
 }
 
@@ -459,7 +515,7 @@ func (p *picker) start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C: // from timer
+			case <-ticker.C: // from timer - this is called in a wrapped goroutine for the regenerated picker, picker regenerated on balancer calls
 				p.regenerateScheduler()
 			}
 		}
@@ -496,6 +552,12 @@ type weightedSubConn struct {
 	// do not need a mutex.
 	connectivityState connectivity.State
 	stopORCAListener  func()
+
+	// what are sync requirements here? Built out at init time right and read only after that? so no need for sync...
+	target string
+	metricsRecorder estats.MetricsRecorder
+	locality string // t
+
 
 	// The following fields are accessed asynchronously and are protected by
 	// mu.  Note that mu may not be held when calling into the stopORCAListener
@@ -613,30 +675,43 @@ func (w *weightedSubConn) updateConnectivityState(cs connectivity.State) connect
 // weight returns the current effective weight of the subconn, taking into
 // account the parameters.  Returns 0 for blacked out or expired data, which
 // will cause the backend weight to be treated as the mean of the weights of
-// the other backends.
-func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackoutPeriod time.Duration) float64 {
+// the other backends. comment here about for scheduler...
+func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackoutPeriod time.Duration, forScheduler bool) (weight float64) { // Three come out of weight helper on weighted SubConn...
 	w.mu.Lock() // why is there a mutex here?
 	defer w.mu.Unlock()
 
+	// fix tests (might call weight or newScheduler directly) and figure out named return value
+
+	// add a bool or rename to document side effects ("record metrics as
+	// scheduler is being rebuilt")
+	weight = 0
+
 	// Endpoints without usable weights will be recorded as weight 0 - so as
 	// written logic already present...
-	defer endpointWeightsHandle.Record(/*mr - again need to plumb labels/mr here...*/, /*defer the return value...already has all the logic for you*/, /*[]string{target, locality}*/)
+	if forScheduler {
+		// defer return value (read golang playground for this) according to go playground the variable changes over time
+		defer endpointWeightsHandle.Record(w.metricsRecorder, weight, []string{w.target, w.locality}... /*[]string{target, locality}*/)
+	}
 
 	// If the most recent update was longer ago than the expiration period,
 	// reset nonEmptySince so that we apply the blackout period again if we
 	// start getting data again in the future, and return 0.
 	if now.Sub(w.lastUpdated) >= weightExpirationPeriod {
-		// No need to persist around and record at end that would create unnessarily complex code...
-		endpointWeightStaleHandle.Record(/*mr - again need to plumb labels/mr here...*/, 1, /*[]string{target, locality}*/)
+		// No need to persist around and record at end that would create unnecessarily complex code...
+		if forScheduler {
+			endpointWeightStaleHandle.Record(w.metricsRecorder, 1, []string{w.target, w.locality}...)
+		}
 		w.nonEmptySince = time.Time{}
-		return 0
+		return
 	} // load reporting happens at a layer above - how to trigger this operation...?
+
+
 	// If we don't have at least blackoutPeriod worth of data, return 0.
 	if blackoutPeriod != 0 && (w.nonEmptySince == (time.Time{}) || now.Sub(w.nonEmptySince) < blackoutPeriod) { // this is relevant, so need some sort of data store scoped to this function...
 		// Plumb mr through sc local var or have it an object on something else?
-		endpointWeightNotYetUsableHandle.Record(/*mr - again need to plumb labels/mr here...*/, 1, /*[]string{target, locality}*/)
+		endpointWeightNotYetUsableHandle.Record(w.metricsRecorder, 1, []string{w.target, w.locality}...)
 
-		return 0
+		return
 	}
 	// This thing determines the weight 1:1...maybe send Doug implementation PR just to see if it makes sense...
 

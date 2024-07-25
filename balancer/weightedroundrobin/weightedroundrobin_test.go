@@ -74,7 +74,7 @@ func TestAddrInfoToAndFromAttributes(t *testing.T) {
 
 func TestGetAddInfoEmpty(t *testing.T) {
 	addr := resolver.Address{}
-	gotAddrInfo := GetAddrInfo(addr)
+	gotAddrInfo := GetAddrInfo(addr) // Also still need to add locality attribute
 	wantAddrInfo := AddrInfo{}
 	if !cmp.Equal(gotAddrInfo, wantAddrInfo) {
 		t.Errorf("gotAddrInfo: %v, wantAddrInfo: %v", gotAddrInfo, wantAddrInfo)
