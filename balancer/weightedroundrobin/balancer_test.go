@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/stubserver"
 	"google.golang.org/grpc/internal/testutils/roundrobin"
+	"google.golang.org/grpc/internal/testutils/stats"
 	"google.golang.org/grpc/orca"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/resolver"
@@ -543,6 +544,54 @@ func (s) TestBalancer_TwoAddresses_BlackoutPeriod(t *testing.T) {
 // weight (meaning to use the average weight) once the expiration period
 // elapses.
 func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
+	// For rls too :)
+	// This scenario can be used to test an emission of the third metric...yeah :)
+
+	mr := stats.NewTestMetricsRecorder(t, []string{"grpc.lb.wrr.rr_fallback", "grpc.lb.wrr.endpoint_weight_not_yet_usable", "grpc.lb.wrr.endpoint_weight_stale", "grpc.lb.wrr.endpoint_weights"})
+
+	// grpc.WithStatsHandler(mr) // configure the client with this...
+
+	// doesn't lose anything int to float...
+	// Could pull out this call to a helper that takes 4 values and asserts all are as expected...
+	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", /*what should this number be for fallback?*/)
+	// for the metric below, should I just use this test to scope this or find another test I can plug in...
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", /*what should this number be for this?*/) // Distinguish between 0 and unset?
+	// The metric below is nicely scoped to this test...
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", /*what should this number be for this? - this is the sceanrio under test*/)
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", /*Assertion comes after rounding etc...use the distribution to see what implies this...*/)
+
+
+
+	// need assertions for a descriptor...I think this package has access to descriptor ref...e2e can I just use the name in OTel emissions to check this?
+
+	// fuck no ref to the handle...
+	// but coullddddd key it on name?
+
+	// handle passed in yeah key it on metric name -> map[label representation] -> value
+
+	// because pass in a metrics struct to the fake metrics recorder
+	// anyway...already tested that handles can be used as keys in metrics
+	// registry tests and OTel tests...yeah do that
+
+	endpointWeightStaleHandle
+	mr.assert
+
+
+	// and scale up assertions maybe using Yijie's way by adding a
+	// hash...map[desc]map[hash (k/v for labels]recording point
+	// target set in this case to whatever stub server is configured with
+	// locality doesn't apply since not part of xDS System...
+
+	// What should the value be? 1 or 2....
+
+	// one loaded one not so 1 for that metric
+	// what endpoint weights
+
+	// at the end of function hits third metric somehow...
+
+
+
+
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 
@@ -577,7 +626,7 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 	cfg := oobConfig
 	cfg.OOBReportingPeriod = stringp("60s")
 	sc := svcConfig(t, cfg)
-	if err := srv1.StartClient(grpc.WithDefaultServiceConfig(sc)); err != nil {
+	if err := srv1.StartClient(grpc.WithDefaultServiceConfig(sc), grpc.WithStatsHandler(mr)); err != nil {
 		t.Fatalf("Error starting client: %v", err)
 	}
 	addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
@@ -587,7 +636,7 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 	ensureReached(ctx, t, srv1.Client, 2)
 
 	// Wait for the weight update period to allow the new weights to be processed.
-	time.Sleep(weightUpdatePeriod)
+	time.Sleep(weightUpdatePeriod) // sleeps here...weight update period, not simulated time for events?
 	checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 10})
 
 	// Advance what time.Now returns to the weight expiration time minus 1s to
@@ -598,6 +647,26 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 	time.Sleep(weightUpdatePeriod)
 	checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 10})
 
+	// Right here also have assertions...
+	// If I do have helper though will need to figure out what to do for histoo
+	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", 1) // This should be 1 here, and 0 above since this hits from rrFallbackHandle...
+
+	// This setNow and time.Sleep operation cause weights to expire - one or both?
+	// I think both expire - just check this one metric and see if it works...
+	// test all metrics in each function or just one per for specificity...?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", 0) // both endpoints expire I think...
+
+	// Endpoint weight not yet usable hits above and doesn't change? How to have assertions at each step?
+	// Maybe a helper that takes 4 expected...how to do this for histos?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", 2/*does this have any data points? not at this moment but when test is warming up it will...but it persists it around*/) // Distinguish between 0 and unset?
+
+	// How do you assert histos? I think this goes 0 0 now, but earlier it actaully emits the weights which I think are in a 10:1 ratio...scale up RLS unit tests too?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", 1/*Assertion comes after rounding etc...use the distribution to see what implies this...*/)
+
+	// Before factoring out into 4 just get a smoke test to work...one working/compiled maybe...
+
+
+
 	// Advance what time.Now returns to the weight expiration time plus 1s to
 	// ensure all weights expired and addresses are routed evenly.
 	setNow(start.Add(weightExpirationPeriod + time.Second))
@@ -605,6 +674,22 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 	// Wait for the weight expiration period so the weights have expired.
 	time.Sleep(weightUpdatePeriod)
 	checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 1})
+
+
+	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", 1) // This should be 1 here, and 0 above since this hits from rrFallbackHandle...
+
+	// This setNow and time.Sleep operation cause weights to expire - one or both?
+	// I think both expire - just check this one metric and see if it works...
+	// test all metrics in each function or just one per for specificity...?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", 2) // both endpoints expire I think...
+
+	// Endpoint weight not yet usable hits above and doesn't change? How to have assertions at each step?
+	// Maybe a helper that takes 4 expected...how to do this for histos?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", 2) // Distinguish between 0 and unset?
+
+	// How do you assert histos? I think this goes 0 0 now, but earlier it actaully emits the weights which I think are in a 10:1 ratio...scale up RLS unit tests too?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", 1/*Assertion comes after rounding etc...use the distribution to see what implies this...*/)
+
 }
 
 // Tests logic surrounding subchannel management.
@@ -754,3 +839,26 @@ func timeNow() time.Time {
 func setTimeNow(f func() time.Time) {
 	timeNowFunc.Store(f)
 }
+
+// On start client, pass a new metrics recorder (with a ref in test to do assertions on...)
+
+// and see the 4 metrics...the metrics recorder creates of metrics registry at the time...instruments are already registered
+
+// read the tests and see what the metrics would be if they were emitted
+// those 4...scale up all? think of other sceanrios for tests...
+
+// this is full e2e infra makes RPC's to backend and asserts on the distribution of these RPC's
+
+// target but this isn't in a full e2e system so don't need locality here...
+
+// deploy xDS tree alongside OTel (need those helpers...)
+
+
+// If I configure the client with a mock metrics recorder...
+
+// these sceanrios should just work out of the box...
+
+// already have e2e scenarios here...
+// Interesting tests to hook on?
+// Emit from a few tests?
+// Write what the 4 metrics should be from these interesting scenarios/tests...
