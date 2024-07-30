@@ -47,6 +47,36 @@ import (
 // Name is the name of the weighted round robin balancer.
 const Name = "weighted_round_robin"
 
+// Add comment to exported field...
+
+
+// How to get operations on this to have eventually consistent assertion for metrics...
+
+// 1 2 3 <- eventually show each knob (need poll at each point)
+
+// or just 3 <- after all the operations, eventually consistent to this state, or could look at metric emission history...
+
+// histo the last x records are a certain weight...
+
+
+// Also, it's blocking the channel sends, should I rearchitect the
+// waits/sends/assertions on the fake metrics recorder?
+
+// Trivially I could just increase buffer size...
+
+// Could I rewrite the assertions to read off buffer (can verify labels
+// too)...Go's model of eventual consistency...like OD processing events on that
+// run() goroutine...
+
+// Right now I have an assert that takes a want and assert it against the most
+// recent recording point in place... this doesn't work well with
+// nondeterministic emissions like sleeps etc.
+
+// Eventual consistency that works well with operations above...play around with
+// it and see how operations truly link...and what would work best...and then
+// build out operations to support it
+
+
 var (
 	rrFallbackMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.rr_fallback",
@@ -451,7 +481,7 @@ func (p *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	if !p.cfg.EnableOOBLoadReport {
 		pr.Done = func(info balancer.DoneInfo) {
 			if load, ok := info.ServerLoad.(*v3orcapb.OrcaLoadReport); ok && load != nil {
-				pickedSC.OnLoadReport(load)
+				pickedSC.OnLoadReport(load) // called from done - so picker must hit...
 			}
 		}
 	}
@@ -506,8 +536,10 @@ func (w *weightedSubConn) OnLoadReport(load *v3orcapb.OrcaLoadReport) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	// Ask Java what they did?
 	errorRate := load.Eps / load.RpsFractional
-	w.weightVal = load.RpsFractional / (utilization + errorRate*w.cfg.ErrorUtilizationPenalty)
+	// Exact floats or proportion?
+	w.weightVal = load.RpsFractional / (utilization + errorRate*w.cfg.ErrorUtilizationPenalty) // Either this complicated val or 0...
 	if w.logger.V(2) {
 		w.logger.Infof("New weight for subchannel %v: %v", w.SubConn, w.weightVal)
 	}
@@ -599,24 +631,32 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 
 	if recordMetrics {
 		defer func() {
+			print("for metric grpc.lb.wrr.endpoint_weights recording ", weight, "\n") // this hits on every SubConn
 			endpointWeightsMetric.Record(w.metricsRecorder, weight, w.target, w.locality)
 		}()
 	}
 
+	// This will hit on the first weight call (and record endpoint weight stale),
+	// zero is c
+
 	// If the most recent update was longer ago than the expiration period,
 	// reset nonEmptySince so that we apply the blackout period again if we
 	// start getting data again in the future, and return 0.
-	if now.Sub(w.lastUpdated) >= weightExpirationPeriod {
+	if now.Sub(w.lastUpdated) >= weightExpirationPeriod { // this zero value gets set at creation, and then this hits before it gets a load report from pick, is this WAI?
 		if recordMetrics {
+			print("for metric grpc.lb.wrr.endpoint_weight_stale recording ", 1, "\n")
 			endpointWeightStaleMetric.Record(w.metricsRecorder, 1, w.target, w.locality)
 		}
 		w.nonEmptySince = time.Time{}
 		return 0
 	}
 
+	// blackoutPeriod == 0 from his configs so this never hits...
+
 	// If we don't have at least blackoutPeriod worth of data, return 0.
 	if blackoutPeriod != 0 && (w.nonEmptySince == (time.Time{}) || now.Sub(w.nonEmptySince) < blackoutPeriod) {
 		if recordMetrics {
+			print("for metric grpc.lb.wrr.endpoint_weight_not_yet_usable recording ", 1, "\n")
 			endpointWeightNotYetUsableMetric.Record(w.metricsRecorder, 1, w.target, w.locality)
 		}
 		return 0
@@ -624,3 +664,13 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 
 	return w.weightVal
 }
+
+// There's a lot of recording points here...
+// How to have this deterministic if not a gauge/eventual consistency...
+
+// Play around with this to make it eventually consistent...
+
+// How to make these emissions deterministic...?
+
+// Especially time.Sleeps...poll for eventual consistency at the end?
+

@@ -77,11 +77,28 @@ var (
 	oobConfig = iwrr.LBConfig{
 		EnableOOBLoadReport:     boolp(true),
 		OOBReportingPeriod:      stringp("0.005s"),
-		BlackoutPeriod:          stringp("0s"),
+		BlackoutPeriod:          stringp("0s"), // does this even create the possibility of it being within blackout period...
 		WeightExpirationPeriod:  stringp("60s"),
 		WeightUpdatePeriod:      stringp(".050s"),
-		ErrorUtilizationPenalty: float64p(0),
+		ErrorUtilizationPenalty: float64p(0), // this makes it simply qps/utilization...
 	}
+	// config here for metrics...how to get per call I guess
+	// do it through same mechanism...need to make an RPC I guess?
+
+	// weight will be 0 if in blackout period...
+	testMetricsConfig = iwrr.LBConfig{
+		EnableOOBLoadReport:     boolp(false), // weights come in per request...
+		OOBReportingPeriod:      stringp("0.005s"), // ignored
+		BlackoutPeriod:          stringp("0s"), // need to make this non zero if you want to test third metric...
+		WeightExpirationPeriod:  stringp("60s"), // make this hittable by test...
+		WeightUpdatePeriod:      stringp(".050s"), // how often the scheduler runs...non deterministic...
+		ErrorUtilizationPenalty: float64p(0), // makes weight qps/utilization...
+	}
+
+	// Even if blackout/weight expiration don't hit...
+	// can still have deterministic metrics test, just expect 0 for some stuff...
+
+
 )
 
 type testServer struct {
@@ -160,6 +177,9 @@ func svcConfig(t *testing.T, wrrCfg iwrr.LBConfig) string {
 	return sc
 }
 
+
+// Scale a lot of these basic smoke tests up
+
 // Tests basic functionality with one address.  With only one address, load
 // reporting doesn't affect routing at all.
 func (s) TestBalancer_OneAddress(t *testing.T) {
@@ -172,6 +192,9 @@ func (s) TestBalancer_OneAddress(t *testing.T) {
 		{rt: reportOOB, cfg: oobConfig},
 	}
 
+	// Numerous ones of these t-tests...
+	// Could test for each one, I think deterministic in emissions...
+
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("reportType:%v", tc.rt), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -180,9 +203,16 @@ func (s) TestBalancer_OneAddress(t *testing.T) {
 			srv := startServer(t, tc.rt)
 
 			sc := svcConfig(t, tc.cfg)
-			if err := srv.StartClient(grpc.WithDefaultServiceConfig(sc)); err != nil {
+			if err := srv.StartClient(grpc.WithDefaultServiceConfig(sc)/*scale basic smoke test here up with fake stats handler...*/); err != nil {
 				t.Fatalf("Error starting client: %v", err)
 			}
+
+			// what? I think spams a bunch of weights...
+
+			// but should never not be usable? But that emits 0 so maybe just check weight function...
+
+			// Updates weights around 10 times...argh that is the scheduler update...so creates non determinism...
+
 
 			// Perform many RPCs to ensure the LB policy works with 1 address.
 			for i := 0; i < 100; i++ {
@@ -196,6 +226,101 @@ func (s) TestBalancer_OneAddress(t *testing.T) {
 		})
 	}
 }
+
+// For other tests say what metrics are being tested/expected emissions...
+
+// TestWRRMetricsBasic tests metrics emitted from the WRR balancer. It
+// configures a weighted round robin balancer as the top level balancer of a
+// ClientConn, and configures a fake stats handler on the ClientConn to receive
+// metrics. It verifies stats emitted from the Weighted Round Robin Balancer on
+// balancer startup case and from the first scheduler update? are as expected.
+
+
+// Need a client to provide mr, unless you create mr and pass the mr to the helper...
+// and client comes coupled with WRR operations you need like weights etc.
+
+func (s) TestWRRMetricsBasic(t *testing.T) {
+
+	// all of these come out *every scheduler update*, which after the first one
+	// is off nondeterministic time.Sleeps...but can't trigger expired unless time.Sleeps so poll for those...
+
+	// Could do this orthogonal to picker update: (or call weight directly? with a smoke test)
+
+	// 4 metrics:
+	// fallback (in scheduler): (if one sc, this hits immediately, also need to induce when more than one, but not enough weights, I think that needs eventual consistency...)
+
+	// 3 weight: (in weight)
+	// 0 because in blackout (blackout in config)
+	// 0 because weight expired (this is determined by config as well...)
+	// the weight itself...float
+
+
+	// Target whatever is passed into balancer...rn he has cc take care of it and have the layering work that way...
+	// One sc, one scheduler update from it being built out
+	// fallback 1
+	// one blackout
+
+
+
+
+	// Next scheduler update (how to trigger deterministicallly...)...
+
+
+
+
+	// No matter whether picker or not if not invoke weight directly...
+	// will either need oob or per request infra to invoke weights on scs...
+
+	// per request seems more deterministic...triggered by request
+	// knobs are how often sched reupdates,
+	// blackout period,
+	// stale period...
+
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+
+	srv := startServer(t, reportCall)
+	sc := svcConfig(t, testMetricsConfig) // what configures how many SubConns are part of system?
+
+	// create a tmr here with all of the metrics enabled...
+	mr := stats.NewTestMetricsRecorder(t, []string{"grpc.lb.wrr.rr_fallback", "grpc.lb.wrr.endpoint_weight_not_yet_usable", "grpc.lb.wrr.endpoint_weight_stale", "grpc.lb.wrr.endpoint_weights"})
+	if err := srv.StartClient(grpc.WithDefaultServiceConfig(sc), grpc.WithStatsHandler(mr)/*scale basic smoke test here up with fake stats handler...*/); err != nil {
+		t.Fatalf("Error starting client: %v", err)
+	}
+	srv.callMetrics.SetQPS(float64(1)) // or do this before...how does this affect the algorithm?
+
+	if _, err := srv.Client.EmptyCall(ctx, &testpb.Empty{}); err != nil {
+		t.Fatalf("Error from EmptyCall: %v", err)
+	}
+
+	// And expect 0 for some...albiet deterministically...doesn't hit another scheduler update so ok here...
+	// Perhaps write why I expect 0 for some...
+	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", 1) // This should be 1 here, and 0 above since this hits from rrFallbackHandle...
+
+	// This setNow and time.Sleep operation cause weights to expire - one or both?
+	// I think both expire - just check this one metric and see if it works...
+	// test all metrics in each function or just one per for specificity...?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", 1) // How does this have a stale endpoint...there's one addr?
+
+	// Endpoint weight not yet usable hits above and doesn't change? How to have assertions at each step?
+	// Maybe a helper that takes 4 expected...how to do this for histos?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", 0) // Distinguish between 0 and unset? Yeah the issue is this passes even though this never got emitted...
+
+	// How do you assert histos? I think this goes 0 0 now, but earlier it actaully emits the weights which I think are in a 10:1 ratio...scale up RLS unit tests too?
+	// Base usage of histos off channels?
+
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", 0/*Assertion comes after rounding etc...use the distribution to see what implies this...*/)
+	// Doug will respond if this is expected ^^^, could refactor these 4 checks into a helper (and cleanup)
+
+
+	// Deterministic time.Sleep if I want to retrigger scheduler update running...
+
+	// poll here...
+
+} // no need to mess with registred instruments since these registered instruments should always be present if balancer is imported, tests should work on registered instruments on top of these...
+
+// Orthogonally could work on e2e test...
 
 // Tests two addresses with ORCA reporting disabled (should fall back to pure
 // RR).
@@ -488,7 +613,7 @@ func (s) TestBalancer_TwoAddresses_BlackoutPeriod(t *testing.T) {
 		blackoutPeriodCfg *string
 		blackoutPeriod    time.Duration
 	}{{
-		blackoutPeriodCfg: stringp("1s"),
+		blackoutPeriodCfg: stringp("1s"), // this overwrites 0 default blackout config...
 		blackoutPeriod:    time.Second,
 	}, {
 		blackoutPeriodCfg: nil,
@@ -542,23 +667,23 @@ func (s) TestBalancer_TwoAddresses_BlackoutPeriod(t *testing.T) {
 
 // Tests that the weight expiration period causes backends to use 0 as their
 // weight (meaning to use the average weight) once the expiration period
-// elapses.
+// elapses. After the weight expires, the expected metrics to be emitted from
+// WRR are also configured.
 func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 	// For rls too :)
 	// This scenario can be used to test an emission of the third metric...yeah :)
 
+	// what to check on sh? Most recent...
 	mr := stats.NewTestMetricsRecorder(t, []string{"grpc.lb.wrr.rr_fallback", "grpc.lb.wrr.endpoint_weight_not_yet_usable", "grpc.lb.wrr.endpoint_weight_stale", "grpc.lb.wrr.endpoint_weights"})
-
-	// grpc.WithStatsHandler(mr) // configure the client with this...
 
 	// doesn't lose anything int to float...
 	// Could pull out this call to a helper that takes 4 values and asserts all are as expected...
-	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", /*what should this number be for fallback?*/)
+	/*mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", /*what should this number be for fallback?)
 	// for the metric below, should I just use this test to scope this or find another test I can plug in...
-	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", /*what should this number be for this?*/) // Distinguish between 0 and unset?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", /*what should this number be for this?) // Distinguish between 0 and unset?
 	// The metric below is nicely scoped to this test...
-	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", /*what should this number be for this? - this is the sceanrio under test*/)
-	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", /*Assertion comes after rounding etc...use the distribution to see what implies this...*/)
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", /*what should this number be for this? - this is the sceanrio under test)
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", /*Assertion comes after rounding etc...use the distribution to see what implies this...)
 
 
 
@@ -574,7 +699,7 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 	// registry tests and OTel tests...yeah do that
 
 	endpointWeightStaleHandle
-	mr.assert
+	mr.assert*/
 
 
 	// and scale up assertions maybe using Yijie's way by adding a
@@ -649,21 +774,44 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 
 	// Right here also have assertions...
 	// If I do have helper though will need to figure out what to do for histoo
+
+	// this falls back already? Must get triggered above...yeah needs to wait for endpoint updates?
 	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", 1) // This should be 1 here, and 0 above since this hits from rrFallbackHandle...
 
 	// This setNow and time.Sleep operation cause weights to expire - one or both?
 	// I think both expire - just check this one metric and see if it works...
 	// test all metrics in each function or just one per for specificity...?
-	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", 0) // both endpoints expire I think...
+	// does this not expire?
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", 1) // both endpoints expire I think...
 
 	// Endpoint weight not yet usable hits above and doesn't change? How to have assertions at each step?
 	// Maybe a helper that takes 4 expected...how to do this for histos?
-	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", 2/*does this have any data points? not at this moment but when test is warming up it will...but it persists it around*/) // Distinguish between 0 and unset?
+
+	// Is this deterministic...there's quite a few time.Sleeps littered throughout codebase...
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", 0/*does this have any data points? not at this moment but when test is warming up it will...but it persists it around*/) // Distinguish between 0 and unset?
 
 	// How do you assert histos? I think this goes 0 0 now, but earlier it actaully emits the weights which I think are in a 10:1 ratio...scale up RLS unit tests too?
-	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", 1/*Assertion comes after rounding etc...use the distribution to see what implies this...*/)
+	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", 100/*Assertion comes after rounding etc...use the distribution to see what implies this...*/)
+	// Need to rewrite assertion to persist full histos...again there's a lot of time.Sleeps...
+	// is this deterministic...variable number of scheduler updates?
+
+	// Getting 0, I don't know if it's hitting scheduler?
+
+	// Does it emit metrics? Print there...
+
 
 	// Before factoring out into 4 just get a smoke test to work...one working/compiled maybe...
+
+	// and then populate a few more test cases, including in between the operations above...
+
+
+
+	// e2e test - how to get it working, just needs to
+	// actually run a scheduler update...
+	// can I just get away with barely any configuration? And have it run all the default weights...
+
+	// ping Doug asking if I can do it in this package to reuse helpers
+
 
 
 
@@ -673,7 +821,7 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 
 	// Wait for the weight expiration period so the weights have expired.
 	time.Sleep(weightUpdatePeriod)
-	checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 1})
+	checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 1}) // wtf why is this failing now...
 
 
 	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", 1) // This should be 1 here, and 0 above since this hits from rrFallbackHandle...
@@ -689,6 +837,44 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 
 	// How do you assert histos? I think this goes 0 0 now, but earlier it actaully emits the weights which I think are in a 10:1 ratio...scale up RLS unit tests too?
 	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", 1/*Assertion comes after rounding etc...use the distribution to see what implies this...*/)
+
+
+	// Doesn't block forever now since increased buffer size, are emissions deterministic (relates to where to put assertions, lots of math)
+
+	// Also need to calculate based of formula :) but it looks like weights
+	// given to rr algorithm do this for you...
+
+	// Can this fail at call site?
+
+	// send out unit tests as separate PR to e2e?
+	// test_metrics_recorder.go:80: unexpected data for metric grpc.lb.wrr.endpoint_weight_stale, got: 1, want: 2
+	// test_metrics_recorder.go:80: unexpected data for metric grpc.lb.wrr.endpoint_weight_stale, got: 1, want: 2
+
+	// test_metrics_recorder.go:80: unexpected data for metric grpc.lb.wrr.endpoint_weights, got: 10, want: 100
+	// test_metrics_recorder.go:80: unexpected data for metric grpc.lb.wrr.endpoint_weights, got: 10, want: 100
+
+	// Two different failures, but this is due to the time.Sleeps and no polls, so snapshot is nondeterministic...
+	// Rewrite unit tests...
+
+	// Or for smoke test could do one with simpler operations and see if I need
+	// to poll/build off channel or not...
+
+
+	// Could relax these checks to what comes out at the end/eventual
+	// consistency since we'll have smoke tests for endpoint weights in helpers
+	// above...
+
+	// Or could test weights for granular checks + smoke check for fallback in
+	// two cases...(see if this scaling up works, this would take some setup wrt
+	// scs and inducing weights)
+
+	// Only label is locality + target...
+	// no locality and target is trivial just need one assertion (for all metrics?) for that I think...
+
+
+	// For e2e, could just test metrics emit *something...*
+
+
 
 }
 

@@ -41,17 +41,49 @@ type TestMetricsRecorder struct {
 	intHistoCh   *testutils.Channel
 	floatHistoCh *testutils.Channel
 	intGaugeCh   *testutils.Channel
+
+	// metric name -> label -> count actually do I even need labels I test that at OTel...
+	// could wait for label emisisons on the channel
+	data map[estats.Metric]float64
 }
 
 func NewTestMetricsRecorder(t *testing.T, metrics []string) *TestMetricsRecorder {
-	return &TestMetricsRecorder{
+	tmr := &TestMetricsRecorder{
 		t: t,
 
-		intCountCh:   testutils.NewChannelWithSize(10),
-		floatCountCh: testutils.NewChannelWithSize(10),
-		intHistoCh:   testutils.NewChannelWithSize(10),
-		floatHistoCh: testutils.NewChannelWithSize(10),
-		intGaugeCh:   testutils.NewChannelWithSize(10),
+		// Orthogonal to OTel emissions...how to make those deterministic...? I could mock locality
+		// label for testing if that makes it easier...
+
+		intCountCh:   testutils.NewChannelWithSize(100), // Rewrite assertions to be based off this? Like how OD keeps processing events from channels and eventually it gets to right state, just need to think about frequency of assertions and determinism...
+		floatCountCh: testutils.NewChannelWithSize(100),
+		intHistoCh:   testutils.NewChannelWithSize(100),
+		floatHistoCh: testutils.NewChannelWithSize(100),
+		intGaugeCh:   testutils.NewChannelWithSize(100),
+
+		data: make(map[estats.Metric]float64),
+	}
+
+	// convert int to float and just do that
+	for _, metric := range metrics {
+		tmr.data[estats.Metric(metric)] = 0 // write comment about how this gets desc...
+	}
+
+	return tmr
+}
+
+// no need to poll for data, emissions happen sync from balancer operations...
+
+func (r *TestMetricsRecorder) AssertDataForMetric(metricName string, wantVal float64) { // for ints can check or pass in assertion to this
+	// How should 0/not present be treated? Merge into one?
+
+	// You could also have this either poll for most recent from channel
+	// or expect from full channel
+
+	// the channel persists the label calls and the individual emissions and can
+	// build on top of that...
+
+	if r.data[estats.Metric(metricName)] != wantVal { // this conflates 0 and unset, if I don't want this read the ok...
+		r.t.Fatalf("unexpected data for metric %v, got: %v, want: %v", metricName, r.data[estats.Metric(metricName)], wantVal)
 	}
 }
 
@@ -85,6 +117,8 @@ func (r *TestMetricsRecorder) RecordInt64Count(handle *estats.Int64CountHandle, 
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
 	})
+
+	r.data[handle.Name] = float64(incr)
 }
 
 func (r *TestMetricsRecorder) WaitForFloat64Count(ctx context.Context, metricsDataWant MetricsData) {
@@ -105,6 +139,9 @@ func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHand
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
 	})
+
+
+	r.data[handle.Name] = incr
 }
 
 func (r *TestMetricsRecorder) WaitForInt64Histo(ctx context.Context, metricsDataWant MetricsData) {
@@ -125,6 +162,8 @@ func (r *TestMetricsRecorder) RecordInt64Histo(handle *estats.Int64HistoHandle, 
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
 	})
+
+	r.data[handle.Name] = float64(incr)
 }
 
 func (r *TestMetricsRecorder) WaitForFloat64Histo(ctx context.Context, metricsDataWant MetricsData) {
@@ -144,7 +183,9 @@ func (r *TestMetricsRecorder) RecordFloat64Histo(handle *estats.Float64HistoHand
 		FloatIncr: incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
-	})
+	}) // This might block forever which is preventing algo from running...why does this get so many
+
+	r.data[handle.Name] = incr // persist labels and all the calls? I think not just base it off scenarios, could wait on above for labels...
 }
 
 func (r *TestMetricsRecorder) WaitForInt64Gauge(ctx context.Context, metricsDataWant MetricsData) {
@@ -165,6 +206,8 @@ func (r *TestMetricsRecorder) RecordInt64Gauge(handle *estats.Int64GaugeHandle, 
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
 	})
+
+	r.data[handle.Name] = float64(incr)
 }
 
 // To implement a stats.Handler, which allows it to be set as a dial option:

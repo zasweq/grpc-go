@@ -304,3 +304,13 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 		}
 	}
 }
+
+// musings here...need to pull from add-wrr-metrics-testing so copy paste musings below before I move over...
+// deploy custom lb to get locality
+
+// For RLS use deployment infra with RLS top level balancer just to get it to work,
+// Plug an OTel plugin there for the base case...
+// rls target and grpc target (and pick result)
+// so I don't think needs to be in xDS Tree top level for both corner cases
+// and full plumbing...
+
