@@ -111,7 +111,7 @@ func (r *TestMetricsRecorder) WaitForInt64Count(ctx context.Context, metricsData
 }
 
 func (r *TestMetricsRecorder) RecordInt64Count(handle *estats.Int64CountHandle, incr int64, labels ...string) {
-	r.intCountCh.Send(MetricsData{
+	r.intCountCh.Send(MetricsData{ // 6 of this 5 of that...
 		Handle:    handle.Descriptor(),
 		IntIncr:   incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
@@ -143,6 +143,22 @@ func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHand
 
 	r.data[handle.Name] = incr
 }
+
+
+// Unit style tests that make sure right number out...
+
+// but system level just do relational like proportion or each other...so skip numerous scheduler updates here...
+
+// set time.Time to max int to see if it works on the first case...has no load report...
+
+// PR goal:
+// Fix initial update...
+// get snapshot of metrics working from that
+// eventual consistency for the other one...
+
+// After comes e2e tests...
+
+
 
 func (r *TestMetricsRecorder) WaitForInt64Histo(ctx context.Context, metricsDataWant MetricsData) {
 	got, err := r.intHistoCh.Receive(ctx)

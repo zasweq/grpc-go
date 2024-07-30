@@ -83,7 +83,7 @@ var (
 		Description:    "EXPERIMENTAL. Number of scheduler updates in which there were not enough endpoints with valid weight, which caused the WRR policy to fall back to RR behavior.",
 		Unit:           "update",
 		Labels:         []string{"grpc.target"},
-		OptionalLabels: []string{"grpc.lb.locality"},
+		OptionalLabels: []string{"grpc.lb.locality"}, // is it this for per call and non per call?
 		Default:        false,
 	})
 
@@ -544,7 +544,7 @@ func (w *weightedSubConn) OnLoadReport(load *v3orcapb.OrcaLoadReport) {
 		w.logger.Infof("New weight for subchannel %v: %v", w.SubConn, w.weightVal)
 	}
 
-	w.lastUpdated = internal.TimeNow()
+	w.lastUpdated = internal.TimeNow() // set in on load report
 	if w.nonEmptySince == (time.Time{}) {
 		w.nonEmptySince = w.lastUpdated
 	}
@@ -598,6 +598,7 @@ func (w *weightedSubConn) updateConnectivityState(cs connectivity.State) connect
 		// time the blackout period ends.
 		w.mu.Lock()
 		w.nonEmptySince = time.Time{}
+		w.lastUpdated = time.Time{}
 		w.mu.Unlock()
 	case connectivity.Shutdown:
 		if w.stopORCAListener != nil {
@@ -636,8 +637,15 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 		}()
 	}
 
+	// encode somewhere: "load report has not yet been received"
+	// log a metric and keep behavior as it used to be...
+
 	// This will hit on the first weight call (and record endpoint weight stale),
 	// zero is c
+	if w.lastUpdated == (time.Time{}) {
+		endpointWeightNotYetUsableMetric.Record(w.metricsRecorder, 1, w.target, w.locality)
+		return 0
+	}
 
 	// If the most recent update was longer ago than the expiration period,
 	// reset nonEmptySince so that we apply the blackout period again if we
@@ -647,11 +655,16 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 			print("for metric grpc.lb.wrr.endpoint_weight_stale recording ", 1, "\n")
 			endpointWeightStaleMetric.Record(w.metricsRecorder, 1, w.target, w.locality)
 		}
-		w.nonEmptySince = time.Time{}
+		w.nonEmptySince = time.Time{} // is this needed
 		return 0
 	}
+	// if simply set to math.Max, the bottom conditional won't hit...
+
+	// the only case is when hasn't been received (no load report - how to represent that)
 
 	// blackoutPeriod == 0 from his configs so this never hits...
+
+	// nothing will be set in blackout period...
 
 	// If we don't have at least blackoutPeriod worth of data, return 0.
 	if blackoutPeriod != 0 && (w.nonEmptySince == (time.Time{}) || now.Sub(w.nonEmptySince) < blackoutPeriod) {

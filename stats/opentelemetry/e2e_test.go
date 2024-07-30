@@ -18,14 +18,29 @@ package opentelemetry_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"testing"
 	"time"
 
+	v3clusterpb "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	v3endpointpb "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
+	v3listenerpb "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	v3routepb "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	v3clientsideweightedroundrobinpb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/client_side_weighted_round_robin/v3"
+	v3wrrlocalitypb "github.com/envoyproxy/go-control-plane/envoy/extensions/load_balancing_policies/wrr_locality/v3"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
+
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/stubserver"
+	itestutils "google.golang.org/grpc/internal/testutils"
+	"google.golang.org/grpc/internal/testutils/xds/e2e"
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
 	"google.golang.org/grpc/stats/opentelemetry"
@@ -313,4 +328,304 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 // rls target and grpc target (and pick result)
 // so I don't think needs to be in xDS Tree top level for both corner cases
 // and full plumbing...
+
+
+// clusterWithLBConfiguration returns a cluster resource with the proto message
+// passed Marshaled to an any and specified through the load_balancing_policy
+// field.
+func clusterWithLBConfiguration(t *testing.T, clusterName, edsServiceName string, secLevel e2e.SecurityLevel, m proto.Message) *v3clusterpb.Cluster {
+	cluster := e2e.DefaultCluster(clusterName, edsServiceName, secLevel)
+	cluster.LoadBalancingPolicy = &v3clusterpb.LoadBalancingPolicy{
+		Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+			{
+				TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+					TypedConfig: itestutils.MarshalAny(t, m),
+				},
+			},
+		},
+	}
+	return cluster
+}
+
+
+// TestWRRMetrics tests the metrics emitted from the WRR LB Policy. It
+// configures WRR as an endpoint picking policy through xDS on a ClientConn
+// alongside an OpenTelemetry stats handler. It makes a few RPC's, and then
+// asserts OpenTelemetry metrics atoms are present for all four WRR Metrics,
+// alongside the correct target and locality label.
+
+// so need same setup with ClientConn/fully working server?
+func (s) TestWRRMetrics(t *testing.T) {
+	// If need shared symbols move to internal/testutils/opentelemetry...
+
+	// orca
+
+	backend1 := stubserver.StartTestService(t, nil)
+	// backend1.S.RegisterService() // happen before serve is start, register an orca service...
+	port1 := itestutils.ParsePort(t, backend1.Address)
+	defer backend1.Stop()
+	backend2 := stubserver.StartTestService(t, nil)
+	port2 := itestutils.ParsePort(t, backend2.Address)
+	defer backend2.Stop()
+	backend3 := stubserver.StartTestService(t, nil)
+	port3 := itestutils.ParsePort(t, backend3.Address) // why can't it find this this has access to internal...
+	defer backend3.Stop()
+
+	// One backend, so will fallback to rr.
+	// Wait but three would work too...yeah it says it's recording...
+
+	const serviceName = "my-service-client-side-xds"
+
+	// Do I need 3 or will 1 or 2 work wrt metrics I want...
+
+	// what buckets do the histos pick up
+
+	// Don't need an address distribution count...just make the RPC's
+
+
+	// When I get back - make this helper shared...
+
+	// Start an xDS management server.
+	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t) // move to testutils...
+
+	wrrConfig := &v3wrrlocalitypb.WrrLocality{
+		EndpointPickingPolicy: &v3clusterpb.LoadBalancingPolicy{
+			Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
+				{
+					TypedExtensionConfig: &v3corepb.TypedExtensionConfig{
+						TypedConfig: itestutils.MarshalAny(t, &v3clientsideweightedroundrobinpb.ClientSideWeightedRoundRobin{
+							EnableOobLoadReport: &wrapperspb.BoolValue{
+								Value: false,
+							},
+							// BlackoutPeriod long enough to cause load report weights to
+							// trigger in the scope of test case, but no load reports
+							// configured anyway.
+							BlackoutPeriod:          durationpb.New(10 * time.Second), // 0
+							WeightExpirationPeriod:  durationpb.New(10 * time.Second), // fractional...time.Sleep to trigger it...
+							WeightUpdatePeriod:      durationpb.New(time.Second),
+							ErrorUtilizationPenalty: &wrapperspb.FloatValue{Value: 1},
+						}),
+					},
+				},
+			},
+		},
+	}
+
+	routeConfigName := "route-" + serviceName
+	clusterName := "cluster-" + serviceName
+	endpointsName := "endpoints-" + serviceName
+	resources := e2e.UpdateOptions{
+		NodeID:    nodeID,
+		Listeners: []*v3listenerpb.Listener{e2e.DefaultClientListener(serviceName, routeConfigName)},
+		Routes:    []*v3routepb.RouteConfiguration{e2e.DefaultRouteConfig(routeConfigName, serviceName, clusterName)},
+		Clusters:  []*v3clusterpb.Cluster{clusterWithLBConfiguration(t, clusterName, endpointsName, e2e.SecurityLevelNone, wrrConfig)}, // inline these symbols perhaps...these are the two resource helpers defined above in custom lb test...
+		Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.EndpointResourceWithOptions(e2e.EndpointOptions{
+			ClusterName: endpointsName,
+			Host:        "localhost",
+			Localities: []e2e.LocalityOptions{ // maybe just have one priority? what's the locality name?
+				{
+					Backends: []e2e.BackendOptions{{Port: port1}, {Port: port2}, {Port: port3}},
+					Weight:   1,
+				},
+			},
+		})},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	if err := managementServer.Update(ctx, resources); err != nil {
+		t.Fatal(err)
+	}
+
+
+	// manual reader flow here...
+
+	// but pull operations from e2e test, inline the two resource ones what to
+	// do about resolver one...move to internal/testutils/xds if needed to be
+	// shared...
+
+	reader := metric.NewManualReader()
+	provider := metric.NewMeterProvider(metric.WithReader(reader))
+
+	mo := opentelemetry.MetricsOptions{
+		MeterProvider:         provider,
+		Metrics:               opentelemetry.DefaultMetrics().Add("grpc.lb.wrr.rr_fallback", "grpc.lb.wrr.endpoint_weight_not_yet_usable", "grpc.lb.wrr.endpoint_weight_stale", "grpc.lb.wrr.endpoint_weights") /*add the 4 wrr ones or figure out how to start from empty and scale up...*/,
+		// Well at least optional labels works properly...
+		OptionalLabels: []string{"grpc.lb.locality"},
+	}
+
+	// A DialOption so this is where this creation can live...
+	target := fmt.Sprintf("xds:///%s", serviceName) // use this for label emission expectations...what is the locality? I've already derived this...
+	cc, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(xdsResolver), opentelemetry.DialOption(opentelemetry.Options{MetricsOptions: mo}))
+	if err != nil {
+		t.Fatalf("Failed to dial local test server: %v", err)
+	}
+	defer cc.Close()
+
+	client := testgrpc.NewTestServiceClient(cc)
+
+	// It must get addresses from xDS tree...
+
+	// make a few RPC's...wrap this symbol with helper for distribution check...
+	if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
+		t.Fatalf("EmptyCall() = %v, want <nil>", err)
+	}
+	if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
+		t.Fatalf("EmptyCall() = %v, want <nil>", err)
+	}
+	if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
+		t.Fatalf("EmptyCall() = %v, want <nil>", err)
+	}
+
+	// WRR should function as normal...
+
+
+	// time.Sleeps
+
+
+	// poll
+
+
+
+
+
+
+
+
+
+	// it happens sync when it's built right?
+
+
+	// light assertions here on the emitted WRR Metrics...
+	rm := &metricdata.ResourceMetrics{}
+	reader.Collect(ctx, rm)
+	gotMetrics := map[string]metricdata.Metrics{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			gotMetrics[m.Name] = m
+		}
+	}
+
+	// and then attrs defined inline here or something...
+
+	// no need to poll since gotMetrics emits as a result of WRR getting scheduler...
+
+	// where do Addrs/connecting SCs get set?
+	// ah cool no need to setup weights...since just defaults to rr...
+	targetAttr := attribute.String("grpc.target", target)
+	localityAttr := attribute.String("grpc.lb.locality", `{"region":"region-1","zone":"zone-1","subZone":"subzone-1"}`) // yeah derived in telemetry labels test...
+
+
+	// wantMetrics but do a presence check (ignore using their library...)
+
+	wantMetrics := []metricdata.Metrics{
+		{
+			Name: "grpc.lb.wrr.rr_fallback",
+			Description: "EXPERIMENTAL. Number of scheduler updates in which there were not enough endpoints with valid weight, which caused the WRR policy to fall back to RR behavior.",
+			Unit: "update",
+			// Needs the right labels...the same target/locality for all
+			Data: metricdata.Sum[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(targetAttr, localityAttr),
+						Value:      1, // value ignored...it is some value though...
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+				IsMonotonic: true,
+			},
+		},
+
+		// configure ORCA Service, and have it emit metrics for each one...
+
+		{
+			Name: "grpc.lb.wrr.endpoint_weight_not_yet_usable",
+			Description: "EXPERIMENTAL. Number of endpoints from each scheduler update that don't yet have usable weight information (i.e., either the load report has not yet been received, or it is within the blackout period).",
+			Unit: "endpoint",
+			// Needs the right labels...the same target/locality for all
+			Data: metricdata.Sum[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(targetAttr, localityAttr),
+						Value:      1, // value ignored...it is some value though...
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+				IsMonotonic: true,
+			},
+		},
+
+		// sleep and then poll for the metrics to expire...
+
+		/*{
+			Name: "grpc.lb.wrr.endpoint_weight_stale",
+			Description: "EXPERIMENTAL. Number of endpoints from each scheduler update whose latest weight is older than the expiration period.",
+			Unit: "endpoint",
+			// Needs the right labels...the same target/locality for all
+			Data: metricdata.Sum[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(targetAttr, localityAttr),
+						Value:      1, // value ignored...it is some value though...
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+				IsMonotonic: true,
+			},
+		},*/
+		{
+			Name: "grpc.lb.wrr.endpoint_weights",
+			Description: "EXPERIMENTAL. Weight of each endpoint, recorded on every scheduler update. Endpoints without usable weights will be recorded as weight 0.",
+			Unit: "endpoint",
+			// Needs the right labels...the same target/locality for all
+			Data: metricdata.Histogram[float64]{
+				DataPoints: []metricdata.HistogramDataPoint[float64]{
+					{
+						Attributes: attribute.NewSet(targetAttr, localityAttr),
+						// Value:      1, // value ignored...it is some value though...
+						// Bounds: , // what bounds did I pass up for this, I added the option
+					},
+				},
+				Temporality: metricdata.CumulativeTemporality,
+			},
+		},
+	}
+
+	for _, metric := range wantMetrics {
+		val, ok := gotMetrics[metric.Name]
+		if !ok {
+			t.Fatalf("Metric %v not present in recorded metrics", metric.Name)
+		}
+		// ignores non deterministic values...
+		// I think labels are tested here though...target and locality seems like ignore value still checks labels but make sure...
+		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreValue(),  metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
+			t.Fatalf("Metrics data type not equal for metric: %v", metric.Name)
+		}
+	}
+
+	// presence check (including labels for four WRR Metrics against gotMetrics here...)
+	/*metricdata, ok := gotMetrics["wrr_metrics_1"]
+	if !ok {
+		// metricdata not present...
+	}
+
+	metricdata*/ // and then assertions we've already built infra for these...
+	// presence check, and the assert target and locality are present as well...
+
+}
+
+
+// Once we get clarification on the metrics, the assertion becomes fixed
+// First hit should def trigger
+
+// Number of endpoints from each scheduler update that don't yet have usable
+// weight information (i.e., either the load report has not yet been received,
+// or it is within the blackout period).
+
+// load report has not yet been received...goes to that
+
+// otherwise one of the two right...
+
+
+
 
