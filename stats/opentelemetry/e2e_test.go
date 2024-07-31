@@ -438,23 +438,15 @@ func (s) TestWRRMetrics(t *testing.T) {
 	}
 
 
-	// manual reader flow here...
-
-	// but pull operations from e2e test, inline the two resource ones what to
-	// do about resolver one...move to internal/testutils/xds if needed to be
-	// shared...
-
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(metric.WithReader(reader))
 
 	mo := opentelemetry.MetricsOptions{
 		MeterProvider:         provider,
 		Metrics:               opentelemetry.DefaultMetrics().Add("grpc.lb.wrr.rr_fallback", "grpc.lb.wrr.endpoint_weight_not_yet_usable", "grpc.lb.wrr.endpoint_weight_stale", "grpc.lb.wrr.endpoint_weights") /*add the 4 wrr ones or figure out how to start from empty and scale up...*/,
-		// Well at least optional labels works properly...
 		OptionalLabels: []string{"grpc.lb.locality"},
 	}
 
-	// A DialOption so this is where this creation can live...
 	target := fmt.Sprintf("xds:///%s", serviceName) // use this for label emission expectations...what is the locality? I've already derived this...
 	cc, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(xdsResolver), opentelemetry.DialOption(opentelemetry.Options{MetricsOptions: mo}))
 	if err != nil {
@@ -464,7 +456,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 
 	client := testgrpc.NewTestServiceClient(cc)
 
-	// It must get addresses from xDS tree...
+	// It must get addresses from xDS tree...oh triggers it by putting addresses in EDS...
 
 	// make a few RPC's...wrap this symbol with helper for distribution check...
 	if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...

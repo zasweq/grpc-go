@@ -154,6 +154,17 @@ func startServer(t *testing.T, r reportType) *testServer {
 		}))
 	}
 
+	// git diff against master...get deterministic checks working...
+
+	// could scale up unit tests too...
+
+	// this is how I configure OOB - which one is easier...? orca has creation functions for smr and also
+	// setting up a service...either go down this route or do unit tests first...
+
+
+
+	// startup snapshot, but two more deterministic tests at the end of assertion...and e2e with this plumbed in
+
 	if err := ss.StartServer(sopts...); err != nil {
 		t.Fatalf("Error starting server: %v", err)
 	}
@@ -177,9 +188,6 @@ func svcConfig(t *testing.T, wrrCfg iwrr.LBConfig) string {
 	return sc
 }
 
-
-// Scale a lot of these basic smoke tests up
-
 // Tests basic functionality with one address.  With only one address, load
 // reporting doesn't affect routing at all.
 func (s) TestBalancer_OneAddress(t *testing.T) {
@@ -192,9 +200,6 @@ func (s) TestBalancer_OneAddress(t *testing.T) {
 		{rt: reportOOB, cfg: oobConfig},
 	}
 
-	// Numerous ones of these t-tests...
-	// Could test for each one, I think deterministic in emissions...
-
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("reportType:%v", tc.rt), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
@@ -203,16 +208,9 @@ func (s) TestBalancer_OneAddress(t *testing.T) {
 			srv := startServer(t, tc.rt)
 
 			sc := svcConfig(t, tc.cfg)
-			if err := srv.StartClient(grpc.WithDefaultServiceConfig(sc)/*scale basic smoke test here up with fake stats handler...*/); err != nil {
+			if err := srv.StartClient(grpc.WithDefaultServiceConfig(sc)); err != nil {
 				t.Fatalf("Error starting client: %v", err)
 			}
-
-			// what? I think spams a bunch of weights...
-
-			// but should never not be usable? But that emits 0 so maybe just check weight function...
-
-			// Updates weights around 10 times...argh that is the scheduler update...so creates non determinism...
-
 
 			// Perform many RPCs to ensure the LB policy works with 1 address.
 			for i := 0; i < 100; i++ {
@@ -894,12 +892,22 @@ func (s) TestBalancer_TwoAddresses_WeightExpiration(t *testing.T) {
 	// no locality and target is trivial just need one assertion (for all metrics?) for that I think...
 
 
-	// For e2e, could just test metrics emit *something...*
+	// For e2e, could just test metrics emit *something...* but all 4
 
 
 
-} // Let's look at e2e tests for xDS...to get locality needs weighted target which requires my custom lb infra
-// to get OTel does it need the OTel helpers?
+}
+
+
+// There's a lot of recording points here...
+// How to have this deterministic if not a gauge/eventual consistency...
+
+// Play around with this to make it eventually consistent...
+
+// How to make these emissions deterministic...?
+
+// Especially time.Sleeps...poll for eventual consistency at the end?
+
 
 
 

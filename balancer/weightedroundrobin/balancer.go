@@ -637,11 +637,8 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 		}()
 	}
 
-	// encode somewhere: "load report has not yet been received"
-	// log a metric and keep behavior as it used to be...
-
-	// This will hit on the first weight call (and record endpoint weight stale),
-	// zero is c
+	// The SubConn has not received a load report (i.e. just turned READY with
+	// no load report).
 	if w.lastUpdated == (time.Time{}) {
 		endpointWeightNotYetUsableMetric.Record(w.metricsRecorder, 1, w.target, w.locality)
 		return 0
@@ -650,21 +647,14 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 	// If the most recent update was longer ago than the expiration period,
 	// reset nonEmptySince so that we apply the blackout period again if we
 	// start getting data again in the future, and return 0.
-	if now.Sub(w.lastUpdated) >= weightExpirationPeriod { // this zero value gets set at creation, and then this hits before it gets a load report from pick, is this WAI?
+	if now.Sub(w.lastUpdated) >= weightExpirationPeriod {
 		if recordMetrics {
 			print("for metric grpc.lb.wrr.endpoint_weight_stale recording ", 1, "\n")
 			endpointWeightStaleMetric.Record(w.metricsRecorder, 1, w.target, w.locality)
 		}
-		w.nonEmptySince = time.Time{} // is this needed
+		w.nonEmptySince = time.Time{}
 		return 0
 	}
-	// if simply set to math.Max, the bottom conditional won't hit...
-
-	// the only case is when hasn't been received (no load report - how to represent that)
-
-	// blackoutPeriod == 0 from his configs so this never hits...
-
-	// nothing will be set in blackout period...
 
 	// If we don't have at least blackoutPeriod worth of data, return 0.
 	if blackoutPeriod != 0 && (w.nonEmptySince == (time.Time{}) || now.Sub(w.nonEmptySince) < blackoutPeriod) {
@@ -677,13 +667,3 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 
 	return w.weightVal
 }
-
-// There's a lot of recording points here...
-// How to have this deterministic if not a gauge/eventual consistency...
-
-// Play around with this to make it eventually consistent...
-
-// How to make these emissions deterministic...?
-
-// Especially time.Sleeps...poll for eventual consistency at the end?
-
