@@ -83,7 +83,7 @@ var (
 		Description:    "EXPERIMENTAL. Number of scheduler updates in which there were not enough endpoints with valid weight, which caused the WRR policy to fall back to RR behavior.",
 		Unit:           "update",
 		Labels:         []string{"grpc.target"},
-		OptionalLabels: []string{"grpc.lb.locality"}, // is it this for per call and non per call?
+		OptionalLabels: []string{"grpc.lb.locality"},
 		Default:        false,
 	})
 
@@ -445,7 +445,7 @@ func (p *picker) inc() uint32 {
 }
 
 func (p *picker) regenerateScheduler() {
-	s := p.newScheduler()
+	s := p.newScheduler(true)
 	atomic.StorePointer(&p.scheduler, unsafe.Pointer(&s))
 }
 
@@ -481,7 +481,7 @@ func (p *picker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	if !p.cfg.EnableOOBLoadReport {
 		pr.Done = func(info balancer.DoneInfo) {
 			if load, ok := info.ServerLoad.(*v3orcapb.OrcaLoadReport); ok && load != nil {
-				pickedSC.OnLoadReport(load) // called from done - so picker must hit...
+				pickedSC.OnLoadReport(load)
 			}
 		}
 	}
@@ -536,15 +536,13 @@ func (w *weightedSubConn) OnLoadReport(load *v3orcapb.OrcaLoadReport) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// Ask Java what they did?
 	errorRate := load.Eps / load.RpsFractional
-	// Exact floats or proportion?
 	w.weightVal = load.RpsFractional / (utilization + errorRate*w.cfg.ErrorUtilizationPenalty) // Either this complicated val or 0...
 	if w.logger.V(2) {
 		w.logger.Infof("New weight for subchannel %v: %v", w.SubConn, w.weightVal)
 	}
 
-	w.lastUpdated = internal.TimeNow() // set in on load report
+	w.lastUpdated = internal.TimeNow()
 	if w.nonEmptySince == (time.Time{}) {
 		w.nonEmptySince = w.lastUpdated
 	}

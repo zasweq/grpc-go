@@ -31,16 +31,17 @@ type scheduler interface {
 // len(scWeights)-1 are zero or there is only a single subconn, otherwise it
 // will return an Earliest Deadline First (EDF) scheduler implementation that
 // selects the subchannels according to their weights.
-func (p *picker) newScheduler() scheduler {
-	scWeights := p.scWeights(true)
+func (p *picker) newScheduler(recordMetrics bool) scheduler {
+	scWeights := p.scWeights(recordMetrics)
 	n := len(scWeights)
 	if n == 0 {
 		return nil
 	}
 	if n == 1 {
-		// Guard this record with a bool too?
-		print("for metric grpc.lb.wrr.rr_fallback ", 1, "because only one SubConn with target %v and locality %v\n", p.target, p.locality)
-		rrFallbackMetric.Record(p.metricsRecorder, 1, p.target, p.locality)
+		if recordMetrics {
+			print("for metric grpc.lb.wrr.rr_fallback ", 1, "because only one SubConn with target %v and locality %v\n", p.target, p.locality)
+			rrFallbackMetric.Record(p.metricsRecorder, 1, p.target, p.locality)
+		}
 		return &rrScheduler{numSCs: 1, inc: p.inc}
 	}
 	sum := float64(0)
@@ -57,8 +58,10 @@ func (p *picker) newScheduler() scheduler {
 	}
 
 	if numZero >= n-1 {
-		print("for metric grpc.lb.wrr.rr_fallback ", 1, "because only numZero >= n - 1\n")
-		rrFallbackMetric.Record(p.metricsRecorder, 1, p.target, p.locality)
+		if recordMetrics {
+			print("for metric grpc.lb.wrr.rr_fallback ", 1, "because only one SubConn with target %v and locality %v\n", p.target, p.locality)
+			rrFallbackMetric.Record(p.metricsRecorder, 1, p.target, p.locality)
+		}
 		return &rrScheduler{numSCs: uint32(n), inc: p.inc}
 	}
 	unscaledMean := sum / float64(n-numZero)
