@@ -351,29 +351,32 @@ func clusterWithLBConfiguration(t *testing.T, clusterName, edsServiceName string
 // TestWRRMetrics tests the metrics emitted from the WRR LB Policy. It
 // configures WRR as an endpoint picking policy through xDS on a ClientConn
 // alongside an OpenTelemetry stats handler. It makes a few RPC's, and then
-// asserts OpenTelemetry metrics atoms are present for all four WRR Metrics,
-// alongside the correct target and locality label.
-
-// so need same setup with ClientConn/fully working server? yes except server
-// has load reports...
-
-// the RPC's work as written so I think this is fine...
-
+// sleeps for a bit to allow weight to expire. asserts OpenTelemetry metrics
+// atoms are eventually present for all four WRR Metrics, alongside the correct
+// target and locality label for each metric.
 func (s) TestWRRMetrics(t *testing.T) {
-	// If need shared symbols move to internal/testutils/opentelemetry...
 
 	// orca mr and also how to setup a service...
 
+	// SCALE THIS UP
 	backend1 := stubserver.StartTestService(t, nil)
 	// backend1.S.RegisterService() // happen before serve is start, register an orca service...
 	port1 := itestutils.ParsePort(t, backend1.Address)
 	defer backend1.Stop()
-	backend2 := stubserver.StartTestService(t, nil)
+
+	// Try registering per call with a server option...
+
+
+	/*backend2 := stubserver.StartTestService(t, nil)
 	port2 := itestutils.ParsePort(t, backend2.Address)
 	defer backend2.Stop()
 	backend3 := stubserver.StartTestService(t, nil)
 	port3 := itestutils.ParsePort(t, backend3.Address)
-	defer backend3.Stop()
+	defer backend3.Stop()*/
+
+	// Fallsback to RR when not all have weights...so before any RPC's, make 3,
+	// and then poll for 5 seconds for new weights to show up...
+
 
 	// One backend, so will fallback to rr.
 	// Wait but three would work too...yeah it says it's recording...
@@ -382,15 +385,11 @@ func (s) TestWRRMetrics(t *testing.T) {
 
 	// Do I need 3 or will 1 or 2 work wrt metrics I want...
 
-	// what buckets do the histos pick up
+	// what buckets do the histos pick up...default
 
-	// Don't need an address distribution count...just make the RPC's
-
-
-	// When I get back - make this helper shared...
 
 	// Start an xDS management server.
-	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t) // move to testutils...
+	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t) // change callsites in xDS e2e test to this...
 
 	wrrConfig := &v3wrrlocalitypb.WrrLocality{
 		EndpointPickingPolicy: &v3clusterpb.LoadBalancingPolicy{
@@ -404,8 +403,8 @@ func (s) TestWRRMetrics(t *testing.T) {
 							// BlackoutPeriod long enough to cause load report weights to
 							// trigger in the scope of test case, but no load reports
 							// configured anyway.
-							BlackoutPeriod:          durationpb.New(10 * time.Second), // 0
-							WeightExpirationPeriod:  durationpb.New(10 * time.Second), // fractional...time.Sleep to trigger it...
+							BlackoutPeriod:          durationpb.New(5 * time.Millisecond), // 0 will also trigger it...
+							WeightExpirationPeriod:  durationpb.New(500 * time.Millisecond), // fractional...time.Sleep to trigger it...
 							WeightUpdatePeriod:      durationpb.New(time.Second),
 							ErrorUtilizationPenalty: &wrapperspb.FloatValue{Value: 1},
 						}),
@@ -414,6 +413,9 @@ func (s) TestWRRMetrics(t *testing.T) {
 			},
 		},
 	}
+
+	// configure ORCA Service, and have it emit metrics for each one...
+
 
 	routeConfigName := "route-" + serviceName
 	clusterName := "cluster-" + serviceName
@@ -426,9 +428,9 @@ func (s) TestWRRMetrics(t *testing.T) {
 		Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.EndpointResourceWithOptions(e2e.EndpointOptions{
 			ClusterName: endpointsName,
 			Host:        "localhost",
-			Localities: []e2e.LocalityOptions{ // maybe just have one priority? what's the locality name?
+			Localities: []e2e.LocalityOptions{
 				{
-					Backends: []e2e.BackendOptions{{Port: port1}, {Port: port2}, {Port: port3}},
+					Backends: []e2e.BackendOptions{{Port: port1}/*, {Port: port2}, {Port: port3}*/},
 					Weight:   1,
 				},
 			},
@@ -452,7 +454,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 	}
 
 	// it happens sync when it's built right? yeah just first scheduler update...
-	target := fmt.Sprintf("xds:///%s", serviceName) // use this for label emission expectations...what is the locality? I've already derived this...
+	target := fmt.Sprintf("xds:///%s", serviceName)
 	cc, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(xdsResolver), opentelemetry.DialOption(opentelemetry.Options{MetricsOptions: mo}))
 	if err != nil {
 		t.Fatalf("Failed to dial local test server: %v", err)
@@ -461,9 +463,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 
 	client := testgrpc.NewTestServiceClient(cc)
 
-	// It must get addresses from xDS tree...oh triggers it by putting addresses in EDS...
-
-	// make a few RPC's...wrap this symbol with helper for distribution check...
+	// Trigger per call load reports...and then sleep for wait expiry...
 	if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
 		t.Fatalf("EmptyCall() = %v, want <nil>", err)
 	}
@@ -477,7 +477,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 	// just need to scale up orca...
 
 
-	// WRR should function as normal...
+	// WRR should function as normal...it does...
 
 
 	// time.Sleeps to trigger scheduler update/expiration...
@@ -497,17 +497,11 @@ func (s) TestWRRMetrics(t *testing.T) {
 		}
 	}
 
-	// and then attrs defined inline here or something...
 
-	// no need to poll since gotMetrics emits as a result of WRR getting scheduler...
+	// no need to poll since gotMetrics emits as a result of WRR getting scheduler...but poll eventually...
 
-	// where do Addrs/connecting SCs get set?
-	// ah cool no need to setup weights...since just defaults to rr...
 	targetAttr := attribute.String("grpc.target", target)
-	localityAttr := attribute.String("grpc.lb.locality", `{"region":"region-1","zone":"zone-1","subZone":"subzone-1"}`) // yeah derived in telemetry labels test...
-
-
-	// wantMetrics but do a presence check (ignore using their library...)
+	localityAttr := attribute.String("grpc.lb.locality", `{"region":"region-1","zone":"zone-1","subZone":"subzone-1"}`)
 
 	wantMetrics := []metricdata.Metrics{
 		{
@@ -525,8 +519,6 @@ func (s) TestWRRMetrics(t *testing.T) {
 				IsMonotonic: true,
 			},
 		},
-
-		// configure ORCA Service, and have it emit metrics for each one...
 
 		{
 			Name: "grpc.lb.wrr.endpoint_weight_not_yet_usable",
@@ -578,6 +570,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 		},
 	}
 
+	// First three should immediately be present as happens synchronously from first scheduler update...
 	for _, metric := range wantMetrics {
 		val, ok := gotMetrics[metric.Name]
 		if !ok {
@@ -588,5 +581,48 @@ func (s) TestWRRMetrics(t *testing.T) {
 		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreValue(),  metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
 			t.Fatalf("Metrics data type not equal for metric: %v", metric.Name)
 		}
+	}
+
+	// sleep, then poll for 5 seconds for weight expiration metric...no more RPC's so scheduler should expire and emit metric...
+	time.Sleep(time.Second)
+
+	eventuallyWantMetric := metricdata.Metrics{
+	Name: "grpc.lb.wrr.endpoint_weight_stale",
+		Description: "EXPERIMENTAL. Number of endpoints from each scheduler update whose latest weight is older than the expiration period.",
+			Unit: "endpoint",
+			Data: metricdata.Sum[int64]{
+			DataPoints: []metricdata.DataPoint[int64]{
+				{
+					Attributes: attribute.NewSet(targetAttr, localityAttr),
+					Value:      1, // value ignored...it is some value though...
+				},
+			},
+			Temporality: metricdata.CumulativeTemporality,
+			IsMonotonic: true,
+		},
+	}
+
+	// Poll for 5 seconds for stale metric to appear...ctx timeout
+	for ; ctx.Err() == nil; <-time.After(time.Millisecond) {
+		rm := &metricdata.ResourceMetrics{}
+		reader.Collect(ctx, rm)
+		gotMetrics := map[string]metricdata.Metrics{}
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				gotMetrics[m.Name] = m
+			}
+		}
+		val, ok := gotMetrics[eventuallyWantMetric.Name]
+		if !ok {
+			continue
+		}
+		if !metricdatatest.AssertEqual(t, eventuallyWantMetric, val, metricdatatest.IgnoreValue(),  metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
+			t.Fatalf("Metrics data type not equal for metric: %v", eventuallyWantMetric.Name)
+		}
+		break
+	}
+
+	if ctx.Err() != nil {
+		t.Fatalf("timeout waiting for metric %v", eventuallyWantMetric.Name)
 	}
 }
