@@ -19,6 +19,7 @@ package opentelemetry_test
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/orca"
 	"io"
 	"testing"
 	"time"
@@ -358,21 +359,39 @@ func (s) TestWRRMetrics(t *testing.T) {
 
 	// orca mr and also how to setup a service...
 
+	cmr := orca.NewServerMetricsRecorder().(orca.CallMetricsRecorder)
 	// SCALE THIS UP
-	backend1 := stubserver.StartTestService(t, nil)
+	backend1 := stubserver.StartTestService(t, &stubserver.StubServer{
+
+		// Could have the equivalent of this in a closure...
+
+		EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) {
+			if r := orca.CallMetricsRecorderFromContext(ctx); r != nil { // do I need to send this?
+				// Copy metrics from what the test set in cmr into r.
+				sm := cmr.(orca.ServerMetricsProvider).ServerMetrics()
+				r.SetApplicationUtilization(sm.AppUtilization)
+				r.SetQPS(sm.QPS)
+				r.SetEPS(sm.EPS)
+			}
+			return &testpb.Empty{}, nil
+		},
+	}, orca.CallMetricsServerOption(nil))
 	// backend1.S.RegisterService() // happen before serve is start, register an orca service...
 	port1 := itestutils.ParsePort(t, backend1.Address)
 	defer backend1.Stop()
 
+	cmr.SetQPS(10.0)
+	cmr.SetApplicationUtilization(1.0)
+
 	// Try registering per call with a server option...
 
 
-	/*backend2 := stubserver.StartTestService(t, nil)
+	backend2 := stubserver.StartTestService(t, nil)
 	port2 := itestutils.ParsePort(t, backend2.Address)
 	defer backend2.Stop()
 	backend3 := stubserver.StartTestService(t, nil)
 	port3 := itestutils.ParsePort(t, backend3.Address)
-	defer backend3.Stop()*/
+	defer backend3.Stop()
 
 	// Fallsback to RR when not all have weights...so before any RPC's, make 3,
 	// and then poll for 5 seconds for new weights to show up...
@@ -430,7 +449,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 			Host:        "localhost",
 			Localities: []e2e.LocalityOptions{
 				{
-					Backends: []e2e.BackendOptions{{Port: port1}/*, {Port: port2}, {Port: port3}*/},
+					Backends: []e2e.BackendOptions{{Port: port1}, {Port: port2}, {Port: port3}},
 					Weight:   1,
 				},
 			},
@@ -537,6 +556,8 @@ func (s) TestWRRMetrics(t *testing.T) {
 		},
 
 		// sleep and then poll for the metrics to expire...
+		// if it works to make sure assertions work uncomment this
+		// and make sure it fails...
 
 		/*{
 			Name: "grpc.lb.wrr.endpoint_weight_stale",
@@ -604,6 +625,9 @@ func (s) TestWRRMetrics(t *testing.T) {
 
 	// Poll for 5 seconds for stale metric to appear...ctx timeout
 	for ; ctx.Err() == nil; <-time.After(time.Millisecond) {
+		if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
+			t.Fatalf("EmptyCall() = %v, want <nil>", err)
+		}
 		rm := &metricdata.ResourceMetrics{}
 		reader.Collect(ctx, rm)
 		gotMetrics := map[string]metricdata.Metrics{}
