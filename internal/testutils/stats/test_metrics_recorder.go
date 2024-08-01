@@ -75,7 +75,7 @@ func (r *TestMetricsRecorder) AssertDataForMetric(metricName string, wantVal flo
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.data[estats.Metric(metricName)] != wantVal {
-		r.t.Fatalf("unexpected data for metric %v, got: %v, want: %v", metricName, r.data[estats.Metric(metricName)], wantVal)
+		r.t.Fatalf("Unexpected data for metric %v, got: %v, want: %v", metricName, r.data[estats.Metric(metricName)], wantVal)
 	}
 }
 
@@ -85,7 +85,7 @@ func (r *TestMetricsRecorder) AssertEitherDataForMetric(metricName string, wantV
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.data[estats.Metric(metricName)] != wantVal1 && r.data[estats.Metric(metricName)] != wantVal2 {
-		r.t.Fatalf("unexpected data for metric %v, got: %v, want: %v or %v", metricName, r.data[estats.Metric(metricName)], wantVal1, wantVal2)
+		r.t.Fatalf("Unexpected data for metric %v, got: %v, want: %v or %v", metricName, r.data[estats.Metric(metricName)], wantVal1, wantVal2)
 	}
 }
 
@@ -100,7 +100,7 @@ func (r *TestMetricsRecorder) PollForDataForMetric(ctx context.Context, metricNa
 		}
 		r.mu.Unlock()
 	}
-	r.t.Fatalf("timeout waiting for data %v for metric %v", wantVal, metricName)
+	r.t.Fatalf("Timeout waiting for data %v for metric %v", wantVal, metricName)
 }
 
 type MetricsData struct {

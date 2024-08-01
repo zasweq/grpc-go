@@ -404,7 +404,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 		NodeID:    nodeID,
 		Listeners: []*v3listenerpb.Listener{e2e.DefaultClientListener(serviceName, routeConfigName)},
 		Routes:    []*v3routepb.RouteConfiguration{e2e.DefaultRouteConfig(routeConfigName, serviceName, clusterName)},
-		Clusters:  []*v3clusterpb.Cluster{clusterWithLBConfiguration(t, clusterName, endpointsName, e2e.SecurityLevelNone, wrrConfig)}, // inline these symbols perhaps...these are the two resource helpers defined above in custom lb test...
+		Clusters:  []*v3clusterpb.Cluster{clusterWithLBConfiguration(t, clusterName, endpointsName, e2e.SecurityLevelNone, wrrConfig)},
 		Endpoints: []*v3endpointpb.ClusterLoadAssignment{e2e.EndpointResourceWithOptions(e2e.EndpointOptions{
 			ClusterName: endpointsName,
 			Host:        "localhost",
@@ -460,7 +460,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 		}
 	}
 
-	// no need to poll for first assertion because WRR emits metrics
+	// No need to poll for first assertion because WRR emits metrics
 	// synchronously on the first picker/scheduler update, which happens before
 	// first RPC finishes.
 	targetAttr := attribute.String("grpc.target", target)
@@ -567,6 +567,6 @@ func (s) TestWRRMetrics(t *testing.T) {
 	}
 
 	if ctx.Err() != nil {
-		t.Fatalf("timeout waiting for metric %v", eventuallyWantMetric.Name)
+		t.Fatalf("Timeout waiting for metric %v", eventuallyWantMetric.Name)
 	}
 }
