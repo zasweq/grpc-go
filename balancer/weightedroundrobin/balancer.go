@@ -602,7 +602,6 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 
 	if recordMetrics {
 		defer func() {
-			print("for metric grpc.lb.wrr.endpoint_weights recording ", weight, "\n") // this hits on every SubConn
 			endpointWeightsMetric.Record(w.metricsRecorder, weight, w.target, w.locality)
 		}()
 	}
@@ -619,7 +618,6 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 	// start getting data again in the future, and return 0.
 	if now.Sub(w.lastUpdated) >= weightExpirationPeriod {
 		if recordMetrics {
-			print("for metric grpc.lb.wrr.endpoint_weight_stale recording ", 1, "\n")
 			endpointWeightStaleMetric.Record(w.metricsRecorder, 1, w.target, w.locality)
 		}
 		w.nonEmptySince = time.Time{}
@@ -629,7 +627,6 @@ func (w *weightedSubConn) weight(now time.Time, weightExpirationPeriod, blackout
 	// If we don't have at least blackoutPeriod worth of data, return 0.
 	if blackoutPeriod != 0 && (w.nonEmptySince == (time.Time{}) || now.Sub(w.nonEmptySince) < blackoutPeriod) {
 		if recordMetrics {
-			print("for metric grpc.lb.wrr.endpoint_weight_not_yet_usable recording ", 1, "\n")
 			endpointWeightNotYetUsableMetric.Record(w.metricsRecorder, 1, w.target, w.locality)
 		}
 		return 0

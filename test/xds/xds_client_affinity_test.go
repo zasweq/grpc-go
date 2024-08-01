@@ -83,7 +83,7 @@ func ringhashCluster(clusterName, edsServiceName string) *v3clusterpb.Cluster {
 // propagated to pick the ring_hash policy. It doesn't test the affinity
 // behavior in ring_hash policy.
 func (s) TestClientSideAffinitySanityCheck(t *testing.T) {
-	managementServer, nodeID, _, xdsResolver := setupManagementServerAndResolver(t)
+	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	server := stubserver.StartTestService(t, nil)
 	defer server.Stop()

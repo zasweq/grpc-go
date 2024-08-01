@@ -21,7 +21,9 @@ package stats
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	estats "google.golang.org/grpc/experimental/stats"
@@ -42,7 +44,8 @@ type TestMetricsRecorder struct {
 	floatHistoCh *testutils.Channel
 	intGaugeCh   *testutils.Channel
 
-	// The most recent update for each metric name. Not thread safe.
+	// The most recent update for each metric name.
+	mu   sync.Mutex
 	data map[estats.Metric]float64
 }
 
@@ -69,6 +72,8 @@ func NewTestMetricsRecorder(t *testing.T, metrics []string) *TestMetricsRecorder
 // AssertDataForMetric asserts data is present for metric. The zero value in the
 // check is equivalent to unset.
 func (r *TestMetricsRecorder) AssertDataForMetric(metricName string, wantVal float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.data[estats.Metric(metricName)] != wantVal {
 		r.t.Fatalf("unexpected data for metric %v, got: %v, want: %v", metricName, r.data[estats.Metric(metricName)], wantVal)
 	}
@@ -77,9 +82,25 @@ func (r *TestMetricsRecorder) AssertDataForMetric(metricName string, wantVal flo
 // AssertEitherDataForMetrics asserts either data point is present for metric.
 // The zero value in the check is equivalent to unset.
 func (r *TestMetricsRecorder) AssertEitherDataForMetric(metricName string, wantVal1 float64, wantVal2 float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.data[estats.Metric(metricName)] != wantVal1 && r.data[estats.Metric(metricName)] != wantVal2 {
 		r.t.Fatalf("unexpected data for metric %v, got: %v, want: %v or %v", metricName, r.data[estats.Metric(metricName)], wantVal1, wantVal2)
 	}
+}
+
+// PollForDataForMetric polls the metric data for the want. Fails if context
+// provided expires before data for metric is found.
+func (r *TestMetricsRecorder) PollForDataForMetric(ctx context.Context, metricName string, wantVal float64) {
+	for ; ctx.Err() == nil; <-time.After(time.Millisecond) {
+		r.mu.Lock()
+		if r.data[estats.Metric(metricName)] == wantVal {
+			r.mu.Unlock()
+			break
+		}
+		r.mu.Unlock()
+	}
+	r.t.Fatalf("timeout waiting for data %v for metric %v", wantVal, metricName)
 }
 
 type MetricsData struct {
@@ -113,6 +134,8 @@ func (r *TestMetricsRecorder) RecordInt64Count(handle *estats.Int64CountHandle, 
 		LabelVals: labels,
 	})
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.data[handle.Name] = float64(incr)
 }
 
@@ -135,6 +158,8 @@ func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHand
 		LabelVals: labels,
 	})
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.data[handle.Name] = incr
 }
 
@@ -157,6 +182,8 @@ func (r *TestMetricsRecorder) RecordInt64Histo(handle *estats.Int64HistoHandle, 
 		LabelVals: labels,
 	})
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.data[handle.Name] = float64(incr)
 }
 
@@ -179,6 +206,8 @@ func (r *TestMetricsRecorder) RecordFloat64Histo(handle *estats.Float64HistoHand
 		LabelVals: labels,
 	})
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.data[handle.Name] = incr
 }
 
@@ -201,6 +230,8 @@ func (r *TestMetricsRecorder) RecordInt64Gauge(handle *estats.Int64GaugeHandle, 
 		LabelVals: labels,
 	})
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.data[handle.Name] = float64(incr)
 }
 

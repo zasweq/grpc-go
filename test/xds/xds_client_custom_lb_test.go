@@ -52,9 +52,6 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-// both of these symbols you could inline I guess...
-// what about that setup one?
-
 // wrrLocality is a helper that takes a proto message and returns a
 // WrrLocalityProto with the proto message marshaled into a proto.Any as a
 // child.
@@ -100,7 +97,7 @@ func (s) TestWrrLocality(t *testing.T) {
 	envconfig.LeastRequestLB = true
 	defer func() {
 		envconfig.LeastRequestLB = oldLeastRequestLBSupport
-	}() // Don't need all this...
+	}()
 
 	backend1 := stubserver.StartTestService(t, nil)
 	port1 := testutils.ParsePort(t, backend1.Address)
@@ -199,13 +196,6 @@ func (s) TestWrrLocality(t *testing.T) {
 				{addr: backend5.Address, count: 8},
 			},
 		},
-
-		// Already have a sanity check with weighted round robin functioning as
-		// rr... scale this up with OTel plugin...and the 4 metrics *present*
-		// with correct target and locality (if deterministic derive this from
-		// tests), but don't assert on the nondeterministic data...
-
-
 		{
 			name: "custom_lb_least_request",
 			wrrLocalityConfiguration: wrrLocality(t, &v3leastrequestpb.LeastRequest{
@@ -232,7 +222,7 @@ func (s) TestWrrLocality(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Start an xDS management server.
-			managementServer, nodeID, _, xdsResolver := setupManagementServerAndResolver(t)
+			managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 			routeConfigName := "route-" + serviceName
 			clusterName := "cluster-" + serviceName
@@ -264,17 +254,6 @@ func (s) TestWrrLocality(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// just plumb in mr here (conditionally to keep test body small?)
-			// but we don't want to take an OTel dependency in this, cyclical
-			// OTel depends on gRPC already which makes it depend on xDS
-			// already...copy and paste the function body with all the
-			// deployment logic...make a few RPC's and expect the 4 metrics with correct target and locality
-
-			target := fmt.Sprintf("xds:///%s", serviceName) // expect this as a label in emissions...
-			// what the heck is locality in emissions?
-
-
-
 			cc, err := grpc.NewClient(fmt.Sprintf("xds:///%s", serviceName), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(xdsResolver))
 			if err != nil {
 				t.Fatalf("Failed to dial local test server: %v", err)
@@ -294,10 +273,3 @@ func (s) TestWrrLocality(t *testing.T) {
 		})
 	}
 }
-
-// Copy what's needed from this function body to OTel...that's where Doug
-// mentioned to put it wrt dependency graph etc...
-
-// There's a bunch of xDS e2e helpers/symbols from here I need access to like resolver,
-// the creation of the actual xDS Resources themselves etc...
-

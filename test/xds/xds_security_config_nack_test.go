@@ -147,7 +147,7 @@ func (s) TestUnmarshalListener_WithUpdateValidatorFunc(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			managementServer, nodeID, bootstrapContents, xdsResolver := setupManagementServerAndResolver(t)
+			managementServer, nodeID, bootstrapContents, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 			lis, cleanup2 := setupGRPCServer(t, bootstrapContents)
 			defer cleanup2()

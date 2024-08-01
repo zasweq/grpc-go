@@ -250,7 +250,7 @@ func (s) TestFederation_UnknownAuthorityInDialTarget(t *testing.T) {
 	// server and actually making an RPC ensures that the xDS client is
 	// configured properly, and when we dial with an unknown authority in the
 	// next step, we can be sure that the error we receive is legitimate.
-	managementServer, nodeID, _, xdsResolver := setupManagementServerAndResolver(t)
+	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	server := stubserver.StartTestService(t, nil)
 	defer server.Stop()
@@ -298,7 +298,7 @@ func (s) TestFederation_UnknownAuthorityInDialTarget(t *testing.T) {
 // with an authority which is not specified in the bootstrap configuration. The
 // test verifies that RPCs fail with an appropriate error.
 func (s) TestFederation_UnknownAuthorityInReceivedResponse(t *testing.T) {
-	mgmtServer, nodeID, _, xdsResolver := setupManagementServerAndResolver(t)
+	mgmtServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	// LDS is old style name.
 	// RDS is new style, with an unknown authority.

@@ -59,7 +59,7 @@ import (
 // (NonForwardingAction), and the RPC's matching those routes should proceed as
 // normal.
 func (s) TestServerSideXDS_RouteConfiguration(t *testing.T) {
-	managementServer, nodeID, bootstrapContents, xdsResolver := setupManagementServerAndResolver(t)
+	managementServer, nodeID, bootstrapContents, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	lis, cleanup2 := setupGRPCServer(t, bootstrapContents)
 	defer cleanup2()
@@ -626,7 +626,7 @@ func (s) TestRBACHTTPFilter(t *testing.T) {
 				}
 				audit.RegisterLoggerBuilder(lb)
 
-				managementServer, nodeID, bootstrapContents, xdsResolver := setupManagementServerAndResolver(t)
+				managementServer, nodeID, bootstrapContents, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 				lis, cleanup2 := setupGRPCServer(t, bootstrapContents)
 				defer cleanup2()
@@ -802,7 +802,7 @@ func serverListenerWithBadRouteConfiguration(t *testing.T, host string, port uin
 }
 
 func (s) TestRBACToggledOn_WithBadRouteConfiguration(t *testing.T) {
-	managementServer, nodeID, bootstrapContents, xdsResolver := setupManagementServerAndResolver(t)
+	managementServer, nodeID, bootstrapContents, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	lis, cleanup2 := setupGRPCServer(t, bootstrapContents)
 	defer cleanup2()

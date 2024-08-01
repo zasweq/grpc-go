@@ -84,7 +84,7 @@ func setupManagementServerAndResolver(t *testing.T) (*e2e.ManagementServer, stri
 }
 
 func (s) TestClientSideXDS(t *testing.T) {
-	managementServer, nodeID, _, xdsResolver := setupManagementServerAndResolver(t)
+	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	server := stubserver.StartTestService(t, nil)
 	defer server.Stop()

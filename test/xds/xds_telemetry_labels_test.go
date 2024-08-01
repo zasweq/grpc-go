@@ -53,7 +53,7 @@ const localityValue = `{"region":"region-1","zone":"zone-1","subZone":"subzone-1
 // handler asserts that subsequent HandleRPC calls from the RPC lifecycle
 // contain telemetry labels that it can see.
 func (s) TestTelemetryLabels(t *testing.T) {
-	managementServer, nodeID, _, xdsResolver := setupManagementServerAndResolver(t)
+	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	server := stubserver.StartTestService(t, nil)
 	defer server.Stop()

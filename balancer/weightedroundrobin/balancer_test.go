@@ -234,10 +234,11 @@ func (s) TestWRRMetricsBasic(t *testing.T) {
 		t.Fatalf("Error from EmptyCall: %v", err)
 	}
 
-	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", 1) // Falls back because only one SubConn.
+	mr.AssertDataForMetric("grpc.lb.wrr.rr_fallback", 1)           // Falls back because only one SubConn.
 	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_stale", 0) // The endpoint weight has not expired so this is 0 (never emitted).
 	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weight_not_yet_usable", 1)
-	// qps/utilization...so does this make sense?
+	// Unusable, so no endpoint weight. Due to only one SubConn, this will never
+	// update the weight. Thus, this will stay 0.
 	mr.AssertDataForMetric("grpc.lb.wrr.endpoint_weights", 0)
 }
 
@@ -536,7 +537,7 @@ func (s) TestBalancer_TwoAddresses_BlackoutPeriod(t *testing.T) {
 		blackoutPeriod:    time.Second,
 	}, {
 		blackoutPeriodCfg: nil,
-		blackoutPeriod:    10 * time.Second,
+		blackoutPeriod:    10 * time.Second, // the default
 	}}
 	for _, tc := range testCases {
 		setNow(start)

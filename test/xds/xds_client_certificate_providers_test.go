@@ -60,7 +60,7 @@ import (
 // used on the client.
 func (s) TestClientSideXDS_WithNoCertificateProvidersInBootstrap_Success(t *testing.T) {
 	// Spin up an xDS management server.
-	mgmtServer, nodeID, _, resolverBuilder := setupManagementServerAndResolver(t)
+	mgmtServer, nodeID, _, resolverBuilder := e2e.SetupManagementServerAndResolver(t)
 
 	// Spin up a test backend.
 	server := stubserver.StartTestService(t, nil)

@@ -41,7 +41,7 @@ func (s) TestClientSideRetry(t *testing.T) {
 	ctr := 0
 	errs := []codes.Code{codes.ResourceExhausted}
 
-	managementServer, nodeID, _, xdsResolver := setupManagementServerAndResolver(t)
+	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	server := stubserver.StartTestService(t, &stubserver.StubServer{
 		EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) {

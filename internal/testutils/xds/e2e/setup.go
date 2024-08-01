@@ -24,7 +24,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/resolver"
-	_ "google.golang.org/grpc/xds"                          // Register the xds_resolver.
+	_ "google.golang.org/grpc/xds" // Register the xds_resolver.
 )
 
 // SetupManagementServerAndResolver sets up an xDS management server, creates

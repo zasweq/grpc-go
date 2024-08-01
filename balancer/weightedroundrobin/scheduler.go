@@ -39,7 +39,6 @@ func (p *picker) newScheduler(recordMetrics bool) scheduler {
 	}
 	if n == 1 {
 		if recordMetrics {
-			print("for metric grpc.lb.wrr.rr_fallback (option 1) ", 1, "because only one SubConn with target %v and locality %v\n", p.target, p.locality)
 			rrFallbackMetric.Record(p.metricsRecorder, 1, p.target, p.locality)
 		}
 		return &rrScheduler{numSCs: 1, inc: p.inc}
@@ -59,7 +58,6 @@ func (p *picker) newScheduler(recordMetrics bool) scheduler {
 
 	if numZero >= n-1 {
 		if recordMetrics {
-			print("for metric grpc.lb.wrr.rr_fallback (option 2) ", 1, "because only one SubConn with target %v and locality %v\n", p.target, p.locality)
 			rrFallbackMetric.Record(p.metricsRecorder, 1, p.target, p.locality)
 		}
 		return &rrScheduler{numSCs: uint32(n), inc: p.inc}

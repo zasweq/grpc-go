@@ -338,7 +338,6 @@ func clusterWithLBConfiguration(t *testing.T, clusterName, edsServiceName string
 	return cluster
 }
 
-
 // TestWRRMetrics tests the metrics emitted from the WRR LB Policy. It
 // configures WRR as an endpoint picking policy through xDS on a ClientConn
 // alongside an OpenTelemetry stats handler. It makes a few RPC's, and then
@@ -372,7 +371,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 	const serviceName = "my-service-client-side-xds"
 
 	// Start an xDS management server.
-	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t) // change callsites in xDS e2e test to this...
+	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t)
 
 	wrrConfig := &v3wrrlocalitypb.WrrLocality{
 		EndpointPickingPolicy: &v3clusterpb.LoadBalancingPolicy{
@@ -397,7 +396,6 @@ func (s) TestWRRMetrics(t *testing.T) {
 			},
 		},
 	}
-
 
 	routeConfigName := "route-" + serviceName
 	clusterName := "cluster-" + serviceName
@@ -429,8 +427,8 @@ func (s) TestWRRMetrics(t *testing.T) {
 	provider := metric.NewMeterProvider(metric.WithReader(reader))
 
 	mo := opentelemetry.MetricsOptions{
-		MeterProvider:         provider,
-		Metrics:               opentelemetry.DefaultMetrics().Add("grpc.lb.wrr.rr_fallback", "grpc.lb.wrr.endpoint_weight_not_yet_usable", "grpc.lb.wrr.endpoint_weight_stale", "grpc.lb.wrr.endpoint_weights") /*add the 4 wrr ones or figure out how to start from empty and scale up...*/,
+		MeterProvider:  provider,
+		Metrics:        opentelemetry.DefaultMetrics().Add("grpc.lb.wrr.rr_fallback", "grpc.lb.wrr.endpoint_weight_not_yet_usable", "grpc.lb.wrr.endpoint_weight_stale", "grpc.lb.wrr.endpoint_weights"),
 		OptionalLabels: []string{"grpc.lb.locality"},
 	}
 
@@ -462,7 +460,6 @@ func (s) TestWRRMetrics(t *testing.T) {
 		}
 	}
 
-
 	// no need to poll for first assertion because WRR emits metrics
 	// synchronously on the first picker/scheduler update, which happens before
 	// first RPC finishes.
@@ -471,9 +468,9 @@ func (s) TestWRRMetrics(t *testing.T) {
 
 	wantMetrics := []metricdata.Metrics{
 		{
-			Name: "grpc.lb.wrr.rr_fallback",
+			Name:        "grpc.lb.wrr.rr_fallback",
 			Description: "EXPERIMENTAL. Number of scheduler updates in which there were not enough endpoints with valid weight, which caused the WRR policy to fall back to RR behavior.",
-			Unit: "update",
+			Unit:        "update",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
@@ -487,9 +484,9 @@ func (s) TestWRRMetrics(t *testing.T) {
 		},
 
 		{
-			Name: "grpc.lb.wrr.endpoint_weight_not_yet_usable",
+			Name:        "grpc.lb.wrr.endpoint_weight_not_yet_usable",
 			Description: "EXPERIMENTAL. Number of endpoints from each scheduler update that don't yet have usable weight information (i.e., either the load report has not yet been received, or it is within the blackout period).",
-			Unit: "endpoint",
+			Unit:        "endpoint",
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
@@ -502,9 +499,9 @@ func (s) TestWRRMetrics(t *testing.T) {
 			},
 		},
 		{
-			Name: "grpc.lb.wrr.endpoint_weights",
+			Name:        "grpc.lb.wrr.endpoint_weights",
 			Description: "EXPERIMENTAL. Weight of each endpoint, recorded on every scheduler update. Endpoints without usable weights will be recorded as weight 0.",
-			Unit: "endpoint",
+			Unit:        "endpoint",
 			Data: metricdata.Histogram[float64]{
 				DataPoints: []metricdata.HistogramDataPoint[float64]{
 					{
@@ -523,7 +520,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 		if !ok {
 			t.Fatalf("Metric %v not present in recorded metrics", metric.Name)
 		}
-		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreValue(),  metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
+		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreValue(), metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
 			t.Fatalf("Metrics data type not equal for metric: %v", metric.Name)
 		}
 	}
@@ -534,14 +531,14 @@ func (s) TestWRRMetrics(t *testing.T) {
 	time.Sleep(time.Second)
 
 	eventuallyWantMetric := metricdata.Metrics{
-	Name: "grpc.lb.wrr.endpoint_weight_stale",
+		Name:        "grpc.lb.wrr.endpoint_weight_stale",
 		Description: "EXPERIMENTAL. Number of endpoints from each scheduler update whose latest weight is older than the expiration period.",
-			Unit: "endpoint",
-			Data: metricdata.Sum[int64]{
+		Unit:        "endpoint",
+		Data: metricdata.Sum[int64]{
 			DataPoints: []metricdata.DataPoint[int64]{
 				{
 					Attributes: attribute.NewSet(targetAttr, localityAttr),
-					Value:      1,
+					Value:      1, // value ignored
 				},
 			},
 			Temporality: metricdata.CumulativeTemporality,
@@ -563,7 +560,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if !metricdatatest.AssertEqual(t, eventuallyWantMetric, val, metricdatatest.IgnoreValue(),  metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
+		if !metricdatatest.AssertEqual(t, eventuallyWantMetric, val, metricdatatest.IgnoreValue(), metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
 			t.Fatalf("Metrics data type not equal for metric: %v", eventuallyWantMetric.Name)
 		}
 		break

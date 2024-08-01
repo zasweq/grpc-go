@@ -57,7 +57,7 @@ import (
 // credentials are getting used on the server.
 func (s) TestServerSideXDS_WithNoCertificateProvidersInBootstrap_Success(t *testing.T) {
 	// Spin up an xDS management server.
-	mgmtServer, nodeID, bootstrapContents, _ := setupManagementServerAndResolver(t)
+	mgmtServer, nodeID, bootstrapContents, _ := e2e.SetupManagementServerAndResolver(t)
 
 	// Spin up an xDS-enabled gRPC server that uses xDS credentials with
 	// insecure fallback, and the above bootstrap configuration.
