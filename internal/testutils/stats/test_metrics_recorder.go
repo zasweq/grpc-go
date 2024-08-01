@@ -42,8 +42,7 @@ type TestMetricsRecorder struct {
 	floatHistoCh *testutils.Channel
 	intGaugeCh   *testutils.Channel
 
-	// metric name -> label -> count actually do I even need labels I test that at OTel...
-	// could wait for label emisisons on the channel
+	// The most recent update for each metric name. Not thread safe.
 	data map[estats.Metric]float64
 }
 
@@ -51,10 +50,7 @@ func NewTestMetricsRecorder(t *testing.T, metrics []string) *TestMetricsRecorder
 	tmr := &TestMetricsRecorder{
 		t: t,
 
-		// Orthogonal to OTel emissions...how to make those deterministic...? I could mock locality
-		// label for testing if that makes it easier...
-
-		intCountCh:   testutils.NewChannelWithSize(100), // Rewrite assertions to be based off this? Like how OD keeps processing events from channels and eventually it gets to right state, just need to think about frequency of assertions and determinism...
+		intCountCh:   testutils.NewChannelWithSize(100),
 		floatCountCh: testutils.NewChannelWithSize(100),
 		intHistoCh:   testutils.NewChannelWithSize(100),
 		floatHistoCh: testutils.NewChannelWithSize(100),
@@ -63,27 +59,26 @@ func NewTestMetricsRecorder(t *testing.T, metrics []string) *TestMetricsRecorder
 		data: make(map[estats.Metric]float64),
 	}
 
-	// convert int to float and just do that
 	for _, metric := range metrics {
-		tmr.data[estats.Metric(metric)] = 0 // write comment about how this gets desc...
+		tmr.data[estats.Metric(metric)] = 0
 	}
 
 	return tmr
 }
 
-// no need to poll for data, emissions happen sync from balancer operations...
-
-func (r *TestMetricsRecorder) AssertDataForMetric(metricName string, wantVal float64) { // for ints can check or pass in assertion to this
-	// How should 0/not present be treated? Merge into one?
-
-	// You could also have this either poll for most recent from channel
-	// or expect from full channel
-
-	// the channel persists the label calls and the individual emissions and can
-	// build on top of that...
-
-	if r.data[estats.Metric(metricName)] != wantVal { // this conflates 0 and unset, if I don't want this read the ok...
+// AssertDataForMetric asserts data is present for metric. The zero value in the
+// check is equivalent to unset.
+func (r *TestMetricsRecorder) AssertDataForMetric(metricName string, wantVal float64) {
+	if r.data[estats.Metric(metricName)] != wantVal {
 		r.t.Fatalf("unexpected data for metric %v, got: %v, want: %v", metricName, r.data[estats.Metric(metricName)], wantVal)
+	}
+}
+
+// AssertEitherDataForMetrics asserts either data point is present for metric.
+// The zero value in the check is equivalent to unset.
+func (r *TestMetricsRecorder) AssertEitherDataForMetric(metricName string, wantVal1 float64, wantVal2 float64) {
+	if r.data[estats.Metric(metricName)] != wantVal1 && r.data[estats.Metric(metricName)] != wantVal2 {
+		r.t.Fatalf("unexpected data for metric %v, got: %v, want: %v or %v", metricName, r.data[estats.Metric(metricName)], wantVal1, wantVal2)
 	}
 }
 
@@ -111,7 +106,7 @@ func (r *TestMetricsRecorder) WaitForInt64Count(ctx context.Context, metricsData
 }
 
 func (r *TestMetricsRecorder) RecordInt64Count(handle *estats.Int64CountHandle, incr int64, labels ...string) {
-	r.intCountCh.Send(MetricsData{ // 6 of this 5 of that...
+	r.intCountCh.Send(MetricsData{
 		Handle:    handle.Descriptor(),
 		IntIncr:   incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
@@ -140,25 +135,8 @@ func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHand
 		LabelVals: labels,
 	})
 
-
 	r.data[handle.Name] = incr
 }
-
-
-// Unit style tests that make sure right number out...
-
-// but system level just do relational like proportion or each other...so skip numerous scheduler updates here...
-
-// set time.Time to max int to see if it works on the first case...has no load report...
-
-// PR goal:
-// Fix initial update...
-// get snapshot of metrics working from that
-// eventual consistency for the other one...
-
-// After comes e2e tests...
-
-
 
 func (r *TestMetricsRecorder) WaitForInt64Histo(ctx context.Context, metricsDataWant MetricsData) {
 	got, err := r.intHistoCh.Receive(ctx)
@@ -199,9 +177,9 @@ func (r *TestMetricsRecorder) RecordFloat64Histo(handle *estats.Float64HistoHand
 		FloatIncr: incr,
 		LabelKeys: append(handle.Labels, handle.OptionalLabels...),
 		LabelVals: labels,
-	}) // This might block forever which is preventing algo from running...why does this get so many
+	})
 
-	r.data[handle.Name] = incr // persist labels and all the calls? I think not just base it off scenarios, could wait on above for labels...
+	r.data[handle.Name] = incr
 }
 
 func (r *TestMetricsRecorder) WaitForInt64Gauge(ctx context.Context, metricsDataWant MetricsData) {

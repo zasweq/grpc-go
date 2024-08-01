@@ -19,7 +19,6 @@ package opentelemetry_test
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc/orca"
 	"io"
 	"testing"
 	"time"
@@ -44,6 +43,7 @@ import (
 	"google.golang.org/grpc/internal/testutils/xds/e2e"
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
+	"google.golang.org/grpc/orca"
 	"google.golang.org/grpc/stats/opentelemetry"
 	"google.golang.org/grpc/stats/opentelemetry/internal/testutils"
 
@@ -321,16 +321,6 @@ func (s) TestAllMetricsOneFunction(t *testing.T) {
 	}
 }
 
-// deploy custom lb to get locality
-
-// For RLS use deployment infra with RLS top level balancer just to get it to work,
-// Plug an OTel plugin there for the base case...
-// rls target and grpc target (and pick result)
-// so I don't think needs to be in xDS Tree top level for both corner cases
-// and full plumbing...
-
-// gets balancer/addresses through xDS...
-
 // clusterWithLBConfiguration returns a cluster resource with the proto message
 // passed Marshaled to an any and specified through the load_balancing_policy
 // field.
@@ -352,21 +342,14 @@ func clusterWithLBConfiguration(t *testing.T, clusterName, edsServiceName string
 // TestWRRMetrics tests the metrics emitted from the WRR LB Policy. It
 // configures WRR as an endpoint picking policy through xDS on a ClientConn
 // alongside an OpenTelemetry stats handler. It makes a few RPC's, and then
-// sleeps for a bit to allow weight to expire. asserts OpenTelemetry metrics
-// atoms are eventually present for all four WRR Metrics, alongside the correct
-// target and locality label for each metric.
+// sleeps for a bit to allow weight to expire. It then asserts OpenTelemetry
+// metrics atoms are eventually present for all four WRR Metrics, alongside the
+// correct target and locality label for each metric.
 func (s) TestWRRMetrics(t *testing.T) {
-
-	// orca mr and also how to setup a service...
-
 	cmr := orca.NewServerMetricsRecorder().(orca.CallMetricsRecorder)
-	// SCALE THIS UP
 	backend1 := stubserver.StartTestService(t, &stubserver.StubServer{
-
-		// Could have the equivalent of this in a closure...
-
 		EmptyCallF: func(ctx context.Context, in *testpb.Empty) (*testpb.Empty, error) {
-			if r := orca.CallMetricsRecorderFromContext(ctx); r != nil { // do I need to send this?
+			if r := orca.CallMetricsRecorderFromContext(ctx); r != nil {
 				// Copy metrics from what the test set in cmr into r.
 				sm := cmr.(orca.ServerMetricsProvider).ServerMetrics()
 				r.SetApplicationUtilization(sm.AppUtilization)
@@ -376,36 +359,17 @@ func (s) TestWRRMetrics(t *testing.T) {
 			return &testpb.Empty{}, nil
 		},
 	}, orca.CallMetricsServerOption(nil))
-	// backend1.S.RegisterService() // happen before serve is start, register an orca service...
 	port1 := itestutils.ParsePort(t, backend1.Address)
 	defer backend1.Stop()
 
 	cmr.SetQPS(10.0)
 	cmr.SetApplicationUtilization(1.0)
 
-	// Try registering per call with a server option...
-
-
 	backend2 := stubserver.StartTestService(t, nil)
 	port2 := itestutils.ParsePort(t, backend2.Address)
 	defer backend2.Stop()
-	backend3 := stubserver.StartTestService(t, nil)
-	port3 := itestutils.ParsePort(t, backend3.Address)
-	defer backend3.Stop()
-
-	// Fallsback to RR when not all have weights...so before any RPC's, make 3,
-	// and then poll for 5 seconds for new weights to show up...
-
-
-	// One backend, so will fallback to rr.
-	// Wait but three would work too...yeah it says it's recording...
 
 	const serviceName = "my-service-client-side-xds"
-
-	// Do I need 3 or will 1 or 2 work wrt metrics I want...
-
-	// what buckets do the histos pick up...default
-
 
 	// Start an xDS management server.
 	managementServer, nodeID, _, xdsResolver := e2e.SetupManagementServerAndResolver(t) // change callsites in xDS e2e test to this...
@@ -419,11 +383,12 @@ func (s) TestWRRMetrics(t *testing.T) {
 							EnableOobLoadReport: &wrapperspb.BoolValue{
 								Value: false,
 							},
-							// BlackoutPeriod long enough to cause load report weights to
-							// trigger in the scope of test case, but no load reports
-							// configured anyway.
-							BlackoutPeriod:          durationpb.New(5 * time.Millisecond), // 0 will also trigger it...
-							WeightExpirationPeriod:  durationpb.New(500 * time.Millisecond), // fractional...time.Sleep to trigger it...
+							// BlackoutPeriod long enough to cause load report
+							// weight to trigger in the scope of test case.
+							// WeightExpirationPeriod will cause the load report
+							// weight for backend 1 to expire.
+							BlackoutPeriod:          durationpb.New(5 * time.Millisecond),
+							WeightExpirationPeriod:  durationpb.New(500 * time.Millisecond),
 							WeightUpdatePeriod:      durationpb.New(time.Second),
 							ErrorUtilizationPenalty: &wrapperspb.FloatValue{Value: 1},
 						}),
@@ -432,8 +397,6 @@ func (s) TestWRRMetrics(t *testing.T) {
 			},
 		},
 	}
-
-	// configure ORCA Service, and have it emit metrics for each one...
 
 
 	routeConfigName := "route-" + serviceName
@@ -449,7 +412,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 			Host:        "localhost",
 			Localities: []e2e.LocalityOptions{
 				{
-					Backends: []e2e.BackendOptions{{Port: port1}, {Port: port2}, {Port: port3}},
+					Backends: []e2e.BackendOptions{{Port: port1}, {Port: port2}},
 					Weight:   1,
 				},
 			},
@@ -462,7 +425,6 @@ func (s) TestWRRMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(metric.WithReader(reader))
 
@@ -472,7 +434,6 @@ func (s) TestWRRMetrics(t *testing.T) {
 		OptionalLabels: []string{"grpc.lb.locality"},
 	}
 
-	// it happens sync when it's built right? yeah just first scheduler update...
 	target := fmt.Sprintf("xds:///%s", serviceName)
 	cc, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(xdsResolver), opentelemetry.DialOption(opentelemetry.Options{MetricsOptions: mo}))
 	if err != nil {
@@ -482,31 +443,16 @@ func (s) TestWRRMetrics(t *testing.T) {
 
 	client := testgrpc.NewTestServiceClient(cc)
 
-	// Trigger per call load reports...and then sleep for wait expiry...
-	if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
-		t.Fatalf("EmptyCall() = %v, want <nil>", err)
+	// Make 100 RPC's. One of these should hit backend 1 and trigger a per call
+	// load report, giving that SubConn a weight which will eventually expire.
+	// Two backends needed as for only one backend, WRR does not recompute the
+	// scheduler.
+	for i := 0; i < 100; i++ {
+		if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil {
+			t.Fatalf("EmptyCall() = %v, want <nil>", err)
+		}
 	}
-	if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
-		t.Fatalf("EmptyCall() = %v, want <nil>", err)
-	}
-	if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
-		t.Fatalf("EmptyCall() = %v, want <nil>", err)
-	}
-	// This works so backend plumbing works as usual...
-	// just need to scale up orca...
 
-
-	// WRR should function as normal...it does...
-
-
-	// time.Sleeps to trigger scheduler update/expiration...
-
-
-	// poll for all 4 or just endpoint weight expires...
-
-
-
-	// light assertions here on the emitted WRR Metrics...
 	rm := &metricdata.ResourceMetrics{}
 	reader.Collect(ctx, rm)
 	gotMetrics := map[string]metricdata.Metrics{}
@@ -517,8 +463,9 @@ func (s) TestWRRMetrics(t *testing.T) {
 	}
 
 
-	// no need to poll since gotMetrics emits as a result of WRR getting scheduler...but poll eventually...
-
+	// no need to poll for first assertion because WRR emits metrics
+	// synchronously on the first picker/scheduler update, which happens before
+	// first RPC finishes.
 	targetAttr := attribute.String("grpc.target", target)
 	localityAttr := attribute.String("grpc.lb.locality", `{"region":"region-1","zone":"zone-1","subZone":"subzone-1"}`)
 
@@ -531,7 +478,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(targetAttr, localityAttr),
-						Value:      1,
+						Value:      1, // value ignored
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -547,33 +494,13 @@ func (s) TestWRRMetrics(t *testing.T) {
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
 						Attributes: attribute.NewSet(targetAttr, localityAttr),
-						Value:      1, // value ignored...it is some value though...
+						Value:      1, // value ignored
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
 				IsMonotonic: true,
 			},
 		},
-
-		// sleep and then poll for the metrics to expire...
-		// if it works to make sure assertions work uncomment this
-		// and make sure it fails...
-
-		/*{
-			Name: "grpc.lb.wrr.endpoint_weight_stale",
-			Description: "EXPERIMENTAL. Number of endpoints from each scheduler update whose latest weight is older than the expiration period.",
-			Unit: "endpoint",
-			Data: metricdata.Sum[int64]{
-				DataPoints: []metricdata.DataPoint[int64]{
-					{
-						Attributes: attribute.NewSet(targetAttr, localityAttr),
-						Value:      1, // value ignored...it is some value though...
-					},
-				},
-				Temporality: metricdata.CumulativeTemporality,
-				IsMonotonic: true,
-			},
-		},*/
 		{
 			Name: "grpc.lb.wrr.endpoint_weights",
 			Description: "EXPERIMENTAL. Weight of each endpoint, recorded on every scheduler update. Endpoints without usable weights will be recorded as weight 0.",
@@ -582,8 +509,6 @@ func (s) TestWRRMetrics(t *testing.T) {
 				DataPoints: []metricdata.HistogramDataPoint[float64]{
 					{
 						Attributes: attribute.NewSet(targetAttr, localityAttr),
-						// Value:      1, // value ignored...it is some value though...
-						// Bounds: , // what bounds did I pass up for this, I added the option DefaultBounds but does this ignore? What are the default bounds?
 					},
 				},
 				Temporality: metricdata.CumulativeTemporality,
@@ -591,20 +516,21 @@ func (s) TestWRRMetrics(t *testing.T) {
 		},
 	}
 
-	// First three should immediately be present as happens synchronously from first scheduler update...
+	// First three should immediately be present as happens synchronously from
+	// first scheduler update.
 	for _, metric := range wantMetrics {
 		val, ok := gotMetrics[metric.Name]
 		if !ok {
 			t.Fatalf("Metric %v not present in recorded metrics", metric.Name)
 		}
-		// ignores non deterministic values...
-		// I think labels are tested here though...target and locality seems like ignore value still checks labels but make sure...
 		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreValue(),  metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
 			t.Fatalf("Metrics data type not equal for metric: %v", metric.Name)
 		}
 	}
 
-	// sleep, then poll for 5 seconds for weight expiration metric...no more RPC's so scheduler should expire and emit metric...
+	// Sleep, then poll for 5 seconds for weight expiration metric. No more
+	// RPC's are being made, so weight should expire on a subsequent scheduler
+	// update.
 	time.Sleep(time.Second)
 
 	eventuallyWantMetric := metricdata.Metrics{
@@ -615,7 +541,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 			DataPoints: []metricdata.DataPoint[int64]{
 				{
 					Attributes: attribute.NewSet(targetAttr, localityAttr),
-					Value:      1, // value ignored...it is some value though...
+					Value:      1,
 				},
 			},
 			Temporality: metricdata.CumulativeTemporality,
@@ -623,11 +549,8 @@ func (s) TestWRRMetrics(t *testing.T) {
 		},
 	}
 
-	// Poll for 5 seconds for stale metric to appear...ctx timeout
+	// Poll for 5 seconds for stale metric to appear.
 	for ; ctx.Err() == nil; <-time.After(time.Millisecond) {
-		if _, err := client.EmptyCall(ctx, &testpb.Empty{}); err != nil { // does it matter...options or what happens...
-			t.Fatalf("EmptyCall() = %v, want <nil>", err)
-		}
 		rm := &metricdata.ResourceMetrics{}
 		reader.Collect(ctx, rm)
 		gotMetrics := map[string]metricdata.Metrics{}

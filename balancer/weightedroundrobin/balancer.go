@@ -47,36 +47,6 @@ import (
 // Name is the name of the weighted round robin balancer.
 const Name = "weighted_round_robin"
 
-// Add comment to exported field...
-
-
-// How to get operations on this to have eventually consistent assertion for metrics...
-
-// 1 2 3 <- eventually show each knob (need poll at each point)
-
-// or just 3 <- after all the operations, eventually consistent to this state, or could look at metric emission history...
-
-// histo the last x records are a certain weight...
-
-
-// Also, it's blocking the channel sends, should I rearchitect the
-// waits/sends/assertions on the fake metrics recorder?
-
-// Trivially I could just increase buffer size...
-
-// Could I rewrite the assertions to read off buffer (can verify labels
-// too)...Go's model of eventual consistency...like OD processing events on that
-// run() goroutine...
-
-// Right now I have an assert that takes a want and assert it against the most
-// recent recording point in place... this doesn't work well with
-// nondeterministic emissions like sleeps etc.
-
-// Eventual consistency that works well with operations above...play around with
-// it and see how operations truly link...and what would work best...and then
-// build out operations to support it
-
-
 var (
 	rrFallbackMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.rr_fallback",
@@ -537,7 +507,7 @@ func (w *weightedSubConn) OnLoadReport(load *v3orcapb.OrcaLoadReport) {
 	defer w.mu.Unlock()
 
 	errorRate := load.Eps / load.RpsFractional
-	w.weightVal = load.RpsFractional / (utilization + errorRate*w.cfg.ErrorUtilizationPenalty) // Either this complicated val or 0...
+	w.weightVal = load.RpsFractional / (utilization + errorRate*w.cfg.ErrorUtilizationPenalty)
 	if w.logger.V(2) {
 		w.logger.Infof("New weight for subchannel %v: %v", w.SubConn, w.weightVal)
 	}
@@ -588,12 +558,14 @@ func (w *weightedSubConn) updateConnectivityState(cs connectivity.State) connect
 		w.SubConn.Connect()
 	case connectivity.Ready:
 		// If we transition back to READY state, reset nonEmptySince so that we
-		// apply the blackout period after we start receiving load data.  Note
-		// that we cannot guarantee that we will never receive lingering
-		// callbacks for backend metric reports from the previous connection
-		// after the new connection has been established, but they should be
-		// masked by new backend metric reports from the new connection by the
-		// time the blackout period ends.
+		// apply the blackout period after we start receiving load data. Also
+		// reset lastUpdated to trigger endpoint weight not yet usable in the
+		// case endpoint gets asked what weight it is before receiving a new
+		// load report. Note that we cannot guarantee that we will never receive
+		// lingering callbacks for backend metric reports from the previous
+		// connection after the new connection has been established, but they
+		// should be masked by new backend metric reports from the new
+		// connection by the time the blackout period ends.
 		w.mu.Lock()
 		w.nonEmptySince = time.Time{}
 		w.lastUpdated = time.Time{}
