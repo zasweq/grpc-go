@@ -20,6 +20,7 @@ package rls
 
 import (
 	"container/list"
+	"google.golang.org/grpc/experimental/stats"
 	"time"
 
 	"google.golang.org/grpc/internal/backoff"
@@ -164,6 +165,23 @@ func (l *lru) getLeastRecentlyUsed() cacheKey {
 // It is not safe for concurrent access.
 type dataCache struct {
 	maxSize     int64 // Maximum allowed size.
+
+	// The current size of the RLS cache. - so when this changes...?
+
+	// Number of entries in the RLS cache. - how is that different than the current size?
+
+	// plumb metrics recorder from build options,
+	// target, rls server target, uuid to here that's what's needed for these metrics...
+
+	balancer *rlsBalancer // to access fields for metrics recording...
+
+	metricsRecorder stats.MetricsRecorder
+
+	// or I could hold a ref to the top level balancer, that has everything I need...
+	// this gets created once right?
+
+	// what operations does it need to record on...lru stuff or does it do stuff here too?
+
 	currentSize int64 // Current size.
 	keys        *lru  // Cache keys maintained in lru order.
 	entries     map[cacheKey]*cacheEntry
@@ -171,13 +189,14 @@ type dataCache struct {
 	shutdown    *grpcsync.Event
 }
 
-func newDataCache(size int64, logger *internalgrpclog.PrefixLogger) *dataCache {
+func newDataCache(size int64, logger *internalgrpclog.PrefixLogger, balancer *rlsBalancer) *dataCache {
 	return &dataCache{
 		maxSize:  size,
 		keys:     newLRU(),
 		entries:  make(map[cacheKey]*cacheEntry),
 		logger:   logger,
 		shutdown: grpcsync.NewEvent(),
+		balancer: balancer,
 	}
 }
 
@@ -292,7 +311,7 @@ func (dc *dataCache) resetBackoffState(newBackoffState *backoffState) bool {
 // any RPCs queued as a result of this backoff timer.
 //
 // Return value ok indicates if entry was successfully added to the cache.
-func (dc *dataCache) addEntry(key cacheKey, entry *cacheEntry) (backoffCancelled bool, ok bool) {
+func (dc *dataCache) addEntry(key cacheKey, entry *cacheEntry) (backoffCancelled bool, ok bool) { // called from picker invoked from control channel...
 	if dc.shutdown.HasFired() {
 		return false, false
 	}
@@ -310,8 +329,33 @@ func (dc *dataCache) addEntry(key cacheKey, entry *cacheEntry) (backoffCancelled
 	if dc.currentSize > dc.maxSize {
 		backoffCancelled = dc.resize(dc.maxSize)
 	}
+
+	// size of RLS cache *in bytes...*
+	// right here after it accesses it...this is a gauge so just recent
+
+	// is this the only place the RLS cache can change? There's also resize places etc...
+
+	// does this need any sync...yeah so rls server target can change from places like updateccs, so I think this is fine...
+
+
+	// does any of this currentSize state access need sync?
+
+	// if I persist bOpts I can just use that for metrics recorder right?
+	// not nil check for panic reasons - hits a no-op, label check but it's fine...
+
+	// this config read needs to grab a mu...how to not induce a deadlock here...?
+	// can be written on updateCCS, can a that operation happen async/sync?
+
+	cacheSizeMetric.Record(dc.balancer.bopts.MetricsRecorder, dc.currentSize, dc.balancer.bopts.Target.String(), dc.balancer.lbCfg.lookupService, dc.balancer.uuid) // rls server target and rls instance uuid where do you get that from?
+
+
+
 	return backoffCancelled, true
 }
+
+// can picker also just hold onto balancer...needs to because rls server_target can also switch...
+
+// what operations scale up and down the *cache entries*
 
 // updateEntrySize updates the size of a cache entry and the current size of the
 // data cache. An entry's size can change upon receipt of an RLS response.
@@ -319,7 +363,14 @@ func (dc *dataCache) updateEntrySize(entry *cacheEntry, newSize int64) {
 	dc.currentSize -= entry.size
 	entry.size = newSize
 	dc.currentSize += entry.size
+
+	// emit here...or do once at the end of each cache handling operation?
+	// cache size change...
+
 }
+
+// Eric mentioned async gauge calls into it so just updates as needed and then
+// OTel calls into it...so maybe just do it at the end...
 
 func (dc *dataCache) getEntry(key cacheKey) *cacheEntry {
 	if dc.shutdown.HasFired() {
@@ -351,6 +402,9 @@ func (dc *dataCache) deleteAndcleanup(key cacheKey, entry *cacheEntry) {
 	delete(dc.entries, key)
 	dc.currentSize -= entry.size
 	dc.keys.removeEntry(key)
+
+	// again, this scales down cache entries/cache size, do operation at the end of full cache processing?
+
 }
 
 func (dc *dataCache) stop() {
