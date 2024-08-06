@@ -23,12 +23,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/connectivity"
 	estats "google.golang.org/grpc/experimental/stats"
@@ -81,43 +81,39 @@ var (
 	resetBackoffHook     = func() {}
 
 	cacheEntriesMetric = estats.RegisterInt64Gauge(estats.MetricDescriptor{
-		Name:           "grpc.lb.rls.cache_entries",
-		Description:    "EXPERIMENTAL. Number of entries in the RLS cache.",
-		Unit:           "entry",
-		Labels:         []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid"},
-		Default:        false,
+		Name:        "grpc.lb.rls.cache_entries",
+		Description: "EXPERIMENTAL. Number of entries in the RLS cache.",
+		Unit:        "entry",
+		Labels:      []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid"},
+		Default:     false,
 	})
-
 	cacheSizeMetric = estats.RegisterInt64Gauge(estats.MetricDescriptor{
-		Name:           "grpc.lb.rls.cache_size",
-		Description:    "EXPERIMENTAL. The current size of the RLS cache.",
-		Unit:           "By",
-		Labels:         []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid"},
-		Default:        false,
+		Name:        "grpc.lb.rls.cache_size",
+		Description: "EXPERIMENTAL. The current size of the RLS cache.",
+		Unit:        "By",
+		Labels:      []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid"},
+		Default:     false,
 	})
-
 	defaultTargetPicksMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
-		Name:           "grpc.lb.rls.default_target_picks",
-		Description:    "EXPERIMENTAL. Number of LB picks sent to the default target.",
-		Unit:           "pick",
-		Labels:         []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid", "grpc.lb.pick_result"},
-		Default:        false,
+		Name:        "grpc.lb.rls.default_target_picks",
+		Description: "EXPERIMENTAL. Number of LB picks sent to the default target.",
+		Unit:        "pick",
+		Labels:      []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid", "grpc.lb.pick_result"},
+		Default:     false,
 	})
-
 	targetPicksMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
-		Name:           "grpc.lb.rls.target_picks",
-		Description:    "EXPERIMENTAL. Number of LB picks sent to each RLS target. Note that if the default target is also returned by the RLS server, RPCs sent to that target from the cache will be counted in this metric, not in grpc.rls.default_target_picks.",
-		Unit:           "pick",
-		Labels:         []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid", "grpc.lb.pick_result"},
-		Default:        false,
+		Name:        "grpc.lb.rls.target_picks",
+		Description: "EXPERIMENTAL. Number of LB picks sent to each RLS target. Note that if the default target is also returned by the RLS server, RPCs sent to that target from the cache will be counted in this metric, not in grpc.rls.default_target_picks.",
+		Unit:        "pick",
+		Labels:      []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid", "grpc.lb.pick_result"},
+		Default:     false,
 	})
-
 	failedPicksMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
-		Name:           "grpc.lb.rls.failed_picks",
-		Description:    "EXPERIMENTAL. Number of LB picks failed due to either a failed RLS request or the RLS channel being throttled.",
-		Unit:           "pick",
-		Labels:         []string{"grpc.target", "grpc.lb.rls.server_target"},
-		Default:        false,
+		Name:        "grpc.lb.rls.failed_picks",
+		Description: "EXPERIMENTAL. Number of LB picks failed due to either a failed RLS request or the RLS channel being throttled.",
+		Unit:        "pick",
+		Labels:      []string{"grpc.target", "grpc.lb.rls.server_target"},
+		Default:     false,
 	})
 )
 
@@ -132,16 +128,12 @@ func (rlsBB) Name() string {
 }
 
 func (rlsBB) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
-	// A UUID for an individual RLS client instance.
-	// uuid.New().String()
-
 	lb := &rlsBalancer{
 		closed:             grpcsync.NewEvent(),
 		done:               grpcsync.NewEvent(),
 		cc:                 cc,
 		bopts:              opts,
 		uuid:               uuid.New().String(),
-		// metricsRecorder:    opts.MetricsRecorder, already present in bOpts above...
 		purgeTicker:        dataCachePurgeTicker(),
 		dataCachePurgeHook: dataCachePurgeHook,
 		lbCfg:              &lbConfig{},
@@ -150,33 +142,8 @@ func (rlsBB) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.
 		updateCh:           buffer.NewUnbounded(),
 	}
 	lb.logger = internalgrpclog.NewPrefixLogger(logger, fmt.Sprintf("[rls-experimental-lb %p] ", lb))
-
-	// Subcomponents...
-	// Creates data cache here...pass it here
-
-	// Doesn't create picker yet though so need to persist all of this data around
-
-	// persist in balancer/SubComponents to record on...
-	// metric recorder
-
-	// cc.CanonicalTarget as target...
-
-
-	// rls target comes in from config...read that
-
-	// the rest is derived in picker...
-
-	// persist stuff around?
-
-	// stuff comes and goes?
-
-	// Pass metrics recorder to this thing...? What other state does it need?
-	lb.dataCache = newDataCache(maxCacheSize, lb.logger, lb) // created once...
-
-	// constructed once per balancer...I think I coulddd
-	// just point to the top level balancer...
-
-	lb.bg = balancergroup.New(balancergroup.Options{ // There's a balancer group...?
+	lb.dataCache = newDataCache(maxCacheSize, lb.logger, lb)
+	lb.bg = balancergroup.New(balancergroup.Options{
 		CC:                      cc,
 		BuildOpts:               opts,
 		StateAggregator:         lb,
@@ -194,8 +161,7 @@ type rlsBalancer struct {
 	done               *grpcsync.Event // Fires when Close() is done.
 	cc                 balancer.ClientConn
 	bopts              balancer.BuildOptions
-	metricsRecorder    estats.MetricsRecorder
-	uuid               string // uuid for metrics...fixed over time...
+	uuid               string
 	purgeTicker        *time.Ticker
 	dataCachePurgeHook func()
 	logger             *internalgrpclog.PrefixLogger
@@ -214,7 +180,7 @@ type rlsBalancer struct {
 	pendingMap map[cacheKey]*backoffState // Map of pending RLS requests.
 
 	// stateMu guards access to all LB policy state.
-	stateMu            sync.Mutex // grab this to access config...does this work and not induce deadlock if I grab in cache...where are cache operations called from?
+	stateMu            sync.Mutex
 	lbCfg              *lbConfig        // Most recently received service config.
 	childPolicyBuilder balancer.Builder // Cached child policy builder.
 	resolverState      resolver.State   // Cached resolver state.
@@ -264,7 +230,7 @@ func (b *rlsBalancer) run() {
 	defer func() {
 		<-doneCh
 	}()
-	go b.purgeDataCache(doneCh) // forks the purge goroutine in run()
+	go b.purgeDataCache(doneCh)
 
 	for {
 		select {
@@ -311,21 +277,21 @@ func (b *rlsBalancer) purgeDataCache(doneCh chan struct{}) {
 		select {
 		case <-b.closed.Done():
 			return
-		case <-b.purgeTicker.C: // This can also evict entries from cache, this needs to emit metrics too...
+		case <-b.purgeTicker.C:
 			b.cacheMu.Lock()
 			updatePicker := b.dataCache.evictExpiredEntries()
 
-			b.stateMu.Lock() // This is fine and might be required for this operation, but picker manipulation and updating the cache needs to be thought about, don't want to grab a mutex on Pick...
+			b.stateMu.Lock()
 			rlsLookupService := b.lbCfg.lookupService
 			b.stateMu.Unlock()
 			cacheSize := b.dataCache.currentSize
 			cacheEntries := int64(len(b.dataCache.entries))
-			b.cacheMu.Unlock() // maybe release after reading into local var...then record outside the lock
+			b.cacheMu.Unlock()
 			grpcTarget := b.bopts.Target.String()
 			cacheSizeMetric.Record(b.bopts.MetricsRecorder, cacheSize, grpcTarget, rlsLookupService, b.uuid)
 			cacheEntriesMetric.Record(b.bopts.MetricsRecorder, cacheEntries, grpcTarget, rlsLookupService, b.uuid)
 			if updatePicker {
-				b.sendNewPicker() // Layer above metrics, send new picker gives it a ref to balancer so you're good here, does new balancer/config correctly get represented...?
+				b.sendNewPicker()
 			}
 			b.dataCachePurgeHook()
 		}
@@ -356,19 +322,7 @@ func (b *rlsBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	// swapped out for a new one. All state associated with the throttling
 	// algorithm is stored on a per-control-channel basis; when we swap out
 	// channels, we also swap out the throttling state.
-	b.handleControlChannelUpdate(newCfg) // when it changes...how does that affect metrics/system currently running...how should this target be plumbed out of the the ticker expiring...
-
-	// Note that all state associated with the throttling algorithm described
-	// above must be stored on a per-channel basis; when we swap out channels,
-	// we also swap out the throttling state.
-
-	// Clears out throttling state (so keeps cache) (so I guess keeps data around in cache...)
-	// but gets rid of throtlling algorithm...
-
-
-
-	// target from config? So sync does it built out a whole new picker etc...
-
+	b.handleControlChannelUpdate(newCfg)
 
 	// Any changes to child policy name or configuration needs to be handled by
 	// either creating new child policies or pushing updates to existing ones.
@@ -398,18 +352,13 @@ func (b *rlsBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 		// `resizeCache` boolean) because `cacheMu` needs to be grabbed before
 		// `stateMu` if we are to hold both locks at the same time.
 		b.cacheMu.Lock()
-		// Can I just read newConfig, or do I need ot grab b.lbcfg, I think just read new one...
-
-
 		b.dataCache.resize(newCfg.cacheSizeBytes)
 		dataCacheSize := b.dataCache.currentSize
 		dataCacheEntries := int64(len(b.dataCache.entries))
 		b.cacheMu.Unlock()
 		grpcTarget := b.bopts.Target.String()
-
-
 		cacheSizeMetric.Record(b.bopts.MetricsRecorder, dataCacheSize, grpcTarget, newCfg.lookupService, b.uuid)
-		cacheEntriesMetric.Record(b.bopts.MetricsRecorder, dataCacheEntries, grpcTarget, newCfg.lookupService, b.uuid) // The fields needed to be read are read only...
+		cacheEntriesMetric.Record(b.bopts.MetricsRecorder, dataCacheEntries, grpcTarget, newCfg.lookupService, b.uuid)
 	}
 	return nil
 }
@@ -436,9 +385,6 @@ func (b *rlsBalancer) handleControlChannelUpdate(newCfg *lbConfig) {
 		b.logger.Errorf("Failed to create control channel to %q: %v", newCfg.lookupService, err)
 		return
 	}
-
-	// Doesn't clear cache...
-
 	if b.ctrlCh != nil {
 		b.ctrlCh.close()
 	}
@@ -599,17 +545,9 @@ func (b *rlsBalancer) sendNewPickerLocked() {
 		b.defaultPolicy.acquireRef()
 	}
 
-	// Right here is when a new picker is created on heap...
-
-	// so persist everything needed in picker around...
-
-	// "lookup service" so I think this is right...
-	// rls server target...dynamic but picker is a snapshot of async system...
-	// b.lbCfg.lookupService
-
-	picker := &rlsPicker{ // only place it's created...likely be a no-op anyway...
+	picker := &rlsPicker{
 		kbm:           b.lbCfg.kbMap,
-		origEndpoint:  b.bopts.Target.Endpoint(), // persists something around already...already holds mu so consistent...
+		origEndpoint:  b.bopts.Target.Endpoint(),
 		lb:            b,
 		defaultPolicy: b.defaultPolicy,
 		ctrlCh:        b.ctrlCh,
