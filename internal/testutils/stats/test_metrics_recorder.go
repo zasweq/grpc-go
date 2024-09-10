@@ -75,6 +75,15 @@ func (r *TestMetricsRecorder) AssertDataForMetric(metricName string, wantVal flo
 	}
 }
 
+// AssertNoDataForMetric asserts no data is present for metric.
+func (r *TestMetricsRecorder) AssertNoDataForMetric(metricName string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.data[estats.Metric(metricName)]; ok {
+		r.t.Fatalf("Data is present for metric %v", metricName)
+	}
+}
+
 // PollForDataForMetric polls the metric data for the want. Fails if context
 // provided expires before data for metric is found.
 func (r *TestMetricsRecorder) PollForDataForMetric(ctx context.Context, metricName string, wantVal float64) {
