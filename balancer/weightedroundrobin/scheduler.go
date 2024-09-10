@@ -85,7 +85,7 @@ func (p *picker) newScheduler(recordMetrics bool) scheduler {
 		return &rrScheduler{numSCs: uint32(n), inc: p.inc}
 	}
 
-	logger.Infof("using edf scheduler with weights: %v", weights) // It never hits here
+	logger.Infof("using edf scheduler with weights: %v", weights)
 	return &edfScheduler{weights: weights, inc: p.inc}
 }
 

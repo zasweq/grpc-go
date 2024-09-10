@@ -42,16 +42,6 @@ import (
 	testpb "google.golang.org/grpc/interop/grpc_testing"
 )
 
-// test labels too (need to scale up mock stats handler then)
-// and also perhaps test more than non recent?
-
-// need grpc target, rls target, and target picked how to encode that in top
-// level service config or is there a way to do a subset and ignore labels
-// without all that...
-
-// What did Java do did they pay attention to labels? yes they did but also just
-// checked number of emissions...
-
 // TestNoNonEmptyTargetsReturnsError tests the case where the RLS Server returns
 // a response with no non empty targets. This should be treated as an Control
 // Plane RPC failure, and thus fail Data Plane RPC's with an error with the
@@ -258,11 +248,12 @@ func (s) TestPick_DataCacheMiss_PendingEntryExists(t *testing.T) {
 	}
 }
 
+// Test_RLSDefaultTargetPicksMetric tests the default target picks metric. It
+// configures an RLS Balancer which specifies to route to the default target in
+// the RLS Configuration, and makes an RPC on a Channel containing this RLS
+// Balancer. This test then asserts a default target picks metric is emitted,
+// and target pick or failed pick metric is not emitted.
 func (s) Test_RLSDefaultTargetPicksMetric(t *testing.T) {
-
-	// scenario 1 without any of the overhead...
-	// success from something on cache - pull from sceanrio with data cache or something
-
 	// Start an RLS server and set the throttler to always throttle requests.
 	rlsServer, _ := rlstest.SetupFakeRLSServer(t, nil)
 	overrideAdaptiveThrottler(t, alwaysThrottlingThrottler())
@@ -287,21 +278,8 @@ func (s) Test_RLSDefaultTargetPicksMetric(t *testing.T) {
 	defer cancel()
 	makeTestRPCAndExpectItToReachBackend(ctx, t, cc, defBackendCh)
 
-
-	// refactor into t-test...or pull out below into helpers
-
-
-	// make an RPC on channel (wait for ready, once it goes ready it emits success metric)
-
-
-	// How to verify...expect one metric (are labels important...just scale up persistence data structure)
-
-
-	tmr.AssertDataForMetric("grpc.lb.rls.default_target_picks", 1) // scale this API up to include labels?
-
-	// Make sure the other two don't get emissions...
+	tmr.AssertDataForMetric("grpc.lb.rls.default_target_picks", 1)
 	tmr.AssertNoDataForMetric("grpc.lb.rls.failed_picks")
-
 	tmr.AssertNoDataForMetric("grpc.lb.rls.target_picks")
 }
 
@@ -310,11 +288,7 @@ func (s) Test_RLSDefaultTargetPicksMetric(t *testing.T) {
 // and makes an RPC on a Channel containing this RLS Balancer. This test then
 // asserts a target picks metric is emitted, and default target pick or failed
 // pick metric is not emitted.
-func (s) Test_RLSTargetPicksMetric(t *testing.T) { // scale down assertions like rls request...
-
-	// scenario 2 without any of the overhead...
-	// success from default target...how to test this see others
-
+func (s) Test_RLSTargetPicksMetric(t *testing.T) {
 	rlsServer, _ := rlstest.SetupFakeRLSServer(t, nil)
 	overrideAdaptiveThrottler(t, neverThrottlingThrottler())
 
@@ -343,30 +317,19 @@ func (s) Test_RLSTargetPicksMetric(t *testing.T) { // scale down assertions like
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 	makeTestRPCAndExpectItToReachBackend(ctx, t, cc, testBackendCh)
-	// this means it picked the right one right...
-
-	// Label can get tested from e2e test...
-
-	tmr.AssertDataForMetric("grpc.lb.rls.target_picks", 1) // scale this API up to include labels? Defer to e2e I think
-
-	// Make sure the other two don't get emissions...
+	tmr.AssertDataForMetric("grpc.lb.rls.target_picks", 1)
 	tmr.AssertNoDataForMetric("grpc.lb.rls.failed_picks")
-
 	tmr.AssertNoDataForMetric("grpc.lb.rls.default_target_picks")
-
 }
 
 // Test_RLSFailedPicksMetric tests the failed picks metric. It configures an RLS
 // Balancer to fail a pick with unavailable, and makes an RPC on a Channel
 // containing this RLS Balancer. This test then asserts a failed picks metric is
-// emitted, and default target pick or target pick is not emitted.
+// emitted, and default target pick or target pick metric is not emitted.
 func (s) Test_RLSFailedPicksMetric(t *testing.T) {
 	// Start an RLS server and set the throttler to never throttle requests.
 	rlsServer, _ := rlstest.SetupFakeRLSServer(t, nil)
-	overrideAdaptiveThrottler(t, neverThrottlingThrottler()) // I have no idea what this does but never throttles...in every test
-
-	// scenario 3 without any of the overhead...
-	// fails...wait for ready eats the queue part...
+	overrideAdaptiveThrottler(t, neverThrottlingThrottler())
 
 	// Build an RLS config without a default target.
 	rlsConfig := buildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address)
@@ -389,18 +352,10 @@ func (s) Test_RLSFailedPicksMetric(t *testing.T) {
 	defer cancel()
 	makeTestRPCAndVerifyError(ctx, t, cc, codes.Unavailable, errors.New("RLS response's target list does not contain any entries for key"))
 
-	// expect emission for fails, key value for labels but you only send up variadic arg values right...
-
 	tmr.AssertDataForMetric("grpc.lb.rls.failed_picks", 1)
-
-	// Make sure the other two don't get emissions...
 	tmr.AssertNoDataForMetric("grpc.lb.rls.target_picks")
-
 	tmr.AssertNoDataForMetric("grpc.lb.rls.default_target_picks")
-
 }
-// What's easiest one to test? let's try error
-
 
 // Test verifies the scenario where there is a matching entry in the data cache
 // which is valid and there is no pending request. The pick is expected to be
@@ -408,34 +363,10 @@ func (s) Test_RLSFailedPicksMetric(t *testing.T) {
 func (s) TestPick_DataCacheHit_NoPendingEntry_ValidEntry(t *testing.T) {
 	// Start an RLS server and set the throttler to never throttle requests.
 	rlsServer, rlsReqCh := rlstest.SetupFakeRLSServer(t, nil)
-	overrideAdaptiveThrottler(t, neverThrottlingThrottler()) // override adaptive throttler...do I need this?
+	overrideAdaptiveThrottler(t, neverThrottlingThrottler())
 
 	// Build the RLS config without a default target.
-	rlsConfig := buildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address) // t test on this and the metric emission?
-	// knob on config...one of them is default target or not...
-	// that determines whether fallback to default works or not (string these along like cache tests)
-	// and also the rls servers response callback determines whether the cache hits or not...
-
-	// RPC can be a sync point, after stuff like pings that come before
-	// in their testing pipeline
-
-
-	// setup own scenario; induces one of the three, can copy and scale down some of the assertions
-
-	// make an RPC, expect one of the three scenarios to have an emission (need to setup the three sceanarios with setup though)
-	// (alongside labels - add support for that in metrics recorder)
-
-	// queueing doesn't record, so 1:1 an RPC made corresponds to a metric
-	// emitted 1:1
-
-	// three separate tests either in t test or not
-
-
-
-	// scale up test metrics recorder to do labels too...
-
-
-
+	rlsConfig := buildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address)
 	// Start a test backend, and setup the fake RLS server to return this as a
 	// target in the RLS response.
 	testBackendCh, testBackendAddress := startBackend(t)
@@ -459,7 +390,7 @@ func (s) TestPick_DataCacheHit_NoPendingEntry_ValidEntry(t *testing.T) {
 	makeTestRPCAndExpectItToReachBackend(ctx, t, cc, testBackendCh)
 
 	// Make sure an RLS request is sent out.
-	verifyRLSRequest(t, rlsReqCh, true) // Don't need these can just do make testrpc...
+	verifyRLSRequest(t, rlsReqCh, true)
 
 	// Make another RPC and expect it to find the target in the data cache.
 	makeTestRPCAndExpectItToReachBackend(ctx, t, cc, testBackendCh)
@@ -1061,87 +992,12 @@ func TestIsFullMethodNameValid(t *testing.T) {
 	}
 }
 
-
-// and e2e too what helpers to pick out
-
-// sync? top level config gives knobs...
-// emit target/default target (and child possibilities) and failures
-
-// could test mechanical plumbing for child pick result for target/default target
-// and unit test the specific error conversions
-
-// and then figure out the actual metrics tests, but just need to induce the
-// three buckets since child attributes get taken care of below
-
-
-// how to induce the three metrics...can I create the picker directly?
-
-// induce three metrics...understand these tests (design or just tests?),
-
-// and perhaps pull stuff out into helpers (esp for e2e with OTel enabled)
-
-func (s) TryInduceThreeMetrics(t *testing.T) {
-	// create the picker directly or do I need full config flow?
-
-	// certain scenarios cause emissions from those three buckets...
-
-	// How to scale mock metrics recorder to do it...
-
-	// Prod code creates it inline
-	/*picker := &rlsPicker{
-		/*
-		kbm:             b.lbCfg.kbMap,
-			origEndpoint:    b.bopts.Target.Endpoint(),
-			lb:              b,
-			defaultPolicy:   b.defaultPolicy,
-			ctrlCh:          b.ctrlCh,
-			maxAge:          b.lbCfg.maxAge,
-			staleAge:        b.lbCfg.staleAge,
-			bg:              b.bg,
-			rlsServerTarget: b.lbCfg.lookupService,
-			grpcTarget:      b.bopts.Target.String(),
-			metricsRecorder: b.bopts.MetricsRecorder,
-
-	} // would need to fill hella fields and call hella methods to get pick to work properly...why is that not created in a constructor?
-	*/
-
-	// Discussed this non determinism with Eric...it's fine...
-
-	// or encode stuff in top level config...
-
-	// rls/grpc
-	// if I pick here before RLS will induce error
-
-	// rls processing comes nondeterministically...
-
-
-	// target and default target where to get information from I'm assuming in
-	// the RLS response itself...
-
-	// then here induce...should *eventually* emit target/default target (like
-	// eventual load balancing...)
-
-	// *** Doesn't emit for queued RPC's***
-	// Emits for failed...
-	// what is equivalent in the lb sync...can I reuse same sync/copy the tests...?
-
-
-}
-
-// codepath for helper is induced by pending request + data cache information...
-
-// default is seperate flow from rls cache hit, need to get rls target from that too...
-
-// err rls throttled and no default
-
-
-
 // Tests the conversion of the child pickers error to the pick result attribute.
 func (s) TestChildPickResultError(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want string // the desired output
+		want string
 	}{
 		{
 			name: "nil",

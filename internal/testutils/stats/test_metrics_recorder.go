@@ -241,13 +241,7 @@ func (r *TestMetricsRecorder) RecordInt64Gauge(handle *estats.Int64GaugeHandle, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.data[handle.Name] = float64(incr)
-
-	// how to add assertions to this, persist it as a value above?
-
-	// labels // []string
 }
-
-// how to scale this up to include label verification?
 
 // To implement a stats.Handler, which allows it to be set as a dial option:
 

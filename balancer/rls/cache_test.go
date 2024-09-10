@@ -42,21 +42,6 @@ var (
 	cacheEntries  []*cacheEntry
 )
 
-// See comments on other branch
-
-// cache layer - mechanical and just scale up unit test...
-// cache operations and then expect metrics (still do most recent metric emitted?)
-// this is just testing cache emissions right...I think I already started this
-
-// copy paste Doug might have a problem with story aspect though
-
-// picker tests just need to figure out what synchronization to use, right now
-// eventually consistent lb distribution...
-// 2 picker default target and target pick, then from below those get bucketed (or just unit test error helper and leave this just test the flow)
-
-// e2e tests just need to work around nondeterminism (including in number of emissions)
-// check labels/buckets and ignore the actual emitted data...?
-
 func initCacheEntries() {
 	// All entries have a dummy size of 1 to simplify resize operations.
 	cacheEntries = []*cacheEntry{
@@ -269,9 +254,8 @@ var cacheEntriesMetricsTests = []*cacheEntry{
 func (s) TestDataCache_Metrics(t *testing.T) {
 	tmr := stats.NewTestMetricsRecorder(t)
 	dc := newDataCache(50, nil, tmr, "")
-	// Should I check labels emissions...just tests gRPC target, rls server target, and uuid which idk is even worth testing...
-	// Java tests labels and number of times called...
-	dc.updateRLSServerTarget("rls-server-target") // synchronized from test, this is guaranteed to happen before cache operations triggered from balancer...
+
+	dc.updateRLSServerTarget("rls-server-target")
 	for i, k := range cacheKeys {
 		dc.addEntry(k, cacheEntriesMetricsTests[i])
 	}
@@ -283,45 +267,25 @@ func (s) TestDataCache_Metrics(t *testing.T) {
 
 	// Resize down the cache to 3 entries. This should scale down the cache to 3
 	// entries with 3 bytes each, so should record 3 entries and 9 size.
-	dc.resize(9) // evicts, should scale down, maybe make cache entries with same length
+	dc.resize(9)
 	tmr.AssertDataForMetric("grpc.lb.rls.cache_entries", 3)
 	tmr.AssertDataForMetric("grpc.lb.rls.cache_size", 9)
 
 	// Update an entry to have size 5. This should reflect in the size metrics,
 	// which will increase by 2 to 11, while the number of cache entries should
-	// stay same.
-	dc.updateEntrySize(cacheEntriesMetricsTests[4], 5) // is this deterministic, if not do this in separate test, higher level operations are unit tested for functionality I think this gets all done...
-	// This is deterministic and writes to last one ^^^
+	// stay same. This write is deterministic and writes to the last one.
+	dc.updateEntrySize(cacheEntriesMetricsTests[4], 5)
 
-	// this writes to global var...need to cleanup
 	defer func() {
 		cacheEntriesMetricsTests[4].size = 3
-	}() // coupled assertions he might ask to make this a t-test or something...
+	}()
 
 	tmr.AssertDataForMetric("grpc.lb.rls.cache_entries", 3)
-	tmr.AssertDataForMetric("grpc.lb.rls.cache_size", 11) // write comments for the high level explanations...
+	tmr.AssertDataForMetric("grpc.lb.rls.cache_size", 11)
 
 	// Delete this scaled up cache key. This should scale down the cache to 2
 	// entries, and remove 5 size so cache size should be 6.
 	dc.deleteAndCleanup(cacheKeys[4], cacheEntriesMetricsTests[4])
 	tmr.AssertDataForMetric("grpc.lb.rls.cache_entries", 2)
 	tmr.AssertDataForMetric("grpc.lb.rls.cache_size", 6)
-
-	// If I do want to scale it up to assert on labels
-	/*dc.uuid // string, gets created at construction time since 1:1 with RLS
-
-	dc.grpcTarget // written to at creation time
-
-	dc.rlsServerTarget*/ // written to through a helper - not sync safe "not safe for concurrent access" on top level docstring
-
-	// These three are the labels if I do want to scale it up yeah I think so for the unit test...
-
-} // When get back scale this up and figure out picker smoke test and then send out for review before 1:1 (smoke test but not complicated sceanrios for picker...could I really not scale that up non deterministic...)
-
-// Copy and paste this and write picker tests... Doug might have a problem with
-// how many assertions there are and how they link...testing too many things
-
-// I think this is good enough to send out but need to figure out picker tests...
-
-// What are the cache entry metric labels...are these important?
-// grpc target rls server target and uuid, I think these are given at construction time...
+}
