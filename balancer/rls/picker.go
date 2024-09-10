@@ -227,7 +227,7 @@ func (p *rlsPicker) delegateToChildPoliciesLocked(dcEntry *cacheEntry, info bala
 // target if one is configured, or fails the pick with the given error. Returns
 // a function to be invoked to record metrics.
 func (p *rlsPicker) useDefaultPickIfPossible(info balancer.PickInfo, errOnNoDefault error) (balancer.PickResult, func(), error) {
-	if p.defaultPolicy != nil {
+	if p.defaultPolicy != nil { // this comes from *RLS Config*
 		state := (*balancer.State)(atomic.LoadPointer(&p.defaultPolicy.state))
 		res, err := state.Picker.Pick(info)
 		pr := errToPickResult(err)

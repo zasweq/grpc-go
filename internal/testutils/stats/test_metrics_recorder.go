@@ -121,6 +121,7 @@ func (r *TestMetricsRecorder) WaitForInt64Count(ctx context.Context, metricsData
 }
 
 func (r *TestMetricsRecorder) RecordInt64Count(handle *estats.Int64CountHandle, incr int64, labels ...string) {
+	r.intCountCh.ReceiveOrFail()
 	r.intCountCh.Send(MetricsData{
 		Handle:    handle.Descriptor(),
 		IntIncr:   incr,
@@ -145,6 +146,7 @@ func (r *TestMetricsRecorder) WaitForFloat64Count(ctx context.Context, metricsDa
 }
 
 func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHandle, incr float64, labels ...string) {
+	r.floatCountCh.ReceiveOrFail()
 	r.floatCountCh.Send(MetricsData{
 		Handle:    handle.Descriptor(),
 		FloatIncr: incr,
@@ -169,6 +171,7 @@ func (r *TestMetricsRecorder) WaitForInt64Histo(ctx context.Context, metricsData
 }
 
 func (r *TestMetricsRecorder) RecordInt64Histo(handle *estats.Int64HistoHandle, incr int64, labels ...string) {
+	r.intHistoCh.ReceiveOrFail()
 	r.intHistoCh.Send(MetricsData{
 		Handle:    handle.Descriptor(),
 		IntIncr:   incr,
@@ -193,6 +196,7 @@ func (r *TestMetricsRecorder) WaitForFloat64Histo(ctx context.Context, metricsDa
 }
 
 func (r *TestMetricsRecorder) RecordFloat64Histo(handle *estats.Float64HistoHandle, incr float64, labels ...string) {
+	r.floatHistoCh.ReceiveOrFail()
 	r.floatHistoCh.Send(MetricsData{
 		Handle:    handle.Descriptor(),
 		FloatIncr: incr,
@@ -217,6 +221,7 @@ func (r *TestMetricsRecorder) WaitForInt64Gauge(ctx context.Context, metricsData
 }
 
 func (r *TestMetricsRecorder) RecordInt64Gauge(handle *estats.Int64GaugeHandle, incr int64, labels ...string) {
+	r.intGaugeCh.ReceiveOrFail()
 	r.intGaugeCh.Send(MetricsData{
 		Handle:    handle.Descriptor(),
 		IntIncr:   incr,
@@ -227,7 +232,13 @@ func (r *TestMetricsRecorder) RecordInt64Gauge(handle *estats.Int64GaugeHandle, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.data[handle.Name] = float64(incr)
+
+	// how to add assertions to this, persist it as a value above?
+
+	// labels // []string
 }
+
+// how to scale this up to include label verification?
 
 // To implement a stats.Handler, which allows it to be set as a dial option:
 

@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/balancer"
 	"testing"
 	"time"
 
@@ -39,6 +40,16 @@ import (
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
 )
+
+// test labels too (need to scale up mock stats handler then)
+// and also perhaps test more than non recent?
+
+// need grpc target, rls target, and target picked how to encode that in top
+// level service config or is there a way to do a subset and ignore labels
+// without all that...
+
+// What did Java do did they pay attention to labels? yes they did but also just
+// checked number of emissions...
 
 // TestNoNonEmptyTargetsReturnsError tests the case where the RLS Server returns
 // a response with no non empty targets. This should be treated as an Control
@@ -252,10 +263,33 @@ func (s) TestPick_DataCacheMiss_PendingEntryExists(t *testing.T) {
 func (s) TestPick_DataCacheHit_NoPendingEntry_ValidEntry(t *testing.T) {
 	// Start an RLS server and set the throttler to never throttle requests.
 	rlsServer, rlsReqCh := rlstest.SetupFakeRLSServer(t, nil)
-	overrideAdaptiveThrottler(t, neverThrottlingThrottler())
+	overrideAdaptiveThrottler(t, neverThrottlingThrottler()) // override adaptive throttler...do I need this?
 
 	// Build the RLS config without a default target.
-	rlsConfig := buildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address)
+	rlsConfig := buildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address) // t test on this and the metric emission?
+	// knob on config...one of them is default target or not...
+	// that determines whether fallback to default works or not (string these along like cache tests)
+	// and also the rls servers response callback determines whether the cache hits or not...
+
+	// RPC can be a sync point, after stuff like pings that come before
+	// in their testing pipeline
+
+
+	// setup own scenario; induces one of the three, can copy and scale down some of the assertions
+
+	// make an RPC, expect one of the three scenarios to have an emission (need to setup the three sceanarios with setup though)
+	// (alongside labels - add support for that in metrics recorder)
+
+	// queueing doesn't record, so 1:1 an RPC made corresponds to a metric
+	// emitted 1:1
+
+	// three separate tests either in t test or not
+
+
+
+	// scale up test metrics recorder to do labels too...
+
+
 
 	// Start a test backend, and setup the fake RLS server to return this as a
 	// target in the RLS response.
@@ -280,7 +314,7 @@ func (s) TestPick_DataCacheHit_NoPendingEntry_ValidEntry(t *testing.T) {
 	makeTestRPCAndExpectItToReachBackend(ctx, t, cc, testBackendCh)
 
 	// Make sure an RLS request is sent out.
-	verifyRLSRequest(t, rlsReqCh, true)
+	verifyRLSRequest(t, rlsReqCh, true) // Don't need these can just do make testrpc...
 
 	// Make another RPC and expect it to find the target in the data cache.
 	makeTestRPCAndExpectItToReachBackend(ctx, t, cc, testBackendCh)
@@ -877,6 +911,116 @@ func TestIsFullMethodNameValid(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			if got := isFullMethodNameValid(test.methodName); got != test.want {
 				t.Fatalf("isFullMethodNameValid(%q) = %v, want %v", test.methodName, got, test.want)
+			}
+		})
+	}
+}
+
+
+// and e2e too what helpers to pick out
+
+// sync? top level config gives knobs...
+// emit target/default target (and child possibilities) and failures
+
+// could test mechanical plumbing for child pick result for target/default target
+// and unit test the specific error conversions
+
+// and then figure out the actual metrics tests, but just need to induce the
+// three buckets since child attributes get taken care of below
+
+
+// how to induce the three metrics...can I create the picker directly?
+
+// induce three metrics...understand these tests (design or just tests?),
+
+// and perhaps pull stuff out into helpers (esp for e2e with OTel enabled)
+
+func (s) TryInduceThreeMetrics(t *testing.T) {
+	// create the picker directly or do I need full config flow?
+
+	// certain scenarios cause emissions from those three buckets...
+
+	// How to scale mock metrics recorder to do it...
+
+	// Prod code creates it inline
+	picker := &rlsPicker{
+		/*
+		kbm:             b.lbCfg.kbMap,
+			origEndpoint:    b.bopts.Target.Endpoint(),
+			lb:              b,
+			defaultPolicy:   b.defaultPolicy,
+			ctrlCh:          b.ctrlCh,
+			maxAge:          b.lbCfg.maxAge,
+			staleAge:        b.lbCfg.staleAge,
+			bg:              b.bg,
+			rlsServerTarget: b.lbCfg.lookupService,
+			grpcTarget:      b.bopts.Target.String(),
+			metricsRecorder: b.bopts.MetricsRecorder,
+		*/
+	} // would need to fill hella fields and call hella methods to get pick to work properly...why is that not created in a constructor?
+
+	// or encode stuff in top level config...
+
+	// rls/grpc
+	// if I pick here before RLS will induce error
+
+	// rls processing comes nondeterministically...
+
+
+	// target and default target where to get information from I'm assuming in
+	// the RLS response itself...
+
+	// then here induce...should *eventually* emit target/default target (like
+	// eventual load balancing...)
+
+	// *** Doesn't emit for queued RPC's***
+	// Emits for failed...
+	// what is equivalent in the lb sync...can I reuse same sync/copy the tests...?
+
+
+}
+
+// codepath for helper is induced by pending request + data cache information...
+
+// default is seperate flow from rls cache hit, need to get rls target from that too...
+
+// err rls throttled and no default
+
+
+
+// Tests the conversion of the child pickers error to the pick result attribute.
+func (s) TestChildPickResultError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string // the desired output
+	}{
+		{
+			name: "nil",
+			err:  nil,
+			want: "complete",
+		},
+		{
+			name: "errNoSubConnAvailable",
+			err:  balancer.ErrNoSubConnAvailable,
+			want: "queue",
+		},
+		{
+			name: "status error",
+			err:  status.Error(codes.Unimplemented, "unimplemented"),
+			want: "drop",
+		},
+		{
+			name: "other error",
+			err:  errors.New("some error"),
+			want: "fail",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := errToPickResult(test.err); got != test.want {
+				t.Fatalf("errToPickResult(%q) = %v, want %v", test.err, got, test.want)
 			}
 		})
 	}
