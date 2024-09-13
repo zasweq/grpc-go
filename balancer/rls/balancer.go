@@ -527,6 +527,8 @@ func (b *rlsBalancer) sendNewPickerLocked() {
 		b.defaultPolicy.acquireRef()
 	}
 
+	// This is how rls picker gets created but this has a bunch of stuff from balancer,
+	// pick might fail without some of these refs...
 	picker := &rlsPicker{
 		kbm:             b.lbCfg.kbMap,
 		origEndpoint:    b.bopts.Target.Endpoint(),

@@ -303,6 +303,10 @@ func (s) TestDataCache_Metrics(t *testing.T) {
 	tmr.AssertDataForMetric("grpc.lb.rls.cache_size", 6)
 } // When get back scale this up and figure out picker smoke test and then send out for review before 1:1 (smoke test but not complicated sceanrios for picker...could I really not scale that up non deterministic...)
 
+// Copy and paste this and write picker tests... Doug might have a problem with
+// how many assertions there are and how they link...testing too many things
+
+
 // What other operations could trigger?
 
 // This tests all 3 plus a layer above resize based off recently used...
@@ -315,7 +319,7 @@ func (s) TestDataCache_Metrics(t *testing.T) {
 
 // nondeterminism for e2e tests...
 
-// This is done so write picker sanity check....
+// This is done so write picker sanity check...
 
 /*
 func (s) TestDataCache_OtherOperations(t *testing.T) {

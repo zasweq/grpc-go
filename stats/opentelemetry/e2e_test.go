@@ -399,6 +399,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 	// Start an xDS management server.
 	managementServer, nodeID, _, xdsResolver := setup.ManagementServerAndResolver(t)
 
+	// attribute came from wrr so that's why needed to deploy it in an xDS Tree...
 	wrrConfig := &v3wrrlocalitypb.WrrLocality{
 		EndpointPickingPolicy: &v3clusterpb.LoadBalancingPolicy{
 			Policies: []*v3clusterpb.LoadBalancingPolicy_Policy{
@@ -582,3 +583,111 @@ func pollForWantMetrics(ctx context.Context, t *testing.T, reader *metric.Manual
 
 	return fmt.Errorf("error waiting for metrics %v: %v", wantMetrics, ctx.Err())
 }
+
+// Can't take an OTel dependency...in master
+// So the package has to be separate...where did I put WRR e2e tests?
+
+// yeah had it in stats/opentelemetry, it itself is a base dependency so
+// can take an otel dependency
+
+// rls setup similar to WRR one...except maybe need to pull out some RLS Helpers?
+
+// What RLS Helpers do I need to pull out...think about picker tests
+
+// What RLS Helpers do I need to pull out...think about picker tests...
+
+// RLS as top level balancer still?
+
+// and what non determinism...three buckets or just induce a failed pick maybe and see what happens/labels...
+// just make sure metrics plumb...
+
+func (s) TestRLSMetrics(t *testing.T) {
+
+	// Spin up backends, specify through rls response/rls config as default...
+
+	// dial those backends...or how do you specify what to dial to when RLS
+	// oh manual scheme...which specifies rls config, and then that resolves the target
+
+	// create real otel plugin with rls metrics enabled...
+	mo := opentelemetry.MetricsOptions{
+		MeterProvider:  provider,
+		Metrics:        opentelemetry.DefaultMetrics().Add("grpc.lb.rls.cache_entries", "grpc.lb.rls.cache_size", "grpc.lb.rls.default_target_picks", "grpc.lb.rls.target_picks", ),
+	}
+
+	cc, err := grpc.NewClient(r.Scheme()+":///", grpc.WithTransportCredentials(insecure.NewCredentials()), opentelemetry.DialOption(opentelemetry.Options{MetricsOptions: mo}))
+	if err != nil {
+		t.Fatalf("Failed to dial local test server: %v", err)
+	}
+	defer cc.Close()
+
+	client := testgrpc.NewTestServiceClient(cc) // make test rpc and expect it to reach backend is probably similar...wrap and then do
+
+
+	// how to induce
+
+	// cache:
+	// send an RLS Response and let it hit/warm up, will emit cache, is that eventually consistent?
+	// and can derive the two cache metrics from that RLS Response...
+
+	// for the three buckets - induce default target pick/target pick/failed
+	// pick toggle rls failure on and off...do it all in one test case or split
+	// up into numerous
+
+
+	wantMetrics := []metricdata.Metrics{} // what metrics are eventually consistent and which ones do we poll for?
+
+
+	// What assertions do I need to end up with?
+
+	// Cache size and bytes dependent on how many RLS Responses there are...
+
+	// induce all 3...still sort of eats non determinism with queueing not emitting
+
+
+
+	// Deploy as top level balancer of channel? What about the child thing...?
+
+	// Where does the child come from? I think just put an address from the test
+	// body but I don't know how that becomes a SubConn
+
+	// Is it important to keep all 3?
+
+	// Failing...RLS returns failing...
+
+	// Also need to trigger a fallback to default
+
+	// and warm up the cache...
+
+	// Link it through starting a backend and putting address in rls config (for
+	// default target) or in rls response (for target pick coming through RLS)
+	// start a backend target, plumb that through these options ^^^
+
+	// helpers this e2e test needs access to:
+	// creation of rls config
+	// creation of backends
+	// starting rls server etc.
+	// and symbol for making a test rpc and expecting it to reach backend...
+	// idk if I really need this infra though...
+
+
+
+	// and labels
+
+
+
+	// Each metric has something at least...plumbing
+	// Each metric has something for e2e
+
+	// but have something for all plumbing...
+
+
+	// Unit test pulled basic out, and then we have sceanrios that induce default pick
+
+
+
+	// Bug introduced...
+
+	// If induce a regression, test should catch it...
+}
+
+

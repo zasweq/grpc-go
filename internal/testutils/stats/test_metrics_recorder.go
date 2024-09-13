@@ -147,6 +147,16 @@ func (r *TestMetricsRecorder) WaitForFloat64Count(ctx context.Context, metricsDa
 	}
 }
 
+// Can't take an OTel dependency...in master
+// So the package has to be separate...where did I put WRR e2e tests?
+
+// yeah had it in stats/opentelemetry, it itself is a base dependency so
+// can take an otel dependency
+
+// rls setup similar to WRR one...except maybe need to pull out some RLS Helpers?
+
+
+
 func (r *TestMetricsRecorder) RecordFloat64Count(handle *estats.Float64CountHandle, incr float64, labels ...string) {
 	r.floatCountCh.ReceiveOrFail()
 	r.floatCountCh.Send(MetricsData{

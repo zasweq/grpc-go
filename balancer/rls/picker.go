@@ -36,6 +36,39 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// deploy rls as top level balancer
+
+// picker update -> send a signal it's given (Wrapped)
+
+// keep repeating and wait until cache hit to occur
+
+// or interact with balancer directly...
+
+// Catch regressions...
+// Unit test and system test...
+// Use judgement, test proves it works and if refactor
+
+// unit test error message from child
+
+// rls top level - induce the three buckets
+// pull operations from EmptyTargets...
+// fake RLS Server - route lookup response processing async
+
+// err no sub conn - know it's not going to happen if you get a picker update...
+// block on a picker update...wait for state on channel (such as READY)
+
+// Wait for picker update triggers it...triggers one recording point, ErrNoSubConnAvailable doesn't trigger
+
+// wait for READY...triggers a sync point for metrics emissions
+
+// ping Frank...to verify on release branch?
+
+// wrap lb policy to get picker?
+
+// prove it works, plumbing works...
+
+// test something at system level
+
 var (
 	errRLSThrottled = errors.New("RLS call throttled at client side")
 

@@ -327,7 +327,9 @@ func (dc *dataCache) addEntry(key cacheKey, entry *cacheEntry) (backoffCancelled
 	if dc.currentSize > dc.maxSize {
 		backoffCancelled = dc.resize(dc.maxSize)
 	}
+	print("recording: ", dc.currentSize, " for current size \n")
 	cacheSizeMetric.Record(dc.metricsRecorder, dc.currentSize, dc.grpcTarget, dc.rlsServerTarget, dc.uuid)
+	print("recording: ", int64(len(dc.entries)), " for current entries \n")
 	cacheEntriesMetric.Record(dc.metricsRecorder, int64(len(dc.entries)), dc.grpcTarget, dc.rlsServerTarget, dc.uuid)
 	return backoffCancelled, true
 }
