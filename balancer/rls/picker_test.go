@@ -685,7 +685,7 @@ func (s) TestPick_DataCacheHit_PendingEntryExists_StaleEntry(t *testing.T) {
 			overrideAdaptiveThrottler(t, neverThrottlingThrottler())
 
 			// Build RLS service config with an optional default target.
-			rlsConfig := buildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address)
+			rlsConfig := buildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address) // fake rls server has an address
 			if test.withDefaultTarget {
 				_, defBackendAddress := startBackend(t)
 				rlsConfig.RouteLookupConfig.DefaultTarget = defBackendAddress
