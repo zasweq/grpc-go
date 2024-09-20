@@ -19,101 +19,29 @@
 package rls
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
+	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/internal"
 	rlspb "google.golang.org/grpc/internal/proto/grpc_lookup_v1"
 	internalserviceconfig "google.golang.org/grpc/internal/serviceconfig"
-	testgrpc "google.golang.org/grpc/interop/grpc_testing"
-	testpb "google.golang.org/grpc/interop/grpc_testing"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/serviceconfig"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-// MakeTestRPCAndExpectItToReachBackend is a test helper function which makes
-// the EmptyCall RPC on the given ClientConn and verifies that it reaches a
-// backend. The latter is accomplished by listening on the provided channel
-// which gets pushed to whenever the backend in question gets an RPC.
-//
-// There are many instances where it can take a while before the attempted RPC
-// reaches the expected backend. Examples include, but are not limited to:
-//   - control channel is changed in a config update. The RLS LB policy creates a
-//     new control channel, and sends a new picker to gRPC. But it takes a while
-//     before gRPC actually starts using the new picker.
-//   - test is waiting for a cache entry to expire after which we expect a
-//     different behavior because we have configured the fake RLS server to return
-//     different backends.
-//
-// Therefore, we do not return an error when the RPC fails. Instead, we wait for
-// the context to expire before failing.
-func MakeTestRPCAndExpectItToReachBackend(ctx context.Context, t *testing.T, cc *grpc.ClientConn, ch chan struct{}) {
-	t.Helper()
-
-	// Drain the backend channel before performing the RPC to remove any
-	// notifications from previous RPCs.
-	select {
-	case <-ch:
-	default:
-	}
-
-	for {
-		if err := ctx.Err(); err != nil {
-			t.Fatalf("Timeout when waiting for RPCs to be routed to the given target: %v", err)
-		}
-		sCtx, sCancel := context.WithTimeout(ctx, defaultTestShortTimeout)
-		client := testgrpc.NewTestServiceClient(cc)
-		client.EmptyCall(sCtx, &testpb.Empty{})
-
-		select {
-		case <-sCtx.Done():
-		case <-ch:
-			sCancel()
-			return
-		}
-	}
-}
-
-// MakeTestRPCAndVerifyError is a test helper function which makes the EmptyCall
-// RPC on the given ClientConn and verifies that the RPC fails with the given
-// status code and error.
-//
-// Similar to makeTestRPCAndExpectItToReachBackend, retries until expected
-// outcome is reached or the provided context has expired.
-func MakeTestRPCAndVerifyError(ctx context.Context, t *testing.T, cc *grpc.ClientConn, wantCode codes.Code, wantErr error) {
-	t.Helper()
-
-	for {
-		if err := ctx.Err(); err != nil {
-			t.Fatalf("Timeout when waiting for RPCs to fail with given error: %v", err)
-		}
-		sCtx, sCancel := context.WithTimeout(ctx, defaultTestShortTimeout)
-		client := testgrpc.NewTestServiceClient(cc)
-		_, err := client.EmptyCall(sCtx, &testpb.Empty{})
-
-		// If the RPC fails with the expected code and expected error message (if
-		// one was provided), we return. Else we retry after blocking for a little
-		// while to ensure that we don't keep blasting away with RPCs.
-		if code := status.Code(err); code == wantCode {
-			if wantErr == nil || strings.Contains(err.Error(), wantErr.Error()) {
-				sCancel()
-				return
-			}
-		}
-		<-sCtx.Done()
-	}
-} // I might not need to move this symbol anymore, get the cache test working, and then send a seperate commit moving Easwar's test to new shared helpers...
-// I don't think I need this symbol or expect to reach backend either
+const (
+	defaultTestTimeout      = 5 * time.Second
+	defaultTestShortTimeout = 100 * time.Millisecond
+	// rLSChildPolicyTargetNameField is a top-level field name to add to the child
+	// policy's config, whose value is set to the target for the child policy.
+	rlsChildPolicyTargetNameField = "Backend"
+)
 
 // BuildBasicRLSConfigWithChildPolicy constructs a very basic service config for
 // the RLS LB policy. It also registers a test LB policy which is capable of

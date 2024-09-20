@@ -24,7 +24,6 @@ import (
 	"net"
 	"sync"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -32,17 +31,6 @@ import (
 	rlspb "google.golang.org/grpc/internal/proto/grpc_lookup_v1"
 	"google.golang.org/grpc/internal/testutils"
 	"google.golang.org/grpc/status"
-)
-
-const (
-	defaultTestTimeout      = 5 * time.Second
-	defaultTestShortTimeout = 100 * time.Millisecond
-	// rLSChildPolicyTargetNameField is a top-level field name to add to the child
-	// policy's config, whose value is set to the target for the child policy.
-	rlsChildPolicyTargetNameField = "Backend"
-	// rLSChildPolicyBadTarget is a value which is considered a bad target by the
-	// child policy. This is useful to test bad child policy configuration.
-	rlsChildPolicyBadTarget = "bad-target"
 )
 
 // RouteLookupResponse wraps an RLS response and the associated error to be sent
@@ -121,7 +109,7 @@ func (s *FakeRouteLookupServer) RouteLookup(ctx context.Context, req *rlspb.Rout
 	}
 	if s.respCb == nil {
 		return &rlspb.RouteLookupResponse{}, nil
-	} // returns an empty route lookup response so cache metric present
+	}
 	resp := s.respCb(ctx, req)
 	return resp.Resp, resp.Err
 }
