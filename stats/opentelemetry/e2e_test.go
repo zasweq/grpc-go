@@ -19,9 +19,9 @@ package opentelemetry_test
 import (
 	"context"
 	"fmt"
-	rlspb "google.golang.org/grpc/internal/proto/grpc_lookup_v1"
-	"google.golang.org/grpc/internal/testutils/rls"
+	"github.com/google/uuid"
 	"io"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -42,8 +42,10 @@ import (
 	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/grpctest"
+	rlspb "google.golang.org/grpc/internal/proto/grpc_lookup_v1"
 	"google.golang.org/grpc/internal/stubserver"
 	itestutils "google.golang.org/grpc/internal/testutils"
+	"google.golang.org/grpc/internal/testutils/rls"
 	"google.golang.org/grpc/internal/testutils/xds/e2e"
 	setup "google.golang.org/grpc/internal/testutils/xds/e2e/setup"
 	testgrpc "google.golang.org/grpc/interop/grpc_testing"
@@ -358,262 +360,18 @@ func metricsDataFromReader(ctx context.Context, reader *metric.ManualReader) map
 	return gotMetrics
 }
 
-// the picker works?
-// it exits IDLE mode
-
-/*
-   tlogger.go:116: INFO clientconn.go:314 [core] [Channel #15]Channel exiting idle mode  (t=+1.20375ms)
-   e2e_test.go:647: Timeout when waiting for RPCs to fail with given error: context deadline exceeded
-
-Doesn't fail with the error...
-// See what error it fails with if at all?
-
-*/
-
-//     tlogger.go:116: INFO clientconn.go:314 [core] [Channel #15]Channel exiting idle mode  (t=+1.20375ms)
-//    e2e_test.go:647: Timeout when waiting for RPCs to fail with given error: context deadline exceeded
-
-// clean all this up and switch rls tests to call this...
-/*
-// buildBasicRLSConfig constructs a basic service config for the RLS LB policy
-// with header matching rules. This expects the passed child policy name to
-// have been registered by the caller.
-func buildBasicRLSConfig(childPolicyName, rlsServerAddress string) *e2e.RLSConfig {
-	return &e2e.RLSConfig{
-		RouteLookupConfig: &rlspb.RouteLookupConfig{
-			GrpcKeybuilders: []*rlspb.GrpcKeyBuilder{
-				{
-					Names: []*rlspb.GrpcKeyBuilder_Name{{Service: "grpc.testing.TestService"}},
-					Headers: []*rlspb.NameMatcher{
-						{Key: "k1", Names: []string{"n1"}},
-						{Key: "k2", Names: []string{"n2"}},
-					},
-				},
-			},
-			LookupService:        rlsServerAddress,
-			LookupServiceTimeout: durationpb.New(defaultTestTimeout),
-			CacheSizeBytes:       1024,
-		},
-		RouteLookupChannelServiceConfig:  `{"loadBalancingConfig": [{"pick_first": {}}]}`,
-		ChildPolicy:                      &internalserviceconfig.BalancerConfig{Name: childPolicyName},
-		ChildPolicyConfigTargetFieldName: e2e.RLSChildPolicyTargetNameField,
-	}
-}
-*/ // Do I need this whole thing? This does just work out of the box turnkey though...
-
-// I'm assuming the config needs the route lookup config/rls keybuilder info
-
-// rlsServer address passed it...
-// Look at LookupService, pass it to this config builder
-
-// I'm just going to pull this symbol out
-/*
-func buildBasicRLSConfig(childPolicyName, rlsServerAddress string) *rls.RLSConfig { // uh oh this e2e symbol might not be defined - helper to marshal RLS Config into JSON...
-
-}*/
-
-/*
-func (s) TestRLSMetrics(t *testing.T) {
-	// also throttler...also this might take symbols inside RLS...
-
-	// Three scenarios:
-	// 1. Default target metrics (is there cache metrics for this?)
-	// 2. target - rls response so cache is warmed up there is metrics
-	// 3. failed - is there cache metrics for this?
-
-	// dial mr with rls as top level, rls balancer gives target
-	// through rls response (needs distinct or it won't hit default target...how to make distinction?)
-	// or through the default target selection
-	// to setup those three sceanrios setup rls server and also setup config stuff right?
-
-	// make a rpc while waiting, make it go through...
-	// wait helper or just rewrite here
-	rlsConfig := /*helper to generate own rls config here...
-
-	reader := metric.NewManualReader() // this is what you rewrite it on
-	provider := metric.NewMeterProvider(metric.WithReader(reader))
-
-	rlsServer := rls.SetupFakeRLSServer() // this symbol is lost in a helper
-
-	rlsServer.Address // Stick this in config - this is why he made the helpers as such....
-
-	// pretty trivial setup system make rpc expect metrics (see what happens with respect to adaptive throttler or not)
-
-	mo := opentelemetry.MetricsOptions{
-		MeterProvider: provider,
-		Metrics:       opentelemetry.DefaultMetrics().Add("grpc.lb.rls.cache_entries", "grpc.lb.rls.cache_size", "grpc.lb.rls.default_target_picks", "grpc.lb.rls.target_picks"),
-	}
-
-	// Register a manual resolver and push the RLS service config through it.
-	r := startManualResolverWithConfig(t, rlsConfig) // need a mr and a rls config...
-	// symbol feels easy enough to move out, could copy whole thing over...
-
-
-	cc, err := grpc.NewClient(r.Scheme()+":///", grpc.WithTransportCredentials(insecure.NewCredentials()), opentelemetry.DialOption(opentelemetry.Options{MetricsOptions: mo}))
-	if err != nil {
-		t.Fatalf("Failed to dial local test server: %v", err)
-	}
-	defer cc.Close()
-
-	// Same exact thing as picker test - setup setup, make RPC, expect metrics except this time full flow and with testing full emissions
-
-	// Need equivalent to MakeTestRPCAndExpectReachBackend/Fail
-	client := testgrpc.NewTestServiceClient(cc) // make test rpc and expect it to reach backend is probably similar...wrap and then do
-
-	wantMetrics2 := []metricdata.Metrics{ // Default target picks...
-		{
-			Name:        "grpc.lb.rls.default_target_picks",
-			Description: "EXPERIMENTAL. The current size of the RLS cache.",
-			Unit:        "By",
-			// Same labels as default target picks
-			// []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.data_plane_target", "grpc.lb.pick_result"},
-			// ignore and check a subset only?
-		}, // Def gets emitted
-
-		{
-			Name: "grpc.lb.rls.cache_entries",
-			Description: "EXPERIMENTAL. Number of entries in the RLS cache.",
-			Unit:        "entry",
-			// Data 0 - does this even get emitted?
-		},
-		{
-			Name: "grpc.lb.rls.cache_size",
-			Description: "EXPERIMENTAL. The current size of the RLS cache.",
-			Unit:        "By",
-			// Data 0 - does this even get emitted? even for failure
-		},
-	}
-
-	// Easiest one to do/smoke test, just try this one out...
-	wantMetrics3 := []metricdata.Metrics{
-		{
-			Name:        "grpc.lb.rls.failed_picks",
-			Description: "EXPERIMENTAL. Number of LB picks failed due to either a failed RLS request or the RLS channel being throttled.",
-			Unit:        "pick",
-			// Labels:      []string{"grpc.target", "grpc.lb.rls.server_target"},
-			// Labels are deterministic - could actually test this one out easiest smoke test
-			Data: metricdata.Sum[int64]{
-				DataPoints: []metricdata.DataPoint[int64]{
-					{
-						// Labels:
-						Attributes: attribute.NewSet(attribute.String("grpc.target", /*grpc target here from Dial), attribute.String("grpc.lb.rls.server_target", /*spun up fake rls server address)), // this is constant for all but three seperate test cases anyway...
-						Value: 1,
-					},
-				},
-			},
-		},
-		// experiment but I think no cache metrics from this...
-	}
-
-	// target picks + rls cache warmed up
-	wantMetrics := []metricdata.Metrics{
-		{
-			Name:        "grpc.lb.rls.target_picks",
-			Description: "EXPERIMENTAL. Number of LB picks sent to each RLS target. Note that if the default target is also returned by the RLS server, RPCs sent to that target from the cache will be counted in this metric, not in grpc.rls.default_target_picks.",
-			Unit:        "pick",
-
-			Data: metricdata.Sum[int64]{
-				DataPoints: []metricdata.DataPoint[int64]{
-					{
-						// Labels:
-						Value: 1,
-					},
-				},
-			},
-		},
-		{
-			Name: "grpc.lb.rls.cache_entries",
-			Description: "EXPERIMENTAL. Number of entries in the RLS cache.",
-			Unit:        "entry",
-
-			// In data (need to update RLS Server target)...is there a way to check labels conditionally?
-			Data: metricdata.Gauge[int64]{
-				DataPoints: []metricdata.DataPoint[int64]{
-					// What labels do you need how to only assert on some labels?
-					// Label:
-					// []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid"},
-
-					// Everything is deterministic (dial and server target comes from config I think)
-					// Check that but not uuid...or could hook in and override...
-					{
-
-						// Labels: []string{"grpc.target",
-						// "grpc.lb.rls.server_target",
-						// "grpc.lb.rls.data_plane_target", all of these three are deterministic, just need to derive...
-						// "grpc.lb.pick_result"}, "complete - dependent on child
-
-						Value: 1, // one cache entry, figure out how big it is?
-					},
-
-
-				},
-				// Temporality/IsMonotonic?
-			},
-		},
-		{
-			Name: "grpc.lb.rls.cache_size",
-			Description: "EXPERIMENTAL. The current size of the RLS cache.",
-			Unit:        "By",
-
-			// In data (need to update RLS Server target)...is there a way to check labels conditionally?
-
-			// One total data point right?
-			Data: metricdata.Gauge[int64]{
-				DataPoints: []metricdata.DataPoint[int64]{
-					// Label:
-					// []string{"grpc.target", "grpc.lb.rls.server_target", "grpc.lb.rls.instance_uuid"},
-					{
-
-						Value: 3, // What size is the cache entry? Just check emission?
-					},
-				},
-			},
-
-		}, // cache metrics for some, def for one with rls response...the other three are conditional...
-	}
-
-	//  metricdatatest.AssertHasAttributes()) { // has attributes is a subset, could scale down the full check and test the subset...
-
-	metricdatatest.IgnoreExemplars() // "disables checking if exemplars are different"
-
-	if !metricdatatest.AssertEqual(t, /*metricdata want, /*metricdata got) {
-
-	}
-
-
-	// If no need to ignore uuid (could just send this out for guidance)
-
-	for _, metric := range wantMetrics { // test.wantMetrics...
-		val, ok := gotMetrics[metric.Name] // poll or just read once? detemrinistic right because after rpc it will have emitted one...cache is gauge but already warmed up or not
-		if !ok {
-			t.Fatalf("Metric %v not present in recorded metrics", metric.Name)
-		}
-		// Need to get this failing if introduce a bug...
-		// Does this print diff?
-		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
-			t.Fatalf("Metrics data type not equal for metric: %v", metric.Name)
-		}
-	}
-
-	// Move all the helpers to internal/testutils/rls or something, see if you can get failure ones working
-
-}
-
-*/
-
-// Done, when I get back just make sure
-// cache metrics work (ignore uuid, how to derive size?)
-
-// Cleanup
+// Done, when I get back just make sure cache metrics work (ignore uuid, how to
+// derive size this will be deterministic over time due to compression
+// algorithm?)
 
 // Switch his tests to use? Or send cleaned up e2e tests out for review...
 
+// TestRLSTargetPickMetric tests...
 func (s) TestRLSTargetPickMetric(t *testing.T) {
-
-	// Same thing but set address through route lookup response...
-
+	// Overwrite the uuid random number generator to be deterministic.
+	uuid.SetRand(rand.New(rand.NewSource(1)))
+	defer uuid.SetRand(nil)
 	rlsServer, _ := rls.SetupFakeRLSServer(t, nil)
-
 	rlsConfig := rls.BuildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address)
 	backend := &stubserver.StubServer{
 		EmptyCallF: func(ctx context.Context, empty *testpb.Empty) (*testpb.Empty, error) {
@@ -651,7 +409,6 @@ func (s) TestRLSTargetPickMetric(t *testing.T) {
 			Data: metricdata.Sum[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
-						// Labels: felt so good to fill these in lol...
 						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.data_plane_target", backend.Address), attribute.String("grpc.lb.pick_result", "complete")), // this is constant for all but three seperate test cases anyway...
 						Value:      1,
 					},
@@ -661,30 +418,47 @@ func (s) TestRLSTargetPickMetric(t *testing.T) {
 			},
 		},
 
-		// Cache metrics...above should work irrespective of cache metrics...
+		// Receives an empty RLS Response, so a single cache entry with no size.
+		{ // how is there rls cache entry metric...
+			Name:        "grpc.lb.rls.cache_entries",
+			Description: "EXPERIMENTAL. Number of entries in the RLS cache.",
+			Unit:        "entry",
+			Data: metricdata.Gauge[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.instance_uuid", "52fdfc07-2182-454f-963f-5f0f9a621d72")),
+						Value:      1,
+					},
+				},
+			},
+		},
+		// ignore nondeterministic label
+		{
+			Name:        "grpc.lb.rls.cache_size",
+			Description: "EXPERIMENTAL. The current size of the RLS cache.",
+			Unit:        "By",
+			Data: metricdata.Gauge[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.instance_uuid", "52fdfc07-2182-454f-963f-5f0f9a621d72")),
+						Value:      35,
+					},
+				},
+			},
+		},
 	}
 	client := testgrpc.NewTestServiceClient(cc)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
 
-	// *** This switches to wanting to hit a backend
-	_, err = client.EmptyCall(ctx, &testpb.Empty{}) // only do what you need
-	// Could queue...? Based on adaptive throttler...
-
-	// Error recreating setup of RLS pick?
-	// Where is it failing in this system even for throttled should emit failed so IDK...
-
-	// print("err: ", err.Error(), "\n")
+	_, err = client.EmptyCall(ctx, &testpb.Empty{})
 	if err != nil {
 		t.Fatalf("client.EmptyCall failed with error: %v", err)
 	}
 
 	gotMetrics := metricsDataFromReader(ctx, reader)
-	// ***
-
-	// same assertion - helper?
 	for _, metric := range wantMetrics {
-		val, ok := gotMetrics[metric.Name] // poll or just read once? detemrinistic right because after rpc it will have emitted one...cache is gauge but already warmed up or not
+		val, ok := gotMetrics[metric.Name]
 		if !ok {
 			t.Fatalf("Metric %v not present in recorded metrics", metric.Name)
 		}
@@ -695,18 +469,26 @@ func (s) TestRLSTargetPickMetric(t *testing.T) {
 
 	// Nondeterminism with respect to cache metrics uuid...ignore part?
 
+	// Comment here about asserting the other two aren't present
+	for _, metric := range []string{"grpc.lb.rls.default_target_picks", "grpc.lb.rls.failed_picks"} { // "grpc.lb.rls.cache_size", "grpc.lb.rls.default_target_picks", "grpc.lb.rls.target_picks", "grpc.lb.rls.failed_picks"
+		if _, ok := gotMetrics[metric]; ok {
+			t.Fatalf("Metric %v present in recorded metrics", metric)
+		}
+	}
+
 } // send out these tests and then switch Easwar's test to use them once he approves it...
+
+// Goal for today, send out a PR with all the moved symbols. If Easwar is happy with it, I'll move RLS Tests to use those.
 
 // ^^^ cache metrics and non deterministic labels,
 // need to switch his tests to use moved helpers.
 func (s) TestRLSDefaultTargetPickMetric(t *testing.T) {
-	// Throttler might be needed to deterministically induce useDefaultPickIfPossible...
-	// whereas below it will also be a failure but be different...
-	// Not throttling seems to be fine here...
+	// Overwrite the uuid random number generator to be deterministic.
+	uuid.SetRand(rand.New(rand.NewSource(1)))
+	defer uuid.SetRand(nil)
 
 	// Start an RLS Server and set the throttler to always throttle requests...
-	rlsServer, _ := rls.SetupFakeRLSServer(t, nil) // rewrite this or something perhaps?
-	// overrideAdaptiveThrottler...
+	rlsServer, _ := rls.SetupFakeRLSServer(t, nil)
 	// Build RLS service config with a default target.
 	rlsConfig := rls.BuildBasicRLSConfigWithChildPolicy(t, t.Name(), rlsServer.Address)
 
@@ -758,19 +540,20 @@ func (s) TestRLSDefaultTargetPickMetric(t *testing.T) {
 
 		// looks like it does get an rls response just ignores it...
 
-		/*{ // how is there rls cache entry metric...
+		// Receives an empty RLS Response, so a single cache entry with no size.
+		{ // how is there rls cache entry metric...
 			Name:        "grpc.lb.rls.cache_entries",
 			Description: "EXPERIMENTAL. Number of entries in the RLS cache.",
 			Unit:        "entry",
 			Data: metricdata.Gauge[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
-						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.instance_uuid", "some uuid")),
+						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.instance_uuid", "52fdfc07-2182-454f-963f-5f0f9a621d72")),
 						Value:      1, // why is there a gauge...?
 					},
 				},
 			},
-		},*/ // oh fake rls server returns an empty response, important to check or implementation? Should emit for failing too no addresses...
+		}, // oh fake rls server returns an empty response, important to check or implementation? Should emit for failing too no addresses...
 		// ignore nondeterministic label
 		{
 			Name:        "grpc.lb.rls.cache_size",
@@ -779,7 +562,7 @@ func (s) TestRLSDefaultTargetPickMetric(t *testing.T) {
 			Data: metricdata.Gauge[int64]{
 				DataPoints: []metricdata.DataPoint[int64]{
 					{
-						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.instance_uuid", "some uuid")),
+						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.instance_uuid", "52fdfc07-2182-454f-963f-5f0f9a621d72")),
 						Value:      0, // yeah it's an empty cache entry...
 					},
 				},
@@ -803,16 +586,34 @@ func (s) TestRLSDefaultTargetPickMetric(t *testing.T) {
 		if !ok {
 			t.Fatalf("Metric %v not present in recorded metrics", metric.Name)
 		}
-		metricdatatest.IgnoreValue()                                                                                         // Does this ignore labels?
+		// metricdatatest.IgnoreValue doesn't ignore labels
+		// metricdatatest.IgnoreExemplars()
 		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) { // how to figure out the partitioning of label stuff...not for this one for cache check that separately?
 			t.Fatalf("Metrics data type not equal for metric: %v", metric.Name)
 		}
 	}
+	// assert the other two aren't present...
+	// no target picks and failed picks should be emitted, as the test made only one RPC which recorded
+	// as a default target pick.
+	for _, metric := range []string{"grpc.lb.rls.target_picks", "grpc.lb.rls.failed_picks"} { // "grpc.lb.rls.cache_size", "grpc.lb.rls.default_target_picks", "grpc.lb.rls.target_picks", "grpc.lb.rls.failed_picks"
+		if _, ok := gotMetrics[metric]; ok {
+			t.Fatalf("Metric %v present in recorded metrics", metric)
+		}
+	}
 }
+
+// what about overriding uuid() creation in test...
+
+// needed for cache metrics as uuid label is nondeterministic and you need to only assert 4 you want
+// so use want attributes
+
+// got want with generics
 
 // Same setup as unit test write comments after figure out if t but I think setup is sufficiently different...
 func (s) TestRLSFailedRPCMetric(t *testing.T) {
-
+	// Overwrite the uuid random number generator to be deterministic.
+	uuid.SetRand(rand.New(rand.NewSource(1)))
+	defer uuid.SetRand(nil)
 	// Start an RLS server and set the throttler to never throttle requests.
 	rlsServer, _ := rls.SetupFakeRLSServer(t, nil) // rename to rlstestutils or something...
 
@@ -835,15 +636,6 @@ func (s) TestRLSFailedRPCMetric(t *testing.T) {
 	}
 	defer cc.Close()
 
-	// Helper to create an RLS Config....struct that marshals into JSON
-	// could use a different struct but this is fine, also I thinkkk I need
-	// that full RLS Config with keybuilders etc...?
-
-	// once you build out config build it out as the manual resolvers and deploy with service config
-
-	// also stick a metrics recorder on there as well...
-
-	// Easiest one to do/smoke test, just try this one out...
 	wantMetrics := []metricdata.Metrics{
 		{
 			Name:        "grpc.lb.rls.failed_picks",
@@ -862,43 +654,65 @@ func (s) TestRLSFailedRPCMetric(t *testing.T) {
 				Temporality: metricdata.CumulativeTemporality,
 				IsMonotonic: true,
 			},
-		}, // Still need to figure out nondeterministic labels...
-		// experiment but I think no cache metrics from this since cache isn't warmed up.....cache gets rls server target on an UpdateCCS...
+		}, // Still need to figure out nondeterministic labels on cache...
+		// Just like default target, this gets an empty RLS response which warms up cache...
+
+		// Receives an empty RLS Response, so a single cache entry with no size.
+		{ // how is there rls cache entry metric...
+			Name:        "grpc.lb.rls.cache_entries",
+			Description: "EXPERIMENTAL. Number of entries in the RLS cache.",
+			Unit:        "entry",
+			Data: metricdata.Gauge[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.instance_uuid", "52fdfc07-2182-454f-963f-5f0f9a621d72")),
+						Value:      1, // why is there a gauge...?
+					},
+				},
+			},
+		}, // oh fake rls server returns an empty response, important to check or implementation? Should emit for failing too no addresses...
+		// ignore nondeterministic label
+		{
+			Name:        "grpc.lb.rls.cache_size",
+			Description: "EXPERIMENTAL. The current size of the RLS cache.",
+			Unit:        "By",
+			Data: metricdata.Gauge[int64]{
+				DataPoints: []metricdata.DataPoint[int64]{
+					{
+						Attributes: attribute.NewSet(attribute.String("grpc.target", grpcTarget), attribute.String("grpc.lb.rls.server_target", rlsServer.Address), attribute.String("grpc.lb.rls.instance_uuid", "52fdfc07-2182-454f-963f-5f0f9a621d72")),
+						Value:      0, // yeah it's an empty cache entry...
+					},
+				},
+			},
+		}, // same empty cache (empty target list in rls response) causes failure, get the cache metrics working derive size deal with uuid nondeterminism and then done, cleanup and you'll be good
+
 	}
 
-	// My guess is need to override default throttler...
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	defer cancel()
-	// Try default test timeout, but log what's going on with RPC's, just run this test
 
-	// rls.MakeTestRPCAndVerifyError(ctx, t, cc, codes.Unavailable, errors.New("RLS response's target list does not contain any entries for key")) // this also passes a t...
-	// Make an RPC, it should error no need to assert and then emit no need to verify error...
 	client := testgrpc.NewTestServiceClient(cc)
-	// name resolver producing zero addresses might not be an RLS failure, but a child failure that then gets converted...
-	_, err = client.EmptyCall(ctx, &testpb.Empty{}) // only do what you need
-	// Could queue...? Based on adaptive throttler...
+	_, err = client.EmptyCall(ctx, &testpb.Empty{})
 
-	// Error recreating setup of RLS pick?
-	// Where is it failing in this system even for throttled should emit failed so IDK...
-
-	print("err: ", err.Error(), "\n") // grep this in codebase smh...
-	if err == nil {                   // Honestly need to make sure this is an RLS error...
+	if err == nil {
 		t.Fatal("err is nil did not expect it")
 	}
 
-	// Need to read the gotMetrics below...
 	gotMetrics := metricsDataFromReader(ctx, reader)
 
-	// same assertion - helper?
 	for _, metric := range wantMetrics {
 		val, ok := gotMetrics[metric.Name]
 		if !ok {
 			t.Fatalf("Metric %v not present in recorded metrics", metric.Name)
 		}
-		// Need to get this failing if introduce a bug...
-		// Does this print diff?
-		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) { // how to figure out the partitioning of label stuff...for cache turns out always emits cache...
+		if !metricdatatest.AssertEqual(t, metric, val, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars()) {
 			t.Fatalf("Metrics data type not equal for metric: %v", metric.Name)
+		}
+	}
+	// Comment here about asserting the other two aren't present
+	for _, metric := range []string{"grpc.lb.rls.target_picks", "grpc.lb.rls.default_target_picks"} { // "grpc.lb.rls.cache_size", "grpc.lb.rls.default_target_picks", "grpc.lb.rls.target_picks", "grpc.lb.rls.failed_picks"
+		if _, ok := gotMetrics[metric]; ok {
+			t.Fatalf("Metric %v present in recorded metrics", metric)
 		}
 	}
 }
@@ -1008,7 +822,7 @@ func (s) TestWRRMetrics(t *testing.T) {
 		OptionalLabels: []string{"grpc.lb.locality"},
 	}
 
-	target := fmt.Sprintf("xds:///%s", serviceName) // Oh deploy with an xDS target, figures out WRR Config and logic from xDS Resources...CDS and gets chained lol these test helpers were already present...
+	target := fmt.Sprintf("xds:///%s", serviceName)
 	cc, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithResolvers(xdsResolver), opentelemetry.DialOption(opentelemetry.Options{MetricsOptions: mo}))
 	if err != nil {
 		t.Fatalf("Failed to dial local test server: %v", err)

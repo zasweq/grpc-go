@@ -31,7 +31,7 @@ import (
 )
 
 // RLSConfig is a utility type to build service config for the RLS LB policy.
-type RLSConfig struct { // rls/internal/test/e2e/rls_lb_config...what would be useful for the test to fully run...? Figure out list of symbols...I think I need this though for keybuilders...
+type RLSConfig struct {
 	RouteLookupConfig                *rlspb.RouteLookupConfig
 	RouteLookupChannelServiceConfig  string
 	ChildPolicy                      *internalserviceconfig.BalancerConfig

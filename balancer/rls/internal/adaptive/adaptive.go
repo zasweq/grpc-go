@@ -77,7 +77,7 @@ type Throttler struct {
 }
 
 // New initializes a new adaptive throttler with the default values.
-func New() *Throttler { // Complicated formula for throttling
+func New() *Throttler {
 	return newWithArgs(defaultDuration, defaultBins, defaultRatioForAccepts, defaultRequestsPadding)
 }
 

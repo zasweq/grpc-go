@@ -22,6 +22,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"testing"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/codes"
@@ -36,8 +39,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"strings"
-	"testing"
 )
 
 // MakeTestRPCAndExpectItToReachBackend is a test helper function which makes
@@ -100,10 +101,6 @@ func MakeTestRPCAndVerifyError(ctx context.Context, t *testing.T, cc *grpc.Clien
 		client := testgrpc.NewTestServiceClient(cc)
 		_, err := client.EmptyCall(sCtx, &testpb.Empty{})
 
-		// err: rpc error: code = Unavailable desc = name resolver error: produced zero addresses
-		// the name resolver produced no addresses?
-		print("err: ", err.Error(), "/n")
-
 		// If the RPC fails with the expected code and expected error message (if
 		// one was provided), we return. Else we retry after blocking for a little
 		// while to ensure that we don't keep blasting away with RPCs.
@@ -115,19 +112,15 @@ func MakeTestRPCAndVerifyError(ctx context.Context, t *testing.T, cc *grpc.Clien
 		}
 		<-sCtx.Done()
 	}
-}
-
-// Takes a testing dependency already so I'm good here...
-// SetupRLSServer is already present!!! :)
-
-// Move all the symbols needed here and also export...
+} // I might not need to move this symbol anymore, get the cache test working, and then send a seperate commit moving Easwar's test to new shared helpers...
+// I don't think I need this symbol or expect to reach backend either
 
 // BuildBasicRLSConfigWithChildPolicy constructs a very basic service config for
 // the RLS LB policy. It also registers a test LB policy which is capable of
 // being a child of the RLS LB policy.
-func BuildBasicRLSConfigWithChildPolicy(t *testing.T, childPolicyName, rlsServerAddress string) *RLSConfig { // need to move these helpers as well...how far does it go down?
+func BuildBasicRLSConfigWithChildPolicy(t *testing.T, childPolicyName, rlsServerAddress string) *RLSConfig {
 	childPolicyName = "test-child-policy" + childPolicyName
-	RegisterRLSChildPolicy(childPolicyName, nil) // this also registers a balancer builder that can serve as a child - so RPC's continue to work and will actually get routed to server...
+	RegisterRLSChildPolicy(childPolicyName, nil)
 	t.Logf("Registered child policy with name %q", childPolicyName)
 
 	return &RLSConfig{
@@ -143,21 +136,12 @@ func BuildBasicRLSConfigWithChildPolicy(t *testing.T, childPolicyName, rlsServer
 	}
 }
 
-// call below setup helpers or something...
-
-// startBackend is trivial enough to just copy I thinkkk...
-
-// If want to set it to default: rlsConfig.RouteLookupConfig.DefaultTarget = defBackendAddress
-
-// r := startManualResolverWithConfig(t, rlsConfig)
-
-// It's just copy pasting symbols lol...
-// startManualResolverWithConfig registers and returns a manual resolver which
+// StartManualResolverWithConfig registers and returns a manual resolver which
 // pushes the RLS LB policy's service config on the channel.
 func StartManualResolverWithConfig(t *testing.T, rlsConfig *RLSConfig) *manual.Resolver {
 	t.Helper()
 
-	scJSON, err := rlsConfig.ServiceConfigJSON() // This is how it links it - creates a JSON
+	scJSON, err := rlsConfig.ServiceConfigJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,10 +151,10 @@ func StartManualResolverWithConfig(t *testing.T, rlsConfig *RLSConfig) *manual.R
 	r.InitialState(resolver.State{ServiceConfig: sc})
 	t.Cleanup(r.Close)
 	return r
-} // All these symbols work expect this manual resolver thingy...
+}
 
 // RLSConfig is a utility type to build service config for the RLS LB policy.
-type RLSConfig struct { // rls/internal/test/e2e/rls_lb_config...what would be useful for the test to fully run...? Figure out list of symbols...I think I need this though for keybuilders...
+type RLSConfig struct {
 	RouteLookupConfig                *rlspb.RouteLookupConfig
 	RouteLookupChannelServiceConfig  string
 	ChildPolicy                      *internalserviceconfig.BalancerConfig

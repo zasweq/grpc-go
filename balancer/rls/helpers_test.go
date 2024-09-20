@@ -66,7 +66,7 @@ func (f *fakeBackoffStrategy) Backoff(int) time.Duration {
 }
 
 // fakeThrottler is a fake implementation of the adaptiveThrottler interface.
-type fakeThrottler struct { // I would need to export this symbol and also the override symbol for this to work...
+type fakeThrottler struct {
 	throttleFunc func() bool   // Fake throttler implementation.
 	throttleCh   chan struct{} // Invocation of ShouldThrottle signals here.
 }
@@ -97,9 +97,7 @@ func neverThrottlingThrottler() *fakeThrottler {
 		throttleFunc: func() bool { return false },
 		throttleCh:   make(chan struct{}, 1),
 	}
-} // Are these symbols required to make RLS deterministic?
-
-// too much non determinism if you don't override throttler?
+}
 
 // oneTimeAllowingThrottler returns a fake throttler which does not throttle
 // requests until the client RPC succeeds, but throttles everything that comes
@@ -113,7 +111,7 @@ func oneTimeAllowingThrottler(firstRPCDone *grpcsync.Event) *fakeThrottler {
 }
 
 func overrideAdaptiveThrottler(t *testing.T, f *fakeThrottler) {
-	origAdaptiveThrottler := newAdaptiveThrottler // internal symbol - override with always and never
+	origAdaptiveThrottler := newAdaptiveThrottler
 	newAdaptiveThrottler = func() adaptiveThrottler { return f }
 	t.Cleanup(func() { newAdaptiveThrottler = origAdaptiveThrottler })
 }
@@ -180,20 +178,13 @@ func startBackend(t *testing.T, sopts ...grpc.ServerOption) (rpcCh chan struct{}
 			}
 			return &testpb.Empty{}, nil
 		},
-	} // I feel like I could do this inline because I don't need to expect RPC's reach this backend...
+	}
 	if err := backend.StartServer(sopts...); err != nil {
 		t.Fatalf("Failed to start backend: %v", err)
 	}
 	t.Logf("Started TestService backend at: %q", backend.Address)
 	t.Cleanup(func() { backend.Stop() })
 	return rpcCh, backend.Address
-
-	// This does trivial things - I think I can rewrite this...
-	// Sync point for RPC reaching backend, which creates a happens before relationship with rpc processing/failures emitting
-	// is mr/metrics sync and sees it immediately or does it put it somewhere and poll?
-
-	// If I don't override adaptive throttler, do the tests become flaky?
-
 }
 
 // startManualResolverWithConfig registers and returns a manual resolver which
@@ -201,7 +192,7 @@ func startBackend(t *testing.T, sopts ...grpc.ServerOption) (rpcCh chan struct{}
 func startManualResolverWithConfig(t *testing.T, rlsConfig *e2e.RLSConfig) *manual.Resolver {
 	t.Helper()
 
-	scJSON, err := rlsConfig.ServiceConfigJSON() // This is how it links it - creates a JSON
+	scJSON, err := rlsConfig.ServiceConfigJSON()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -60,7 +60,7 @@ type RouteLookupResponse struct {
 // This function sets up the fake server to respond with an empty response for
 // the RouteLookup RPCs. Tests can override this by calling the
 // SetResponseCallback() method on the returned fake server.
-func SetupFakeRLSServer(t *testing.T, lis net.Listener, opts ...grpc.ServerOption) (*FakeRouteLookupServer, chan struct{}) { // Present here :)
+func SetupFakeRLSServer(t *testing.T, lis net.Listener, opts ...grpc.ServerOption) (*FakeRouteLookupServer, chan struct{}) {
 	s, cancel := StartFakeRouteLookupServer(t, lis, opts...)
 	t.Logf("Started fake RLS server at %q", s.Address)
 
@@ -78,7 +78,7 @@ func SetupFakeRLSServer(t *testing.T, lis net.Listener, opts ...grpc.ServerOptio
 // FakeRouteLookupServer is a fake implementation of the RouteLookupService.
 //
 // It is safe for concurrent use.
-type FakeRouteLookupServer struct { // Oh this thing is already in internal/testutils/rls...move other symbols needed here
+type FakeRouteLookupServer struct {
 	rlsgrpc.UnimplementedRouteLookupServiceServer
 	Address string
 
@@ -92,9 +92,6 @@ type FakeRouteLookupServer struct { // Oh this thing is already in internal/test
 // returned cancel function should be invoked by the caller upon completion of
 // the test.
 func StartFakeRouteLookupServer(t *testing.T, lis net.Listener, opts ...grpc.ServerOption) (*FakeRouteLookupServer, func()) {
-	// internal test utils...can I just move this to testutils/stats...?
-
-	// Still have to figure out how to override adaptive throttler...
 	t.Helper()
 
 	if lis == nil {
@@ -105,9 +102,9 @@ func StartFakeRouteLookupServer(t *testing.T, lis net.Listener, opts ...grpc.Ser
 		}
 	}
 
-	s := &FakeRouteLookupServer{Address: lis.Addr().String()} // address is just listener...
+	s := &FakeRouteLookupServer{Address: lis.Addr().String()}
 	server := grpc.NewServer(opts...)
-	rlsgrpc.RegisterRouteLookupServiceServer(server, s) // Registers fake route lookup server...
+	rlsgrpc.RegisterRouteLookupServiceServer(server, s)
 	go server.Serve(lis)
 	return s, func() { server.Stop() }
 }
@@ -124,7 +121,7 @@ func (s *FakeRouteLookupServer) RouteLookup(ctx context.Context, req *rlspb.Rout
 	}
 	if s.respCb == nil {
 		return &rlspb.RouteLookupResponse{}, nil
-	} // returns an empty route lookup response
+	} // returns an empty route lookup response so cache metric present
 	resp := s.respCb(ctx, req)
 	return resp.Resp, resp.Err
 }
