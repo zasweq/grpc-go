@@ -58,6 +58,21 @@ func NewBalancer(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Ba
 	return es
 }
 
+// ValidateEndpoints returns an error if the endpoints list is empty, or no
+// addresses are present in endpoint list.
+func ValidateEndpoints(endpoints []resolver.Endpoint) error {
+	if len(endpoints) == 0 {
+		return errors.New("endpoints list is empty")
+	}
+
+	for _, endpoint := range endpoints {
+		for range endpoint.Addresses {
+			return nil
+		}
+	}
+	return errors.New("endpoints list contains no addresses")
+}
+
 // endpointSharding is a balancer that wraps child balancers. It creates a child
 // balancer with child config for every unique Endpoint received. It updates the
 // child states on any update from parent or child.
@@ -73,7 +88,22 @@ type endpointSharding struct {
 	inhibitChildUpdates atomic.Bool
 
 	mu sync.Mutex // Sync updateState callouts and childState recent state updates
-}
+} // and how do you even test these changes?
+
+// Same UpdateCCS
+
+// If one goes READY use that to start oob watch, needs to come after ready
+// then no change of plurality
+// assume pick first uses first READY sc...
+
+// so first sc that goes ready determines oob watch, simplifies things...
+
+// Not wrapping anymore...
+// rare case where two go ready but just use first one because can assume child is pick first
+// updateCfg on the endpoint rather than the sc
+
+// just store the sc to endpoint
+// so still need an addr -> endpointWeight map...
 
 // UpdateClientConnState creates a child for new endpoints and deletes children
 // for endpoints that are no longer present. It also updates all the children,
