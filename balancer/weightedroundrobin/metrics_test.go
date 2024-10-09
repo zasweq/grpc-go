@@ -109,7 +109,7 @@ func (s) TestWRR_Metrics_SubConnWeight(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			tmr := stats.NewTestMetricsRecorder()
-			wsc := &weightedSubConn{
+			wsc := &endpointWeight{
 				metricsRecorder: tmr,
 				weightVal:       3,
 				lastUpdated:     test.lastUpdated,
@@ -137,7 +137,7 @@ func (s) TestWRR_Metrics_SubConnWeight(t *testing.T) {
 // fallback.
 func (s) TestWRR_Metrics_Scheduler_RR_Fallback(t *testing.T) {
 	tmr := stats.NewTestMetricsRecorder()
-	wsc := &weightedSubConn{
+	wsc := &endpointWeight{
 		metricsRecorder: tmr,
 		weightVal:       0,
 	}
@@ -147,7 +147,7 @@ func (s) TestWRR_Metrics_Scheduler_RR_Fallback(t *testing.T) {
 			BlackoutPeriod:         iserviceconfig.Duration(10 * time.Second),
 			WeightExpirationPeriod: iserviceconfig.Duration(3 * time.Minute),
 		},
-		subConns:        []*weightedSubConn{wsc},
+		subConns:        []*endpointWeight{wsc},
 		metricsRecorder: tmr,
 	}
 	// There is only one SubConn, so no matter if the SubConn has a weight or
@@ -160,7 +160,7 @@ func (s) TestWRR_Metrics_Scheduler_RR_Fallback(t *testing.T) {
 
 	// With two SubConns, if neither of them have weights, it will also fallback
 	// to round robin.
-	wsc2 := &weightedSubConn{
+	wsc2 := &endpointWeight{
 		target:          "target",
 		metricsRecorder: tmr,
 		weightVal:       0,
