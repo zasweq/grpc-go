@@ -460,6 +460,71 @@ func (s) TestBalancer_TwoAddresses_OOBThenPerCall(t *testing.T) {
 	checkWeights(ctx, t, srvWeight{srv1, 10}, srvWeight{srv2, 1})
 }
 
+// If same resolver emits endpoints here wrapping addresses...
+// Should work the exact same, something might fail to build or something...
+
+// Should all just work out of the box...because really same surrounding structure
+// that gives this component it's load reports...
+// checks backends are routed too in a certain ratio...
+func (s) TestEndpoints_MultipleAddresses(t *testing.T) {
+	// ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	// defer cancel()
+
+	srv1 := startServer(t, reportOOB)
+	srv2 := startServer(t, reportOOB) // orrrr do a different amount of servers?
+
+	// Constraints: picks the sc for addresses that goes READY, ignores the one that doesn't
+	// Shutdown should stop oob listener...how to test this...e2e behavior
+	// Doug: but it's a test so you can make the subchannels connect when or if you want
+
+	// server 1
+	// and server 2 set oob metrics...
+
+	// how to choose "first one that connects"? or even set that up (knowing constraints...)
+	// Yeah how does this work wrt endpoints?
+
+	sc := svcConfig(t, oobConfig)
+	if err := srv1.StartClient(grpc.WithDefaultServiceConfig(sc)); err != nil {
+		t.Fatalf("Error starting client: %v", err)
+	}
+
+	// starts a client to server here...oob?
+	addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
+	// multipleAddrs
+	endpoints := []resolver.Endpoint{{Addresses: addrs[:1]}, {Addresses: addrs[1:]}}
+	// endpointsMultipleAddresses := []resolver.Endpoint{{Addresses: addrs}}
+	srv1.R.UpdateState(resolver.State{
+		Addresses: addrs,
+		Endpoints: endpoints,
+	}) // on a server what?
+
+	// Wait what does scaling up endpoints actually change dimensionally?
+	// Do I need to keep all these other assertions?
+	// I know I have to trigger one sc to go READY and do assertions based off that...
+
+	// Call each backend once to ensure the weights have been received.
+	// ensureReached(ctx, t, srv1.Client, 2)
+
+	// Wait for the weight update period to allow the new weights to be processed...
+	time.Sleep(weightUpdatePeriod)
+	// checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 10})
+
+	// What do I check from endpoint(s)? with multiple addresses?
+	// endpointsMultipleAddresses := []resolver.Endpoint{{Addresses: addrs}} // addrs is []addresses
+	// How to trigger one of the addresses to go READY?
+
+	// Right now, forwards down address list (wrapped in endpoints)
+	// to pick first, that sends back up a sc to be created for each address...
+	// sc gets created by grpc layer, then eventually connects to the spun up servers
+	// addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
+	// you can see you just put the servers addresses into this resolver struct thingy...
+
+	// so if only want to connect to 1...just stick one real address in there and one fake one
+	// or stick two of the same (ignore duplicate?) orrrr two real ones but can you deterministically connect?
+	// deterministic first pass or is it random/parallel Doug said have knobs...
+
+}
+
 // Tests two addresses with OOB ORCA reporting enabled and a non-zero error
 // penalty applied.
 func (s) TestBalancer_TwoAddresses_ErrorPenalty(t *testing.T) {
@@ -491,7 +556,9 @@ func (s) TestBalancer_TwoAddresses_ErrorPenalty(t *testing.T) {
 		t.Fatalf("Error starting client: %v", err)
 	}
 	addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
-	srv1.R.UpdateState(resolver.State{Addresses: addrs})
+	srv1.R.UpdateState(resolver.State{Addresses: addrs}) // if this doesn't work, put it into endpoints you want, determinism based off ordering?
+
+	// just run all and see if compiles...
 
 	// Call each backend once to ensure the weights have been received.
 	ensureReached(ctx, t, srv1.Client, 2)
@@ -792,7 +859,9 @@ func checkWeights(ctx context.Context, t *testing.T, sws ...srvWeight) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("Failed to route RPCs with proper ratio")
-}
+} // Why does it work with old pick first? Switch to new one...
+
+// It works by emitting endpoints?
 
 func init() {
 	setTimeNow(time.Now)
