@@ -158,15 +158,21 @@ updateEndpoints - this is a hook point into changes...
 // endpoint -> scs, or something that allows you to track first endpoint going READY and deleting the others...
 
 // endpoint -> endpoint weight, do I even need to keep track of sc just first sc that goes ready for an endpoint?
+
+// Like PF, once a sc goes ready for an endpoint, can do a conditional for if
+you use as in pick first...so clear out old ones
+
 */
 
-// How to migrate/get it working with new system...
-func (b *wrrBalancer) updateEndpoints(endpoints []resolver.Endpoint) { // lock the whole operation at callsite or here...
+// How to migrate/get it working with new system...just leave github tests as is or rewrite a whole new one but orthogonal
+
+// Caller must hold b.mu.
+func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 	endpointSet := resolver.NewEndpointMap()
 	for _, endpoint := range endpoints {
-		// I don't think I need redundant address check; verified by lower layer...
+		// no address at all errors out redundant address is undefined...
 		endpointSet.Set(endpoint, nil)
-		var ew *endpointWeight // switch this typename to endpoint weight...
+		var ew *endpointWeight
 		ewi, ok := b.endpointToWeight.Get(endpoint)
 		if ok {
 			ew = ewi.(*endpointWeight)
@@ -191,11 +197,9 @@ func (b *wrrBalancer) updateEndpoints(endpoints []resolver.Endpoint) { // lock t
 
 			b.endpointToWeight.Set(endpoint, ew)
 
-			// delete state change logic from this layer
+			// delete state change logic from this layer I think this is done
 
 			ew.updateConfig(b.cfg) // start oob only on first READY really...still singular
-
-			// Get something concrete for Doug 1:1
 		}
 	}
 
@@ -215,9 +219,9 @@ func (b *wrrBalancer) updateEndpoints(endpoints []resolver.Endpoint) { // lock t
 // wrrBalancer implements the weighted round robin LB policy.
 type wrrBalancer struct {
 	// The following fields are immutable.
-	// Does it need this? Or keep as a field yeah needs to keep to forward to child...
-	child               balancer.Balancer // have this but could keep it a field but intercepts all operations before this used to be leaf
-	balancer.ClientConn                   // Embed to intercept new sc operations, remove the cc below?
+	child balancer.Balancer // have this but could keep it a field but intercepts all operations before this used to be leaf
+	// I think we decided we don't need this...
+	balancer.ClientConn // Embed to intercept new sc operations, remove the cc below?
 	// To delete this just switch b.cc calls to b.ClientConn...would this create any problems?
 	cc              balancer.ClientConn // before talked to full API, now intercept some operations, leave for now...and see how to talk to it wrrBalancer.ClientConn.Operation
 	logger          *grpclog.PrefixLogger
@@ -231,7 +235,9 @@ type wrrBalancer struct {
 	scMap    map[balancer.SubConn]*endpointWeight
 
 	// *** Do I still need this or is this handled by lower layer?
-	connectivityState connectivity.State // aggregate state
+	// connectivityState connectivity.State // aggregate state
+	// Looks like this isn't read anywhere, now this can happen at a lower layer...
+
 	// This is determined by picker now,
 	// regenerate picker just gets from child, no need to track this
 	// regenerate picker gets called from same place...
@@ -273,6 +279,8 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 
 	// Right here do the error check, add a helper to custom round robin...and call it from here, and od, and things that care (petioles and od call for no endpoints, otherwise undefined). Should I document for OD to call helper too?
 
+	// Actually this only does validation for petiole, OD is just undefined and TF is encoded in this layer...
+
 	// So here:
 	// call validation on endpoint sharding for the no addresses at all case, and call resolver error on endpoint sharding
 	// old data structures here and in endpoint sharding will work if already warmed up, if not will report TF to parent
@@ -280,8 +288,7 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 		// Call resolver error on child - that will allow old system to continue working
 		// but generate a tf picker from child putting channel in TF if needed. Will return a picker
 		// inline.
-		b.child.ResolverError(err) // or err bad resolver state...something to trigger reresolution I think any error does
-
+		b.child.ResolverError(err)
 		return err // or error + failed to validate endpoints? or err bad resolver state or something...
 	}
 
@@ -290,13 +297,16 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	// to same one anyway
 
 	// treat duplicate as undefined...my map structure will work as is...it'll just point to last one it hits...
+	// Could comment this ^^^
 
 	b.mu.Lock()
 	// Any deadlocks with any of the writes below?
-	b.updateEndpoints(ccs.ResolverState.Endpoints) // I think called this locked since this writes config and stuff
+	b.updateEndpointsLocked(ccs.ResolverState.Endpoints)
 	// when to update config...will test same scenarios as his test I guess...
 
 	// I think ordering doesn't matter here - inline callouts come from child call below...
+	// unless one of these writes needs to be observed...
+
 	b.cfg = cfg
 	b.locality = weightedtarget.LocalityFromResolverState(ccs.ResolverState)
 
@@ -312,22 +322,44 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	// so can keep regenerate above here...
 }
 
+// Called from below from UpdateCCS ResolverError and UpdateSCS as it was
 func (b *wrrBalancer) UpdateState(state balancer.State) { // called inline from child update, so will update sync, not a guarantee?
+	b.mu.Lock()
+	defer b.mu.Lock()
+
 	// Persist most recent state around for later? In a lock?
 
 	// calls regenerate only on diff or unconditionally? Prob unconditionally for simplicity, extra logic here and it's fine to handle update once at a layer above...
 
-	b.regeneratePicker2(state)
+	// Picker update triggered by below updating state, this triggers update
 
+	// If those are only operations that can trigger ok,
+	// otherwise
+	// lock
+	// b.state = state, and then read this in whatever operation needs it with a mutex
+	// unlock
+	// I think this is all you need, even update sc can hit this
+
+	// Calls into below will update picker inline, so it'll hit this and pass in state
+	b.regeneratePickerLocked(state)
 }
 
-func (b *wrrBalancer) regeneratePicker2(state balancer.State) { // otherwise call with most recent state?
+// What to do for inline state updates? persist than call regenerate? What else needs to call regenerate?
+
+// Caller must hold b.mu
+func (b *wrrBalancer) regeneratePickerLocked(state balancer.State) { // otherwise call with most recent state?
+	if b.stopPicker != nil {
+		b.stopPicker()
+		b.stopPicker = nil
+	} // Operation happens in a lock so I think you're good here...
+
 	childStates := endpointsharding.ChildStatesFromPicker(state.Picker)
 
 	var readyPickersWeight []pickerWeightedEndpoint
 
 	for _, childState := range childStates {
 		if childState.State.ConnectivityState == connectivity.Ready {
+			// this can come in async
 			ewv, ok := b.endpointToWeight.Get(childState.Endpoint) // this access needs a lock then?
 			if !ok {
 				// What to do in this case? But this should honestly never happen...
@@ -340,17 +372,15 @@ func (b *wrrBalancer) regeneratePicker2(state balancer.State) { // otherwise cal
 		}
 	}
 	if len(readyPickersWeight) == 0 {
-		// Defer to rr picker from below...
-		state.Picker // what to do with this now?
+		// Defer to rr picker from below...will rr across the most relevant connectivity states...
 
 		// rr across highest precedence ^^^...
-		// send this back
 		b.ClientConn.UpdateState(balancer.State{
+			// determined by child but updatestate from child should be sync
 			ConnectivityState: state.ConnectivityState, // if I persist this around does this need to have a mutex here?
 			Picker:            state.Picker,
-		}) // no need for mutex since read-only
-
-		// But I think we might need to do something with stopPicker...and old picker persisted around...mutex for read maybe not picker sync snapshot of async system...
+		})
+		return
 	}
 
 	p := &picker{
@@ -363,12 +393,18 @@ func (b *wrrBalancer) regeneratePicker2(state balancer.State) { // otherwise cal
 	}
 
 	var ctx context.Context
-	ctx, b.stopPicker = context.WithCancel(context.Background()) // Still invoked the same? Need to delete all the logic for trackign state since endpointSharding does that now...
+	ctx, b.stopPicker = context.WithCancel(context.Background()) // yeah spawn a picker that'll get cleared on next operation that forks goroutine that continually updates scheduler...
 	p.start(ctx)
+
+	// already wrote to stop picker...
+	// could protect whole operation with seperate mutex? that surrounds the unlock if UpdateState can trigger callouts
+	// b.mu.Unlock()
+
+	// Needs to eventually update with right thing if so do this in a run or something...
 	b.cc.UpdateState(balancer.State{
-		ConnectivityState: state.ConnectivityState, // if I persist this around does this need to have a mutex here?
+		ConnectivityState: state.ConnectivityState,
 		Picker:            p,
-	})
+	}) // this can cause inline callbacks, so give up the lock and then
 }
 
 type pickerWeightedEndpoint struct {
@@ -393,7 +429,7 @@ func (b *wrrBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubC
 		return sc, err
 	}
 
-	ewv, ok := b.addressWeights.Get(addr)
+	ewv, ok := b.addressWeights.Get(addr) // ep -> ew, addr -> ep...
 	if !ok {
 		// subconn for no longer relevant address weight (from old system after
 		// new update)...will get shutdown but no need to update data
@@ -405,9 +441,22 @@ func (b *wrrBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubC
 	// I honestly think all you need to do here is append, and point it...
 	// can't access ew if store ew { []sc }
 	// map[sc]->ew is another thing for update sc state to not wrap
-	b.scToWeight[sc] = ew
+	b.scToWeight[sc] = ew // sc -> ew
+
+	// return wrapped sc or normal sc...?
 } // and how the overall structure looks, store sc in the field itself?
+
+// and I think this is done outside error case unless I change data structures...
+
 // Copy his testing sceanrios to see if works normally...
+
+// UpdateCCS call regenerate? What else needs to sync it?
+// UpdateState flow (does it just persist, full regenerate flow)
+
+// And big thing is figure out how two concurrent scs work, after one goes READY
+// clear the rest for that endpoint...
+
+// Cleanup
 
 func (b *wrrBalancer) ResolverError(err error) {
 	/*b.resolverErr = err
@@ -420,7 +469,7 @@ func (b *wrrBalancer) ResolverError(err error) {
 	}
 	b.regeneratePicker()*/
 
-	// I think just forward to child now...
+	// I think just forward to child now...will cause inline update? Yup forwards to all then updatestate so I think that's all you need
 	b.child.ResolverError(err)
 }
 
@@ -438,13 +487,19 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 
 	// Shutdown clear it?
 	// Figure out the structure of how I want to keep track of endpoint weights...
-	oobOpts := orca.OOBListenerOptions{ReportInterval: time.Duration(b.cfg.OOBReportingPeriod)} // Only write to config comes sync so no need for mutex here...
+	oobOpts := orca.OOBListenerOptions{ReportInterval: time.Duration(b.cfg.OOBReportingPeriod)} // Only write to config comes sync in UpdateCCS nothing from below so no need for mutex here...
 	// get endpoint weight for a sc, how do I want to store this...better ideas for top level data structures?
 	ew := b.scToWeight[sc] // and what to do in this operation here?
 	if state.ConnectivityState == connectivity.Ready {
 		// On the first READY SubConn/Transition for an endpoint, set oob...
-		if ew.stopORCAListener == nil {
+		if ew.pickedSC == nil {
+			// Comes coupled 1:1 with this, set together cleared together
 			ew.stopORCAListener = orca.RegisterOOBListener(sc, ew, oobOpts)
+			ew.pickedSC = sc
+
+			// wait actually need to update Orca listener...do I need to go through
+			ew.updateORCAListener(b.cfg) // only accessed on calls down so I don't think ned this
+
 		}
 
 		// when a new sc comes in, *stop tracking* other scs for the endpoint
@@ -454,8 +509,17 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 	// updateConfig can clear this out/update period, how does this operation map...
 
 	// Or any state not READY - transition out of READY...?
-	if state.ConnectivityState == connectivity.Shutdown {
-		// If same sc that created listener, stop and clear it
+	if state.ConnectivityState != connectivity.Ready {
+		// If same sc that created listener, stop and clear it, or if cleared everything need a check at beginning of this
+
+		// first one that goes READY = what pick first will pick. Only if that goes not ready will pick first do something else
+		// implied by whatever goes READY even if 2, one goes READY, fails, then the next ready one for endpoint pick first will choose
+
+		if ew.pickedSC == sc { // are these writes safe I think so this will never get read expect here and do this dance of first one goes in and out
+			ew.stopORCAListener()
+			ew.pickedSC = nil
+		} // and then see if this sceanrio is correct, only hits one...OR clears all
+
 	}
 	// ew, with more than one sc high level requirement for data structure...
 
@@ -513,10 +577,15 @@ func (b *wrrBalancer) Close() {
 		b.stopPicker()
 		b.stopPicker = nil
 	}
-	for _, wsc := range b.scMap {
-		// Ensure any lingering OOB watchers are stopped.
-		wsc.updateConnectivityState(connectivity.Shutdown)
-	}
+
+	/*
+		for _, wsc := range b.scMap {
+			// Ensure any lingering OOB watchers are stopped.
+			wsc.updateConnectivityState(connectivity.Shutdown)
+		}*/
+
+	// clear any lingering oob watchers....do the same operation through a different mechanism
+
 }
 
 // ExitIdle is ignored; we always connect to all backends.
@@ -577,7 +646,8 @@ func (b *wrrBalancer) regeneratePicker() {
 		Picker:            p,
 	})*/
 
-	// This becomes my new operation...
+	// This becomes my new operation...this is determined by child updates now
+	// but I think updateccs needs to call it and sync it...
 
 }
 
@@ -675,9 +745,10 @@ type endpointWeight struct {
 	// do not need a mutex.
 	connectivityState connectivity.State
 	stopORCAListener  func()
+	pickedSC          balancer.SubConn // the first sc for the endpoint that goes READY, cleared on that sc disconnecting (i.e. going out of READY)
 
 	// subconns attached to this endpoint
-	subConns []balancer.SubConn // protected by mu?
+	subConns []balancer.SubConn // protected by mu? or set by calls in or immutable?
 
 	// The following fields are accessed asynchronously and are protected by
 	// mu.  Note that mu may not be held when calling into the stopORCAListener
@@ -756,7 +827,7 @@ func (w *endpointWeight) updateORCAListener(cfg *lbConfig) {
 		w.logger.Infof("Registering ORCA listener for %v with interval %v", w.SubConn, cfg.OOBReportingPeriod)
 	}
 	opts := orca.OOBListenerOptions{ReportInterval: time.Duration(cfg.OOBReportingPeriod)}
-	w.stopORCAListener = orca.RegisterOOBListener(w.SubConn, w, opts)
+	w.stopORCAListener = orca.RegisterOOBListener(w.pickedSC, w, opts)
 }
 
 func (w *endpointWeight) updateConnectivityState(cs connectivity.State) connectivity.State {
@@ -764,6 +835,7 @@ func (w *endpointWeight) updateConnectivityState(cs connectivity.State) connecti
 	case connectivity.Idle:
 		// Always reconnect when idle.
 		w.SubConn.Connect()
+
 	case connectivity.Ready:
 		// If we transition back to READY state, reset nonEmptySince so that we
 		// apply the blackout period after we start receiving load data. Also
@@ -774,12 +846,15 @@ func (w *endpointWeight) updateConnectivityState(cs connectivity.State) connecti
 		// connection after the new connection has been established, but they
 		// should be masked by new backend metric reports from the new
 		// connection by the time the blackout period ends.
+
+		// It needs to do all of this when goes not ready...tooo
 		w.mu.Lock()
 		w.nonEmptySince = time.Time{}
 		w.lastUpdated = time.Time{}
 		cfg := w.cfg
 		w.mu.Unlock()
 		w.updateORCAListener(cfg)
+
 	}
 
 	oldCS := w.connectivityState
