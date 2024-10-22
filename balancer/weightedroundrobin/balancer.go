@@ -29,7 +29,6 @@ import (
 	"unsafe"
 
 	"google.golang.org/grpc/balancer"
-	"google.golang.org/grpc/balancer/base"
 	"google.golang.org/grpc/balancer/endpointsharding"
 	"google.golang.org/grpc/balancer/weightedroundrobin/internal"
 	"google.golang.org/grpc/balancer/weightedtarget"
@@ -50,7 +49,7 @@ const Name = "weighted_round_robin"
 var (
 	rrFallbackMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.rr_fallback",
-		Description:    "EXPERIMENTAL. Number of scheduler updates in which there were not enough endpoints with valid weight, which caused the WRR policy to fall back to RR behavior.",
+		Description:    "EXPERIMENTAL. Number of scheduler updates in which there were not enough endpointToWeight with valid weight, which caused the WRR policy to fall back to RR behavior.",
 		Unit:           "update",
 		Labels:         []string{"grpc.target"},
 		OptionalLabels: []string{"grpc.lb.locality"},
@@ -59,7 +58,7 @@ var (
 
 	endpointWeightNotYetUsableMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.endpoint_weight_not_yet_usable",
-		Description:    "EXPERIMENTAL. Number of endpoints from each scheduler update that don't yet have usable weight information (i.e., either the load report has not yet been received, or it is within the blackout period).",
+		Description:    "EXPERIMENTAL. Number of endpointToWeight from each scheduler update that don't yet have usable weight information (i.e., either the load report has not yet been received, or it is within the blackout period).",
 		Unit:           "endpoint",
 		Labels:         []string{"grpc.target"},
 		OptionalLabels: []string{"grpc.lb.locality"},
@@ -68,7 +67,7 @@ var (
 
 	endpointWeightStaleMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.endpoint_weight_stale",
-		Description:    "EXPERIMENTAL. Number of endpoints from each scheduler update whose latest weight is older than the expiration period.",
+		Description:    "EXPERIMENTAL. Number of endpointToWeight from each scheduler update whose latest weight is older than the expiration period.",
 		Unit:           "endpoint",
 		Labels:         []string{"grpc.target"},
 		OptionalLabels: []string{"grpc.lb.locality"},
@@ -99,16 +98,15 @@ type bb struct{}
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
 	b := &wrrBalancer{
-		cc:                cc,
-		subConns:          resolver.NewAddressMap(),
-		csEvltr:           &balancer.ConnectivityStateEvaluator{},
-		scMap:             make(map[balancer.SubConn]*endpointWeight),
-		connectivityState: connectivity.Connecting,
-		target:            bOpts.Target.String(),
-		metricsRecorder:   bOpts.MetricsRecorder,
+		ClientConn:      cc,
+		cc:              cc,
+		subConns:        resolver.NewAddressMap(),
+		scMap:           make(map[balancer.SubConn]*endpointWeight),
+		target:          bOpts.Target.String(),
+		metricsRecorder: bOpts.MetricsRecorder,
 	}
 
-	b.Balancer = endpointsharding.NewBalancer(b, bOpts)
+	b.child = endpointsharding.NewBalancer(b, bOpts)
 	b.logger = prefixLogger(b)
 	b.logger.Infof("Created")
 	return b
@@ -157,21 +155,24 @@ updateEndpoints - this is a hook point into changes...
 // data structure of endpoint->endpointWeight
 // addr -> endpoint weight to store sc...does sc need to point to this now?
 
+// endpoint -> scs, or something that allows you to track first endpoint going READY and deleting the others...
+
 // endpoint -> endpoint weight, do I even need to keep track of sc just first sc that goes ready for an endpoint?
 */
-// update both for now...how to keep working?
+
+// How to migrate/get it working with new system...
 func (b *wrrBalancer) updateEndpoints(endpoints []resolver.Endpoint) { // lock the whole operation at callsite or here...
 	endpointSet := resolver.NewEndpointMap()
 	for _, endpoint := range endpoints {
 		// I don't think I need redundant address check; verified by lower layer...
 		endpointSet.Set(endpoint, nil)
 		var ew *endpointWeight // switch this typename to endpoint weight...
-		ewi, ok := b.endpointWeights.Get(endpoint)
+		ewi, ok := b.endpointToWeight.Get(endpoint)
 		if ok {
 			ew = ewi.(*endpointWeight)
 		} else {
 			// can this be plural or is this just singular...? Only use first ready one...
-			ew = &endpointWeight{ // Endpoint weight - NewSubconns read this map structure so full writes need lock, but this comes before new scs are created that will read new endpoints but throw whole writes in this operation with a lock anyway...
+			ew = &endpointWeight{ // Endpoint weight - NewSubconns read this map structure so full writes need lock, but this comes before new scs are created that will read new endpointToWeight but throw whole writes in this operation with a lock anyway...
 				// SubConn:           sc,
 				logger:            b.logger,
 				connectivityState: connectivity.Idle, // what does this start with
@@ -188,7 +189,7 @@ func (b *wrrBalancer) updateEndpoints(endpoints []resolver.Endpoint) { // lock t
 				b.addressWeights.Set(addr, ew)
 			}
 
-			b.endpointWeights.Set(endpoint, ew)
+			b.endpointToWeight.Set(endpoint, ew)
 
 			// delete state change logic from this layer
 
@@ -198,13 +199,13 @@ func (b *wrrBalancer) updateEndpoints(endpoints []resolver.Endpoint) { // lock t
 		}
 	}
 
-	// Delete old endpoints...check this algorithm?
-	for _, endpoint := range b.endpoints.Keys() {
+	// Delete old endpointToWeight...check this algorithm?
+	for _, endpoint := range b.endpointToWeight.Keys() {
 		if _, ok := endpointSet.Get(endpoint); ok {
 			// Existing endpoint also in new endpoint list; skip.
 			continue
 		}
-		b.endpoints.Delete(endpoint) // This is ok to do in iteration on line 479 line writing to something you append to I guess...
+		b.endpointToWeight.Delete(endpoint) // This is ok to do in iteration on line 479 line writing to something you append to I guess...
 		for _, addr := range endpoint.Addresses {
 			b.addressWeights.Delete(addr)
 		}
@@ -215,31 +216,39 @@ func (b *wrrBalancer) updateEndpoints(endpoints []resolver.Endpoint) { // lock t
 type wrrBalancer struct {
 	// The following fields are immutable.
 	// Does it need this? Or keep as a field yeah needs to keep to forward to child...
-	balancer.Balancer   // have this but could keep it a field but intercepts all operations before this used to be leaf
-	balancer.ClientConn // Embed to intercept new sc operations, remove the cc below?
-	cc                  balancer.ClientConn
-	logger              *grpclog.PrefixLogger
-	target              string
-	metricsRecorder     estats.MetricsRecorder
+	child               balancer.Balancer // have this but could keep it a field but intercepts all operations before this used to be leaf
+	balancer.ClientConn                   // Embed to intercept new sc operations, remove the cc below?
+	// To delete this just switch b.cc calls to b.ClientConn...would this create any problems?
+	cc              balancer.ClientConn // before talked to full API, now intercept some operations, leave for now...and see how to talk to it wrrBalancer.ClientConn.Operation
+	logger          *grpclog.PrefixLogger
+	target          string
+	metricsRecorder estats.MetricsRecorder
 
 	// The following fields are only accessed on calls into the LB policy, and
 	// do not need a mutex.
-	cfg               *lbConfig            // active config
-	subConns          *resolver.AddressMap // active weightedSubConns mapped by address
-	scMap             map[balancer.SubConn]*endpointWeight
+	cfg      *lbConfig            // active config
+	subConns *resolver.AddressMap // active weightedSubConns mapped by address
+	scMap    map[balancer.SubConn]*endpointWeight
+
+	// *** Do I still need this or is this handled by lower layer?
 	connectivityState connectivity.State // aggregate state
-	csEvltr           *balancer.ConnectivityStateEvaluator
-	resolverErr       error // the last error reported by the resolver; cleared on successful resolution
-	connErr           error // the last connection error; cleared upon leaving TransientFailure
-	stopPicker        func()
-	locality          string
+	// This is determined by picker now,
+	// regenerate picker just gets from child, no need to track this
+	// regenerate picker gets called from same place...
+
+	// This gets attached to TF err picker as error message in the TF case
+	// now TF is by endpoint sharding, but doesn't have recent resolver err and conn err
+	// ***
+
+	stopPicker func() // I def still need this structure I think...
+	locality   string
 
 	// Does anything else now need to be protected by mutex now that I grab in
 	// new sc if new sc comes in from old system simply ignore updates...
 	mu             sync.Mutex
 	addressWeights *resolver.AddressMap // addr -> endpointWeight
 
-	endpoints *resolver.EndpointMap // endpoint -> weight
+	endpointToWeight *resolver.EndpointMap // endpoint -> weight
 	// And then where do you access this?
 	// potentially numerous scs for an endpoint, but can make an assumption
 	// that pick first will use first READY and throw other away (and sync) so just
@@ -247,6 +256,8 @@ type wrrBalancer struct {
 	// so store numerous?
 
 	scToWeight map[balancer.SubConn]*endpointWeight // need to clear as appropriate...
+
+	// Something that allows sc to map to endpoint to clear all the sc...
 }
 
 // Test case for duplicate - sane, but undefined so just make sure works or
@@ -255,41 +266,44 @@ type wrrBalancer struct {
 
 func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error {
 	b.logger.Infof("UpdateCCS: %v", ccs)
-	b.resolverErr = nil
 	cfg, ok := ccs.BalancerConfig.(*lbConfig)
 	if !ok {
 		return fmt.Errorf("wrr: received nil or illegal BalancerConfig (type %T): %v", ccs.BalancerConfig, ccs.BalancerConfig)
 	}
 
-	// Right here do the error check, add a helper to custom round robin...and call it from here, and od, and things that care
-
-	// Either Resolver Error on child (but that will unnecessarily forward to children)
-	// or put channel in TF if no full update yet...if can't use resolver error
-	// but if old system continue using old system...
-
-	// Orrrr sanitize...strip duplicate addresses and then empty endpoints...
-
-	// comment and say we might change in future, in the case a duplicate
-	// address is actually a valid endpoint, not as rigid as NACK which errors
-	// system...
+	// Right here do the error check, add a helper to custom round robin...and call it from here, and od, and things that care (petioles and od call for no endpoints, otherwise undefined). Should I document for OD to call helper too?
 
 	// So here:
 	// call validation on endpoint sharding for the no addresses at all case, and call resolver error on endpoint sharding
 	// old data structures here and in endpoint sharding will work if already warmed up, if not will report TF to parent
+	if err := endpointsharding.ValidateEndpoints(ccs.ResolverState.Endpoints); err != nil { // this symbol moved to resolver but I think this is ok...move once other PR is merged...
+		// Call resolver error on child - that will allow old system to continue working
+		// but generate a tf picker from child putting channel in TF if needed. Will return a picker
+		// inline.
+		b.child.ResolverError(err) // or err bad resolver state...something to trigger reresolution I think any error does
 
-	// ignore empty endpoints in empty sharding, it'll create data here that
+		return err // or error + failed to validate endpoints? or err bad resolver state or something...
+	}
+
+	// ignore empty endpointToWeight in empty sharding, it'll create data here that
 	// won't be used...and get cleared on next one so no leak, if multiple goes
 	// to same one anyway
 
 	// treat duplicate as undefined...my map structure will work as is...it'll just point to last one it hits...
 
-	// lock?
+	b.mu.Lock()
+	// Any deadlocks with any of the writes below?
+	b.updateEndpoints(ccs.ResolverState.Endpoints) // I think called this locked since this writes config and stuff
+	// when to update config...will test same scenarios as his test I guess...
 
+	// I think ordering doesn't matter here - inline callouts come from child call below...
 	b.cfg = cfg
 	b.locality = weightedtarget.LocalityFromResolverState(ccs.ResolverState)
 
-	// what if this errors after...programming error at that point...
-	return b.Balancer.UpdateClientConnState(balancer.ClientConnState{ // this will give you a picker update inline, once you get a picker update inline that should regenerate picker, equivalent to regenerate picker, nil
+	b.mu.Unlock()
+
+	// what if this errors after...programming error at that point...for pick first?
+	return b.child.UpdateClientConnState(balancer.ClientConnState{ // this will give you a picker update inline, once you get a picker update inline that should regenerate picker, equivalent to regenerate picker, nil
 		BalancerConfig: gracefulSwitchPickFirst,
 		ResolverState:  ccs.ResolverState,
 	}) // this updates picker inline before it returns, that inline picker update should update cc inline...so should be good, inline processing of picker update should update picker inline...
@@ -299,9 +313,9 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 }
 
 func (b *wrrBalancer) UpdateState(state balancer.State) { // called inline from child update, so will update sync, not a guarantee?
-	// Persist most recent state around for later?
+	// Persist most recent state around for later? In a lock?
 
-	// calls regenerate only on diff or unconditionally?
+	// calls regenerate only on diff or unconditionally? Prob unconditionally for simplicity, extra logic here and it's fine to handle update once at a layer above...
 
 	b.regeneratePicker2(state)
 
@@ -314,8 +328,7 @@ func (b *wrrBalancer) regeneratePicker2(state balancer.State) { // otherwise cal
 
 	for _, childState := range childStates {
 		if childState.State.ConnectivityState == connectivity.Ready {
-			// childState.Endpoint // use this to get in the endpoint map weightedEndpoint, this can build out scheduler with ordering
-			ewv, ok := b.endpoints.Get(childState.Endpoint) // this access needs a lock then?
+			ewv, ok := b.endpointToWeight.Get(childState.Endpoint) // this access needs a lock then?
 			if !ok {
 				// What to do in this case? But this should honestly never happen...
 			}
@@ -329,6 +342,15 @@ func (b *wrrBalancer) regeneratePicker2(state balancer.State) { // otherwise cal
 	if len(readyPickersWeight) == 0 {
 		// Defer to rr picker from below...
 		state.Picker // what to do with this now?
+
+		// rr across highest precedence ^^^...
+		// send this back
+		b.ClientConn.UpdateState(balancer.State{
+			ConnectivityState: state.ConnectivityState, // if I persist this around does this need to have a mutex here?
+			Picker:            state.Picker,
+		}) // no need for mutex since read-only
+
+		// But I think we might need to do something with stopPicker...and old picker persisted around...mutex for read maybe not picker sync snapshot of async system...
 	}
 
 	p := &picker{
@@ -340,13 +362,11 @@ func (b *wrrBalancer) regeneratePicker2(state balancer.State) { // otherwise cal
 		target:          b.target,
 	}
 
-	// create a picker 2 with data from above, picker 2 needs to create ew ok
-	// and scheduler ok etc, I have ew but think through this...
 	var ctx context.Context
 	ctx, b.stopPicker = context.WithCancel(context.Background()) // Still invoked the same? Need to delete all the logic for trackign state since endpointSharding does that now...
 	p.start(ctx)
 	b.cc.UpdateState(balancer.State{
-		ConnectivityState: b.connectivityState,
+		ConnectivityState: state.ConnectivityState, // if I persist this around does this need to have a mutex here?
 		Picker:            p,
 	})
 }
@@ -390,7 +410,7 @@ func (b *wrrBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubC
 // Copy his testing sceanrios to see if works normally...
 
 func (b *wrrBalancer) ResolverError(err error) {
-	b.resolverErr = err
+	/*b.resolverErr = err
 	if b.subConns.Len() == 0 {
 		b.connectivityState = connectivity.TransientFailure
 	}
@@ -398,7 +418,10 @@ func (b *wrrBalancer) ResolverError(err error) {
 		// No need to update the picker since no error is being returned.
 		return
 	}
-	b.regeneratePicker()
+	b.regeneratePicker()*/
+
+	// I think just forward to child now...
+	b.child.ResolverError(err)
 }
 
 func (b *wrrBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
@@ -423,8 +446,12 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 		if ew.stopORCAListener == nil {
 			ew.stopORCAListener = orca.RegisterOOBListener(sc, ew, oobOpts)
 		}
+
+		// when a new sc comes in, *stop tracking* other scs for the endpoint
+		// orrrr persist it in endpoint weight slice and then clear it if matches sc ref? But then lifecycles idk...
+
 	}
-	// updateConfig can clear this out/update period
+	// updateConfig can clear this out/update period, how does this operation map...
 
 	// Or any state not READY - transition out of READY...?
 	if state.ConnectivityState == connectivity.Shutdown {
@@ -506,29 +533,14 @@ func (b *wrrBalancer) readySubConns() []*endpointWeight {
 	return ret
 }
 
-// mergeErrors builds an error from the last connection error and the last
-// resolver error.  Must only be called if b.connectivityState is
-// TransientFailure.
-func (b *wrrBalancer) mergeErrors() error {
-	// connErr must always be non-nil unless there are no SubConns, in which
-	// case resolverErr must be non-nil.
-	if b.connErr == nil {
-		return fmt.Errorf("last resolver error: %v", b.resolverErr)
-	}
-	if b.resolverErr == nil {
-		return fmt.Errorf("last connection error: %v", b.connErr)
-	}
-	return fmt.Errorf("last connection error: %v; last resolver error: %v", b.connErr, b.resolverErr)
-}
-
 func (b *wrrBalancer) regeneratePicker() {
 	if b.stopPicker != nil {
 		b.stopPicker()
 		b.stopPicker = nil
 	}
 
-	switch b.connectivityState {
-	case connectivity.TransientFailure:
+	/*switch b.connectivityState { // connectivity state is determined by children
+	case connectivity.TransientFailure: // Won't need this anymore, or the cc accesses, so maybe change to ClientConn, now a lower layer does that
 		b.cc.UpdateState(balancer.State{
 			ConnectivityState: connectivity.TransientFailure,
 			Picker:            base.NewErrPicker(b.mergeErrors()),
@@ -545,9 +557,11 @@ func (b *wrrBalancer) regeneratePicker() {
 		return
 	case connectivity.Ready:
 		b.connErr = nil
-	}
+	}*/
 
-	p := &picker{
+	// All this connectivity state management comes from child now...
+
+	/*p := &picker{
 		v:               rand.Uint32(), // start the scheduler at a random point
 		cfg:             b.cfg,
 		subConns:        b.readySubConns(),
@@ -561,7 +575,10 @@ func (b *wrrBalancer) regeneratePicker() {
 	b.cc.UpdateState(balancer.State{
 		ConnectivityState: b.connectivityState,
 		Picker:            p,
-	})
+	})*/
+
+	// This becomes my new operation...
+
 }
 
 // picker is the WRR policy's picker.  It uses live-updating backend weights to
@@ -573,7 +590,7 @@ type picker struct {
 	cfg       *lbConfig      // active config when picker created
 
 	// subConns  []*endpointWeight // all READY subconns
-	weightedPickers []pickerWeightedEndpoint // pointer?
+	weightedPickers []pickerWeightedEndpoint // pointer? all READY pickers
 
 	// The following fields are immutable.
 	target          string
@@ -623,7 +640,7 @@ func (p *picker) regenerateScheduler() {
 
 func (p *picker) start(ctx context.Context) {
 	p.regenerateScheduler()
-	if len(p.subConns) == 1 {
+	if len(p.weightedPickers) == 1 {
 		// No need to regenerate weights with only one backend.
 		return
 	}
@@ -823,3 +840,18 @@ func (w *endpointWeight) weight(now time.Time, weightExpirationPeriod, blackoutP
 
 	return w.weightVal
 }
+
+/* (undefined for same address in numerous endpointToWeight...)
+Action Items:
+Make balancer a field, and maybe don’t embed cc? What was it in master…
+
+And that relates to the fact the lis cancels can be plural vvv, but not needed if only 1
+
+The biggest thing to figure out is the numerous sc stuff, for simplicity Doug said first one that goes READY clears out the rest of sc for endpoint
+Or store just the first one in sc and if it matches up close, but then the first option gets rid of data structures and is more simple, so try that first
+and see if it works.
+In order to do this though I think you need some sort of mapping back and forth between endpoint -> sc sc, sc sc -> endpoint?
+
+
+Figure out mutexes I think it mainly works though…and the picker accesses might race…seems like he's ok with structure of picker...
+*/

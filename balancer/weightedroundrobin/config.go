@@ -27,7 +27,7 @@ type lbConfig struct {
 	serviceconfig.LoadBalancingConfig `json:"-"`
 
 	// Whether to enable out-of-band utilization reporting collection from the
-	// endpoints.  By default, per-request utilization reporting is used.
+	// endpointToWeight.  By default, per-request utilization reporting is used.
 	EnableOOBLoadReport bool `json:"enableOobLoadReport,omitempty"`
 
 	// Load reporting interval to request from the server.  Note that the
