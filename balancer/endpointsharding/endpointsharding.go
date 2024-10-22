@@ -204,7 +204,7 @@ func (es *endpointSharding) Close() {
 func (es *endpointSharding) updateState() {
 	if es.inhibitChildUpdates.Load() {
 		return
-	}
+	} // so only updates parent once...
 	var readyPickers, connectingPickers, idlePickers, transientFailurePickers []balancer.Picker
 
 	es.mu.Lock()
