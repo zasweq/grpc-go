@@ -198,7 +198,7 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 		for _, addr := range endpoint.Addresses {
 			b.addressWeights.Delete(addr)
 		}
-		// TODO: Delete old scs or else will leak
+		// TODO: Delete old scs or else will leak will get handled in updateSubConnState
 		// I think add a delete API to endpoint map based on value
 		// has access to endpoint ref above as value of endpointSet.Get
 	}
@@ -306,7 +306,7 @@ func (b *wrrBalancer) UpdateState(state balancer.State) { // called inline from 
 
 // regeneratePickerLocked...regenerates if necessary?
 // Caller must hold b.mu.
-func (b *wrrBalancer) regeneratePickerLocked(state balancer.State) {
+func (b *wrrBalancer) regeneratePickerLocked(state balancer.State) { // inline this, seems right
 	if b.stopPicker != nil {
 		b.stopPicker()
 		b.stopPicker = nil
@@ -414,7 +414,7 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 	}
 	if state.ConnectivityState == connectivity.Shutdown {
 		b.mu.Lock()
-		delete(b.scToWeight, sc)
+		delete(b.scToWeight, sc) // this will get shutdown when pick first shuts down
 		b.mu.Unlock()
 		return
 	}
@@ -438,8 +438,25 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 
 		// when a new sc comes in, *stop tracking* other scs for the endpoint
 		// orrrr persist it in endpoint weight slice and then clear it if matches sc ref? But then lifecycles idk...
-
+		return
 	}
+
+	// sc connect call when child goes IDLE, like it does now, operations now
+	// need to be translated
+	// when connection is lost, pick first says it's idle, call it that says connect
+	// immediately
+	// when child updates it's picker idle, call connect...
+	// ExitIdle()...expose child balancer?
+	// Exit Idle propagate to all children (Doug doesn't like)
+	// expose child balancers to call ExitIdle to call on them
+	// or endpoint sharding should do this?
+	// option endpoint sharding - add knob to config
+	// add to what it's behavior should be
+	// endpoint sharding calls children exit idle if idle
+	// todo of making it configurable...all petiole and rr will probably use this
+	// so happens at a lower layer...
+	// breaking change if configurable
+
 	// updateConfig can clear this out/update period, how does this operation map...
 
 	// Or any state not READY - transition out of READY...?
@@ -701,3 +718,13 @@ func (w *endpointWeight) weight(now time.Time, weightExpirationPeriod, blackoutP
 
 	return w.weightVal
 }
+
+// seems mostly right
+// Endpoints get emitted so should just work...
+// pick first needs to be new one...
+// pick_first.
+
+// This is done outside of from lower layer
+// trigger Exit Idle the moment something goes idle
+
+// and write cleanup/write tests...
