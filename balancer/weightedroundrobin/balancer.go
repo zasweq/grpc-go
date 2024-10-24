@@ -98,7 +98,7 @@ type bb struct{}
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
 	b := &wrrBalancer{
-		ClientConn:      cc, // Do I need this? Can I just access fields on child?
+		ClientConn:      cc,
 		target:          bOpts.Target.String(),
 		metricsRecorder: bOpts.MetricsRecorder,
 
@@ -148,32 +148,24 @@ func (bb) Name() string {
 	return Name
 }
 
-// for prototype: not the actual gcloud command python frontend, backend logic
-// only. Can piggyback off of the parsing of Ivy's backend of parsing the multi
-// subnet cluster/adding a new service CIDR
-
-// How to migrate/get it working with new system...just leave github tests as is or rewrite a whole new one but orthogonal
-
+// updateEndpointsLocked updates endpoint weight state based off new update, by starting
+// and clearing any endpoint weights needed.
 // Caller must hold b.mu.
 func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 	endpointSet := resolver.NewEndpointMap()
 	for _, endpoint := range endpoints {
-		// no address at all errors out redundant address is undefined...
 		endpointSet.Set(endpoint, nil)
 		var ew *endpointWeight
 		ewi, ok := b.endpointToWeight.Get(endpoint)
 		if ok {
 			ew = ewi.(*endpointWeight)
 		} else {
-			// can this be plural or is this just singular...? Only use first ready one...
-			ew = &endpointWeight{ // Endpoint weight - NewSubconns read this map structure so full writes need lock, but this comes before new scs are created that will read new endpointToWeight but throw whole writes in this operation with a lock anyway...
-				// SubConn:           sc,
+			ew = &endpointWeight{
 				logger:            b.logger,
-				connectivityState: connectivity.Idle, // what does this start with
+				connectivityState: connectivity.Idle, // what does this start with - do child balancers start in IDLE mode?
 				// Initially, we set load reports to off, because they are not
 				// running upon initial endpointWeight creation.
-				cfg: &lbConfig{EnableOOBLoadReport: false},
-
+				cfg:             &lbConfig{EnableOOBLoadReport: false},
 				metricsRecorder: b.metricsRecorder,
 				target:          b.target,
 				locality:        b.locality,
@@ -182,19 +174,19 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 			for _, addr := range endpoint.Addresses {
 				b.addressWeights.Set(addr, ew)
 			}
-			b.endpointToWeight.Set(endpoint, ew) // Yeah I need all 3 data structures...
+			b.endpointToWeight.Set(endpoint, ew)
 		}
 
-		ew.updateConfig(b.cfg) // start oob only on first READY really...yeah if pickedSC is set but still need to stop/start oob timer thingy...
+		ew.updateConfig(b.cfg)
 	}
 
-	// Delete old endpointToWeight...check this algorithm?
+	// Delete old endpointToWeight...check this algorithm (through unit tests :))?
 	for _, endpoint := range b.endpointToWeight.Keys() {
 		if _, ok := endpointSet.Get(endpoint); ok {
 			// Existing endpoint also in new endpoint list; skip.
 			continue
 		}
-		b.endpointToWeight.Delete(endpoint) // This is ok to do in iteration on line 479 line writing to something you append to I guess...
+		b.endpointToWeight.Delete(endpoint) // This is ok to do in iteration on line 479 line writing to something you append to I guess...will find out in tests
 		for _, addr := range endpoint.Addresses {
 			b.addressWeights.Delete(addr)
 		}
@@ -206,30 +198,21 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 
 // wrrBalancer implements the weighted round robin LB policy.
 type wrrBalancer struct {
-	// The following fields are immutable.
-	child balancer.Balancer // have this but could keep it a field but intercepts all operations before this used to be leaf
-	// I think we decided we don't need this...
+	// The following fields are set at initialization time and read only after that,
+	// so they do not need to be protected by a mutex..
+	child               balancer.Balancer
 	balancer.ClientConn // Embed to intercept new sc operation
 	logger              *grpclog.PrefixLogger
 	target              string
 	metricsRecorder     estats.MetricsRecorder
 
-	// The following fields are only accessed on calls into the LB policy, and
-	// do not need a mutex.
-	cfg      *lbConfig // active config
-	locality string
-
-	// Does anything else now need to be protected by mutex now that I grab in
-	// new sc if new sc comes in from old system simply ignore updates...
 	mu               sync.Mutex
+	cfg              *lbConfig // active config
+	locality         string
 	stopPicker       func()
 	addressWeights   *resolver.AddressMap  // addr -> endpointWeight
 	endpointToWeight *resolver.EndpointMap // endpoint -> endpointWeight
-	// need to clear as appropriate...
-	scToWeight map[balancer.SubConn]*endpointWeight // sc -> endpointWeight (store and loop through), or add a Delete API by value? maybe ask Doug
-
-	// Something that allows sc to map to endpoint to clear all the sc...I like storing just picked sc I think it's much cleaner scope that the other way...
-	// Talk to Doug about it
+	scToWeight       map[balancer.SubConn]*endpointWeight
 }
 
 // Test case for duplicate - sane, but undefined so just make sure works or
@@ -243,9 +226,9 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 		return fmt.Errorf("wrr: received nil or illegal BalancerConfig (type %T): %v", ccs.BalancerConfig, ccs.BalancerConfig)
 	}
 
-	// Actually this only does validation for petiole, OD is just undefined and TF is encoded in this layer...
+	// Actually this only does validation for petiole, OD is just undefined and TF is encoded in this layer...comment that?
 
-	// So here:
+	// So here: (switch this to actual comment)
 	// call validation on endpoint sharding for the no addresses at all case, and call resolver error on endpoint sharding
 	// old data structures here and in endpoint sharding will work if already warmed up, if not will report TF to parent
 	if err := endpointsharding.ValidateEndpoints(ccs.ResolverState.Endpoints); err != nil { // this symbol moved to resolver but I think this is ok...move once other PR is merged...
@@ -256,7 +239,7 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 		return err // or error + failed to validate endpoints? or err bad resolver state or something...
 	}
 
-	// ignore empty endpointToWeight in empty sharding, it'll create data here that
+	// ignore empty endpointToWeight in endpoint sharding lol, it'll create data here that
 	// won't be used...and get cleared on next one so no leak, if multiple goes
 	// to same one anyway
 
@@ -269,44 +252,23 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	b.updateEndpointsLocked(ccs.ResolverState.Endpoints)
 	b.mu.Unlock()
 
+	// Note: if this call ever starts erroring (as of writing this won't happen
+	// unless programmer error), will need to rethink this operation, as once
+	// it gets here it has already updated all the data structures.
+
 	// what if this errors after...programming error at that point...for pick first?
 	// call this out will break if pick first breaks...
-	return b.child.UpdateClientConnState(balancer.ClientConnState{ // this will give you a picker update inline, once you get a picker update inline that should regenerate picker, equivalent to regenerate picker, nil
+	return b.child.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: gracefulSwitchPickFirst,
 		ResolverState:  ccs.ResolverState,
 	}) // this updates picker inline before it returns, that inline picker update should update cc inline...so should be good, inline processing of picker update should update picker inline...
-
-	// Could create scs inline but there's no way it'll go READY since that sc update is sync with this...
-	// so can keep regenerate above here...
 }
-
-// Before meeting successfully clear sc map...
 
 // Called from below from UpdateCCS ResolverError and UpdateSCS as it was, call out from this
 func (b *wrrBalancer) UpdateState(state balancer.State) { // called inline from child update, so will update sync, not a guarantee?
 	b.mu.Lock()
-	defer b.mu.Lock()
+	defer b.mu.Unlock()
 
-	// Persist most recent state around for later? In a lock?
-
-	// calls regenerate only on diff or unconditionally? Prob unconditionally for simplicity, extra logic here and it's fine to handle update once at a layer above...
-
-	// Picker update triggered by below updating state, this triggers update
-
-	// If those are only operations that can trigger ok,
-	// otherwise
-	// lock
-	// b.state = state, and then read this in whatever operation needs it with a mutex
-	// unlock
-	// I think this is all you need, even update sc can hit this
-
-	// Calls into below will update picker inline, so it'll hit this and pass in state
-	b.regeneratePickerLocked(state)
-}
-
-// regeneratePickerLocked...regenerates if necessary?
-// Caller must hold b.mu.
-func (b *wrrBalancer) regeneratePickerLocked(state balancer.State) { // inline this, seems right
 	if b.stopPicker != nil {
 		b.stopPicker()
 		b.stopPicker = nil
@@ -373,7 +335,7 @@ func (b *wrrBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubC
 	oldListener := opts.StateListener
 	opts.StateListener = func(state balancer.SubConnState) {
 		b.updateSubConnState(sc, state)
-		oldListener(state) // is this right?
+		oldListener(state)
 	}
 
 	sc, err := b.ClientConn.NewSubConn([]resolver.Address{addr}, opts)
@@ -381,15 +343,16 @@ func (b *wrrBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubC
 		return sc, err
 	}
 
+	b.mu.Lock()
 	ewv, ok := b.addressWeights.Get(addr)
 	if !ok {
+		b.mu.Unlock()
 		// SubConn state updates can come in for a no longer relevant endpoint
 		// weight (from the old system after a new config update is applied).
 		// Will eventually get cleared from scMap once receives Shutdown signal.
 		return sc, err
 	}
 	ew := ewv.(*endpointWeight)
-	b.mu.Lock()
 	b.scToWeight[sc] = ew
 	b.mu.Unlock()
 
@@ -406,38 +369,29 @@ func (b *wrrBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.Sub
 }
 
 func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
-	ew := b.scToWeight[sc] // and what to do in this operation here?
-
-	// updates from no longer relevant scs?
+	b.mu.Lock()
+	ew := b.scToWeight[sc]
+	// updates from a no longer relevant SubConn update, nothing to do here but
+	// forward in state listener.
 	if ew == nil {
-		return
-	}
-	if state.ConnectivityState == connectivity.Shutdown {
-		b.mu.Lock()
-		delete(b.scToWeight, sc) // this will get shutdown when pick first shuts down
 		b.mu.Unlock()
 		return
 	}
+	if state.ConnectivityState == connectivity.Shutdown {
+		delete(b.scToWeight, sc) // this will get shutdown when pick first shuts down
+	}
+	b.mu.Unlock()
 
 	// On the first READY SubConn/Transition for an endpoint, set pickedSC,
 	// clear endpoint tracking weight state, and potentially start an OOB watch.
 	if state.ConnectivityState == connectivity.Ready && ew.pickedSC == nil {
-		// Comes coupled 1:1 with this, set together cleared together
-		// ew.stopORCAListener = orca.RegisterOOBListener(sc, ew, oobOpts)
-		ew.pickedSC = sc // and knows it wrote it here...
-
-		// has to have the config written out...
+		ew.pickedSC = sc
 		ew.mu.Lock()
 		ew.nonEmptySince = time.Time{}
 		ew.lastUpdated = time.Time{}
 		cfg := ew.cfg
 		ew.mu.Unlock()
-		// wait actually need to update Orca listener...do I need to go through
-		ew.updateORCAListener(cfg) // only accessed on calls down so I don't think ned this
-		// start a listener if picked sc, but only call into it if ready...
-
-		// when a new sc comes in, *stop tracking* other scs for the endpoint
-		// orrrr persist it in endpoint weight slice and then clear it if matches sc ref? But then lifecycles idk...
+		ew.updateORCAListener(cfg)
 		return
 	}
 
@@ -465,9 +419,9 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 	// stop oob listener if needed and clear pickedSC so the next created sc for endpoint
 	// that goes READY will be chosen for endpoint.
 	if state.ConnectivityState != connectivity.Ready && ew.pickedSC == sc {
-		// If same sc that created listener, stop and clear it, or if cleared everything need a check at beginning of this
+		// If same sc that created listener, stop OOB Listener if needed and clear it.
 
-		// first one that goes READY = what pick first will pick. Only if that goes not ready will pick first do something else
+		// First one that goes READY = what pick first will pick. Only if that goes not ready will pick first do something else
 		// implied by whatever goes READY even if 2, one goes READY, fails, then the next ready one for endpoint pick first will choose
 
 		if ew.stopORCAListener != nil {
@@ -610,7 +564,7 @@ func (w *endpointWeight) OnLoadReport(load *v3orcapb.OrcaLoadReport) {
 	if w.logger.V(2) {
 		w.logger.Infof("Received load report for subchannel %v: %v", w.SubConn, load)
 	}
-	// Update weights of this subchannel according to the reported load
+	// Update weights of this endpoint according to the reported load.
 	utilization := load.ApplicationUtilization
 	if utilization == 0 {
 		utilization = load.CpuUtilization
@@ -728,3 +682,10 @@ func (w *endpointWeight) weight(now time.Time, weightExpirationPeriod, blackoutP
 // trigger Exit Idle the moment something goes idle
 
 // and write cleanup/write tests...
+
+// For testing: what is different is it used to be on scs,
+// now it's on pf policies
+
+// Done outside of cleaning up UpdateClientConnState and cleaning up TODO's in updateSubConnState
+// But need to write tests and ping exit idle at a lower layer (maybe separate PR for faster iteration)
+// and move endpoint sharding helper to resolver...

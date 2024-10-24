@@ -35,6 +35,7 @@ import (
 
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
+	_ "google.golang.org/grpc/balancer/pickfirst"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal/balancer/gracefulswitch"
 	"google.golang.org/grpc/resolver"
@@ -326,3 +327,5 @@ func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error)
 
 // PickFirstConfig is a pick first config without shuffling enabled.
 const PickFirstConfig = "[{\"pick_first\": {}}]"
+
+//const PickFirstConfig = "[{\"pick_first_leaf\": {}}]"
