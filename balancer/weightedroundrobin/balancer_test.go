@@ -460,6 +460,13 @@ func (s) TestBalancer_TwoAddresses_OOBThenPerCall(t *testing.T) {
 	checkWeights(ctx, t, srvWeight{srv1, 10}, srvWeight{srv2, 1})
 }
 
+// If same resolver emits endpoints here wrapping addresses...
+// Should work the exact same, something might fail to build or something...
+
+// Should all just work out of the box...because really same surrounding structure
+// that gives this component it's load reports...
+// checks backends are routed too in a certain ratio...
+
 // Tests two addresses with OOB ORCA reporting enabled and a non-zero error
 // penalty applied.
 func (s) TestBalancer_TwoAddresses_ErrorPenalty(t *testing.T) {
@@ -491,7 +498,9 @@ func (s) TestBalancer_TwoAddresses_ErrorPenalty(t *testing.T) {
 		t.Fatalf("Error starting client: %v", err)
 	}
 	addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
-	srv1.R.UpdateState(resolver.State{Addresses: addrs})
+	srv1.R.UpdateState(resolver.State{Addresses: addrs}) // if this doesn't work, put it into endpoints you want, determinism based off ordering?
+
+	// just run all and see if compiles...
 
 	// Call each backend once to ensure the weights have been received.
 	ensureReached(ctx, t, srv1.Client, 2)
@@ -792,7 +801,9 @@ func checkWeights(ctx context.Context, t *testing.T, sws ...srvWeight) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("Failed to route RPCs with proper ratio")
-}
+} // Why does it work with old pick first? Switch to new one...
+
+// It works by emitting endpoints?
 
 func init() {
 	setTimeNow(time.Now)
