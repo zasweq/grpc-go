@@ -466,6 +466,15 @@ func (s) TestBalancer_TwoAddresses_OOBThenPerCall(t *testing.T) {
 // Should all just work out of the box...because really same surrounding structure
 // that gives this component it's load reports...
 // checks backends are routed too in a certain ratio...
+func (s) TestEndpoints_MultipleAddresses(t *testing.T) {
+	// Constraints: picks the sc for addresses that goes READY, ignores the one that doesn't
+	// Shutdown should stop oob listener...how to test this...e2e behavior
+	// Doug: but it's a test so you can make the subchannels connect when or if you want
+
+	// server 1
+	// and server 2 set oob metrics...
+
+}
 
 // Tests two addresses with OOB ORCA reporting enabled and a non-zero error
 // penalty applied.

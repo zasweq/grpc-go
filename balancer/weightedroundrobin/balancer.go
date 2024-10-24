@@ -162,7 +162,7 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 		} else {
 			ew = &endpointWeight{
 				logger:            b.logger,
-				connectivityState: connectivity.Idle, // what does this start with - do child balancers start in IDLE mode?
+				connectivityState: connectivity.Connecting, // what does this start with - do child balancers start in IDLE mode?
 				// Initially, we set load reports to off, because they are not
 				// running upon initial endpointWeight creation.
 				cfg:             &lbConfig{EnableOOBLoadReport: false},
@@ -180,6 +180,15 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 		ew.updateConfig(b.cfg)
 	}
 
+	// Is there a way to test this doesn't leak or some sort of functionality here?
+
+	// Update 1 with two endpoints, Update 2 with two endpoints or three that partially overlap
+	// Test case of duplicate addresses to make sure doesn't crash, undefined behavior
+
+	// Test case of endpoints with multiple addresses, how many endpoints and what diff up in the air...
+
+	// child endpoitnSharding to ping ExitIdle...
+
 	// Delete old endpointToWeight...check this algorithm (through unit tests :))?
 	for _, endpoint := range b.endpointToWeight.Keys() {
 		if _, ok := endpointSet.Get(endpoint); ok {
@@ -190,18 +199,17 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 		for _, addr := range endpoint.Addresses {
 			b.addressWeights.Delete(addr)
 		}
-		// TODO: Delete old scs or else will leak will get handled in updateSubConnState
-		// I think add a delete API to endpoint map based on value
-		// has access to endpoint ref above as value of endpointSet.Get
+		// SubConn map will get handled in updateSubConnState
+		// when receives SHUTDOWN signal.
 	}
 }
 
 // wrrBalancer implements the weighted round robin LB policy.
 type wrrBalancer struct {
 	// The following fields are set at initialization time and read only after that,
-	// so they do not need to be protected by a mutex..
+	// so they do not need to be protected by a mutex.
 	child               balancer.Balancer
-	balancer.ClientConn // Embed to intercept new sc operation
+	balancer.ClientConn // Embed to intercept NewSubConn operation
 	logger              *grpclog.PrefixLogger
 	target              string
 	metricsRecorder     estats.MetricsRecorder
@@ -216,7 +224,8 @@ type wrrBalancer struct {
 }
 
 // Test case for duplicate - sane, but undefined so just make sure works or
-// something...
+// something...make sure it doesn't crash...undefined behavior unless overlapped address
+// doesn't connect...
 // API guarantee is undefined for that case
 
 func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error {
@@ -225,8 +234,6 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	if !ok {
 		return fmt.Errorf("wrr: received nil or illegal BalancerConfig (type %T): %v", ccs.BalancerConfig, ccs.BalancerConfig)
 	}
-
-	// Actually this only does validation for petiole, OD is just undefined and TF is encoded in this layer...comment that?
 
 	// So here: (switch this to actual comment)
 	// call validation on endpoint sharding for the no addresses at all case, and call resolver error on endpoint sharding
@@ -255,13 +262,10 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	// Note: if this call ever starts erroring (as of writing this won't happen
 	// unless programmer error), will need to rethink this operation, as once
 	// it gets here it has already updated all the data structures.
-
-	// what if this errors after...programming error at that point...for pick first?
-	// call this out will break if pick first breaks...
 	return b.child.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: gracefulSwitchPickFirst,
 		ResolverState:  ccs.ResolverState,
-	}) // this updates picker inline before it returns, that inline picker update should update cc inline...so should be good, inline processing of picker update should update picker inline...
+	}) // this updates picker inline
 }
 
 // Called from below from UpdateCCS ResolverError and UpdateSCS as it was, call out from this
