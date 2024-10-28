@@ -81,6 +81,7 @@ type endpointSharding struct {
 	cc    balancer.ClientConn
 	bOpts balancer.BuildOptions
 
+	childMu  sync.Mutex // syncs calls into children
 	children atomic.Pointer[resolver.EndpointMap]
 
 	// inhibitChildUpdates is set during UpdateClientConnState/ResolverError
@@ -130,6 +131,7 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 			bal.Balancer = gracefulswitch.NewBalancer(bal, es.bOpts)
 		}
 		newChildren.Set(endpoint, bal)
+		es.childMu.Lock()
 		if err := bal.UpdateClientConnState(balancer.ClientConnState{
 			BalancerConfig: state.BalancerConfig,
 			ResolverState: resolver.State{
@@ -143,13 +145,16 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 			// validations, this is a current limitation for simplicity sake.
 			ret = err
 		}
+		es.childMu.Unlock()
 	}
 	// Delete old children that are no longer present.
 	for _, e := range children.Keys() {
 		child, _ := children.Get(e)
 		bal := child.(balancer.Balancer)
 		if _, ok := newChildren.Get(e); !ok {
+			es.childMu.Lock()
 			bal.Close()
+			es.childMu.Unlock()
 		}
 	}
 	es.children.Store(newChildren)
@@ -168,7 +173,9 @@ func (es *endpointSharding) ResolverError(err error) {
 	children := es.children.Load()
 	for _, child := range children.Values() {
 		bal := child.(balancer.Balancer)
+		es.childMu.Lock()
 		bal.ResolverError(err)
+		es.childMu.Unlock()
 	}
 }
 
@@ -180,7 +187,9 @@ func (es *endpointSharding) Close() {
 	children := es.children.Load()
 	for _, child := range children.Values() {
 		bal := child.(balancer.Balancer)
+		es.childMu.Lock()
 		bal.Close()
+		es.childMu.Unlock()
 	}
 }
 
@@ -282,13 +291,29 @@ type balancerWrapper struct {
 
 	es *endpointSharding
 
-	childState ChildState
+	childState ChildState // protected by es.mu
 }
 
 func (bw *balancerWrapper) UpdateState(state balancer.State) {
 	bw.es.mu.Lock()
 	bw.childState.State = state
 	bw.es.mu.Unlock()
+	// When pick first says it's IDLE, ping it to exit idle and reconnect.
+	if ei, ok := bw.Balancer.(balancer.ExitIdler); state.ConnectivityState == connectivity.Idle && ok {
+		// Will not reconnect until SubConn.Connect is called...? Does this match?
+		go func() {
+			// Trigger this, eventually...
+			// if part of balancer.Balancer API add a mutex
+
+			// argh will Doug make me write a test case?
+			bw.es.childMu.Lock() // I think Doug might not like child mu being held only for each iteration of operation downward, maybe he'll want to lock whole operation but I think keeping critical section smaller is what we want to do here (defend it maybe)
+			ei.ExitIdle()        // does this need a mutex grab and how to call it?
+			// this might call into a mutex and be synced with calls below in other places...
+			bw.es.childMu.Unlock()
+			// Yup this calls ExitIdle() inline and triggers a deadlock since it needs a mutex...esp if the UpdateState comes in
+			// while the mutex is held...
+		}()
+	}
 	bw.es.updateState()
 }
 

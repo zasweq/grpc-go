@@ -467,12 +467,61 @@ func (s) TestBalancer_TwoAddresses_OOBThenPerCall(t *testing.T) {
 // that gives this component it's load reports...
 // checks backends are routed too in a certain ratio...
 func (s) TestEndpoints_MultipleAddresses(t *testing.T) {
+	// ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	// defer cancel()
+
+	srv1 := startServer(t, reportOOB)
+	srv2 := startServer(t, reportOOB) // orrrr do a different amount of servers?
+
 	// Constraints: picks the sc for addresses that goes READY, ignores the one that doesn't
 	// Shutdown should stop oob listener...how to test this...e2e behavior
 	// Doug: but it's a test so you can make the subchannels connect when or if you want
 
 	// server 1
 	// and server 2 set oob metrics...
+
+	// how to choose "first one that connects"? or even set that up (knowing constraints...)
+	// Yeah how does this work wrt endpoints?
+
+	sc := svcConfig(t, oobConfig)
+	if err := srv1.StartClient(grpc.WithDefaultServiceConfig(sc)); err != nil {
+		t.Fatalf("Error starting client: %v", err)
+	}
+
+	// starts a client to server here...oob?
+	addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
+	// multipleAddrs
+	endpoints := []resolver.Endpoint{{Addresses: addrs[:1]}, {Addresses: addrs[1:]}}
+	// endpointsMultipleAddresses := []resolver.Endpoint{{Addresses: addrs}}
+	srv1.R.UpdateState(resolver.State{
+		Addresses: addrs,
+		Endpoints: endpoints,
+	}) // on a server what?
+
+	// Wait what does scaling up endpoints actually change dimensionally?
+	// Do I need to keep all these other assertions?
+	// I know I have to trigger one sc to go READY and do assertions based off that...
+
+	// Call each backend once to ensure the weights have been received.
+	// ensureReached(ctx, t, srv1.Client, 2)
+
+	// Wait for the weight update period to allow the new weights to be processed...
+	time.Sleep(weightUpdatePeriod)
+	// checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 10})
+
+	// What do I check from endpoint(s)? with multiple addresses?
+	// endpointsMultipleAddresses := []resolver.Endpoint{{Addresses: addrs}} // addrs is []addresses
+	// How to trigger one of the addresses to go READY?
+
+	// Right now, forwards down address list (wrapped in endpoints)
+	// to pick first, that sends back up a sc to be created for each address...
+	// sc gets created by grpc layer, then eventually connects to the spun up servers
+	// addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
+	// you can see you just put the servers addresses into this resolver struct thingy...
+
+	// so if only want to connect to 1...just stick one real address in there and one fake one
+	// or stick two of the same (ignore duplicate?) orrrr two real ones but can you deterministically connect?
+	// deterministic first pass or is it random/parallel Doug said have knobs...
 
 }
 

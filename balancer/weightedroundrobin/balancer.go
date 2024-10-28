@@ -162,7 +162,7 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 		} else {
 			ew = &endpointWeight{
 				logger:            b.logger,
-				connectivityState: connectivity.Connecting, // what does this start with - do child balancers start in IDLE mode?
+				connectivityState: connectivity.Connecting,
 				// Initially, we set load reports to off, because they are not
 				// running upon initial endpointWeight creation.
 				cfg:             &lbConfig{EnableOOBLoadReport: false},
@@ -187,7 +187,7 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 
 	// Test case of endpoints with multiple addresses, how many endpoints and what diff up in the air...
 
-	// child endpoitnSharding to ping ExitIdle...
+	// child endpointSharding to ping ExitIdle...
 
 	// Delete old endpointToWeight...check this algorithm (through unit tests :))?
 	for _, endpoint := range b.endpointToWeight.Keys() {
@@ -195,7 +195,7 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 			// Existing endpoint also in new endpoint list; skip.
 			continue
 		}
-		b.endpointToWeight.Delete(endpoint) // This is ok to do in iteration on line 479 line writing to something you append to I guess...will find out in tests
+		b.endpointToWeight.Delete(endpoint) // This is ok to do in iteration on line 479 line writing to something you append to I guess...will find out in tests, yeah I think so evaluates before deletes...
 		for _, addr := range endpoint.Addresses {
 			b.addressWeights.Delete(addr)
 		}
@@ -399,6 +399,7 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 		return
 	}
 
+	// *** All related to having child ping IDLE children
 	// sc connect call when child goes IDLE, like it does now, operations now
 	// need to be translated
 	// when connection is lost, pick first says it's idle, call it that says connect
@@ -414,8 +415,12 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 	// todo of making it configurable...all petiole and rr will probably use this
 	// so happens at a lower layer...
 	// breaking change if configurable
+	// ***
 
 	// updateConfig can clear this out/update period, how does this operation map...
+	// Should this go through updateListener?
+	// How to test this logic? New endpoint or
+	// I think same endpoint 1 2, 1 goes ready throw away 2, one goes out of ready and back to ready (or test this in pick first unit tests?)
 
 	// Or any state not READY - transition out of READY...?
 
@@ -425,8 +430,14 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 	if state.ConnectivityState != connectivity.Ready && ew.pickedSC == sc {
 		// If same sc that created listener, stop OOB Listener if needed and clear it.
 
-		// First one that goes READY = what pick first will pick. Only if that goes not ready will pick first do something else
-		// implied by whatever goes READY even if 2, one goes READY, fails, then the next ready one for endpoint pick first will choose
+		// The first SubConn that goes READY for an endpoint is what pick first will pick.
+		// Only once that SubConn goes not ready will pick first restart this cycle
+		// of creating SubConns and using the first READY one. The lower level
+		// endpoint sharding will ping the Pick First once this occurs to ExitIdle and connect.
+
+		// "When pick first says it's idle, ping it to get it out of idle, comment this will be configurable in future"
+
+		// implied by whatever goes READY even if 2, one goes READY, fails, then the next ready one for endpoint pick first will choose (combine these two into one comment...)
 
 		if ew.stopORCAListener != nil {
 			ew.stopORCAListener()
