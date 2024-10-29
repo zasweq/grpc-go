@@ -28,15 +28,16 @@ package endpointsharding
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
-	_ "google.golang.org/grpc/balancer/pickfirst"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/internal/balancer/gracefulswitch"
+	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
 )
@@ -52,26 +53,12 @@ type ChildState struct {
 // policies each owning a single endpoint.
 func NewBalancer(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
 	es := &endpointSharding{
-		cc:    cc,
-		bOpts: opts,
+		cc:     cc,
+		bOpts:  opts,
+		closed: grpcsync.NewEvent(),
 	}
 	es.children.Store(resolver.NewEndpointMap())
 	return es
-}
-
-// ValidateEndpoints returns an error if the endpoints list is empty, or no
-// addresses are present in endpoint list.
-func ValidateEndpoints(endpoints []resolver.Endpoint) error {
-	if len(endpoints) == 0 {
-		return errors.New("endpoints list is empty")
-	}
-
-	for _, endpoint := range endpoints {
-		for range endpoint.Addresses {
-			return nil
-		}
-	}
-	return errors.New("endpoints list contains no addresses")
 }
 
 // endpointSharding is a balancer that wraps child balancers. It creates a child
@@ -81,8 +68,9 @@ type endpointSharding struct {
 	cc    balancer.ClientConn
 	bOpts balancer.BuildOptions
 
-	childMu  sync.Mutex // syncs calls into children
+	childMu  sync.Mutex // syncs balancer.Balancer calls into children
 	children atomic.Pointer[resolver.EndpointMap]
+	closed   *grpcsync.Event
 
 	// inhibitChildUpdates is set during UpdateClientConnState/ResolverError
 	// calls (calls to children will each produce an update, only want one
@@ -96,9 +84,22 @@ type endpointSharding struct {
 // for endpoints that are no longer present. It also updates all the children,
 // and sends a single synchronous update of the childrens' aggregated state at
 // the end of the UpdateClientConnState operation. If any endpoint has no
-// addresses it will ignore that endpoint. Otherwise, returns first error found
-// from a child, but fully processes the new update.
+// addresses, returns error without forwarding any updates. Otherwise returns
+// first error found from a child, but fully processes the new update.
 func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState) error {
+	if len(state.ResolverState.Endpoints) == 0 {
+		return errors.New("endpoints list is empty")
+	}
+	// Check/return early if any endpoints have no addresses.
+	// TODO: make this configurable if needed.
+	for i, endpoint := range state.ResolverState.Endpoints {
+		if len(endpoint.Addresses) == 0 {
+			return fmt.Errorf("endpoint %d has empty addresses", i)
+		}
+	}
+	es.childMu.Lock()
+	defer es.childMu.Unlock()
+
 	es.inhibitChildUpdates.Store(true)
 	defer func() {
 		es.inhibitChildUpdates.Store(false)
@@ -111,9 +112,6 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 
 	// Update/Create new children.
 	for _, endpoint := range state.ResolverState.Endpoints {
-		if len(endpoint.Addresses) == 0 {
-			continue
-		}
 		if _, ok := newChildren.Get(endpoint); ok {
 			// Endpoint child was already created, continue to avoid duplicate
 			// update.
@@ -131,7 +129,6 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 			bal.Balancer = gracefulswitch.NewBalancer(bal, es.bOpts)
 		}
 		newChildren.Set(endpoint, bal)
-		es.childMu.Lock()
 		if err := bal.UpdateClientConnState(balancer.ClientConnState{
 			BalancerConfig: state.BalancerConfig,
 			ResolverState: resolver.State{
@@ -145,16 +142,13 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 			// validations, this is a current limitation for simplicity sake.
 			ret = err
 		}
-		es.childMu.Unlock()
 	}
 	// Delete old children that are no longer present.
 	for _, e := range children.Keys() {
 		child, _ := children.Get(e)
 		bal := child.(balancer.Balancer)
 		if _, ok := newChildren.Get(e); !ok {
-			es.childMu.Lock()
 			bal.Close()
-			es.childMu.Unlock()
 		}
 	}
 	es.children.Store(newChildren)
@@ -165,6 +159,8 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 // children and sends a single synchronous update of the childStates at the end
 // of the ResolverError operation.
 func (es *endpointSharding) ResolverError(err error) {
+	es.childMu.Lock()
+	defer es.childMu.Unlock()
 	es.inhibitChildUpdates.Store(true)
 	defer func() {
 		es.inhibitChildUpdates.Store(false)
@@ -173,9 +169,7 @@ func (es *endpointSharding) ResolverError(err error) {
 	children := es.children.Load()
 	for _, child := range children.Values() {
 		bal := child.(balancer.Balancer)
-		es.childMu.Lock()
 		bal.ResolverError(err)
-		es.childMu.Unlock()
 	}
 }
 
@@ -184,13 +178,14 @@ func (es *endpointSharding) UpdateSubConnState(balancer.SubConn, balancer.SubCon
 }
 
 func (es *endpointSharding) Close() {
+	es.childMu.Lock()
+	defer es.childMu.Unlock()
 	children := es.children.Load()
 	for _, child := range children.Values() {
 		bal := child.(balancer.Balancer)
-		es.childMu.Lock()
 		bal.Close()
-		es.childMu.Unlock()
 	}
+	es.closed.Fire()
 }
 
 // updateState updates this component's state. It sends the aggregated state,
@@ -199,7 +194,7 @@ func (es *endpointSharding) Close() {
 func (es *endpointSharding) updateState() {
 	if es.inhibitChildUpdates.Load() {
 		return
-	} // so only updates parent once...
+	}
 	var readyPickers, connectingPickers, idlePickers, transientFailurePickers []balancer.Picker
 
 	es.mu.Lock()
@@ -291,27 +286,22 @@ type balancerWrapper struct {
 
 	es *endpointSharding
 
-	childState ChildState // protected by es.mu
+	childState ChildState
 }
 
 func (bw *balancerWrapper) UpdateState(state balancer.State) {
 	bw.es.mu.Lock()
 	bw.childState.State = state
 	bw.es.mu.Unlock()
-	// When pick first says it's IDLE, ping it to exit idle and reconnect.
+	// When a child balancer says it's IDLE, ping it to exit idle and reconnect.
+	// TODO: In the future, perhaps make this a knob in configuration.
 	if ei, ok := bw.Balancer.(balancer.ExitIdler); state.ConnectivityState == connectivity.Idle && ok {
-		// Will not reconnect until SubConn.Connect is called...? Does this match?
 		go func() {
-			// Trigger this, eventually...
-			// if part of balancer.Balancer API add a mutex
-
-			// argh will Doug make me write a test case?
-			bw.es.childMu.Lock() // I think Doug might not like child mu being held only for each iteration of operation downward, maybe he'll want to lock whole operation but I think keeping critical section smaller is what we want to do here (defend it maybe)
-			ei.ExitIdle()        // does this need a mutex grab and how to call it?
-			// this might call into a mutex and be synced with calls below in other places...
+			bw.es.childMu.Lock()
+			if !bw.es.closed.HasFired() {
+				ei.ExitIdle()
+			}
 			bw.es.childMu.Unlock()
-			// Yup this calls ExitIdle() inline and triggers a deadlock since it needs a mutex...esp if the UpdateState comes in
-			// while the mutex is held...
 		}()
 	}
 	bw.es.updateState()
@@ -327,6 +317,4 @@ func ParseConfig(cfg json.RawMessage) (serviceconfig.LoadBalancingConfig, error)
 }
 
 // PickFirstConfig is a pick first config without shuffling enabled.
-// const PickFirstConfig = "[{\"pick_first\": {}}]"
-
-const PickFirstConfig = "[{\"pick_first_leaf\": {}}]"
+const PickFirstConfig = "[{\"pick_first\": {}}]"

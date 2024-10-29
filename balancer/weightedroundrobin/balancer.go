@@ -238,7 +238,7 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	// So here: (switch this to actual comment)
 	// call validation on endpoint sharding for the no addresses at all case, and call resolver error on endpoint sharding
 	// old data structures here and in endpoint sharding will work if already warmed up, if not will report TF to parent
-	if err := endpointsharding.ValidateEndpoints(ccs.ResolverState.Endpoints); err != nil { // this symbol moved to resolver but I think this is ok...move once other PR is merged...
+	if err := resolver.ValidateEndpoints(ccs.ResolverState.Endpoints); err != nil { // this symbol moved to resolver but I think this is ok...move once other PR is merged...
 		// Call resolver error on child - that will allow old system to continue working
 		// but generate a tf picker from child putting channel in TF if needed. Will return a picker
 		// inline.
