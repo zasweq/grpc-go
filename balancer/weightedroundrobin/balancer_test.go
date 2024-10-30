@@ -460,18 +460,77 @@ func (s) TestBalancer_TwoAddresses_OOBThenPerCall(t *testing.T) {
 	checkWeights(ctx, t, srvWeight{srv1, 10}, srvWeight{srv2, 1})
 }
 
+// TestEndpoints_SharedAddress tests the case where endpoints have the same
+// address. The expected behavior is undefined, however the program should not
+// crash.
+
+func (s) TestEndpoints_SharedAddress(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+	// Either 2 or 10 endpoints with a shared address.
+	srv := startServer(t, reportCall)
+
+	sc := svcConfig(t, perCallConfig)
+	if err := srv.StartClient(grpc.WithDefaultServiceConfig(sc)); err != nil {
+		t.Fatalf("Error starting client: %v", err)
+	}
+
+	endpointsSharedAddress := []resolver.Endpoint{{Addresses: []resolver.Address{{Addr: "bad-address"}}}, {Addresses: []resolver.Address{{Addr: "bad-address"}}}}
+	// two endpoints, should balance load of the second correct address...
+
+	// endpointsMultipleAddresses := []resolver.Endpoint{{}} // and need to assert that it goes to first one
+	srv.R.UpdateState(resolver.State{
+		// Addresses: addrs,
+		Endpoints: endpointsSharedAddress, // should just work if signal propagates immediately...
+	}) // on a server what?
+
+	// Make some RPC's, make sure doesn't crash.
+	for i := 0; i < 10; i++ {
+		srv.Client.EmptyCall(ctx, &testpb.Empty{}, grpc.WaitForReady(true))
+	}
+}
+
 // If same resolver emits endpoints here wrapping addresses...
 // Should work the exact same, something might fail to build or something...
 
 // Should all just work out of the box...because really same surrounding structure
 // that gives this component it's load reports...
 // checks backends are routed too in a certain ratio...
+
+// TestEndpoints_MultipleAddresses tests WRR on endpoints with numerous
+// addresses. It configures WRR with two endpoints with one bad address followed
+// by a good address. It configures two backends that each report per call
+// metrics, each corresponding to the two endpoints good address. It then
+// asserts load is distributed as expected corresponding to call metrics.
+
 func (s) TestEndpoints_MultipleAddresses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+
+	// The other tests working represent ok, not ok
+
+	// Have this test be not ok, ok...how to setup a not ok backend in an endpoint have it point to nothing?
+	// simple, setup management server in one address case (or do I need to test numerous endpoints?)
+	// what to point first address in endpoint to?
+
+	// Numerous endpoints - test shit doesn't crash, doesn't need to assert anything deterministic...
+
 	// ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
 	// defer cancel()
 
-	srv1 := startServer(t, reportOOB)
-	srv2 := startServer(t, reportOOB) // orrrr do a different amount of servers?
+	srv1 := startServer(t, reportCall)
+	srv2 := startServer(t, reportCall) // orrrr do a different amount of servers?
+
+	// srv1 starts loaded and srv2 starts without load; ensure RPCs are routed
+	// disproportionately to srv2 (10:1).
+	// For per-call metrics (not used initially), srv2 reports that it is
+	// loaded and srv1 reports low load.  After confirming OOB works, switch to
+	// per-call and confirm the new routing weights are applied.
+	srv1.callMetrics.SetQPS(10.0)
+	srv1.callMetrics.SetApplicationUtilization(.1)
+
+	srv2.callMetrics.SetQPS(10.0)
+	srv2.callMetrics.SetApplicationUtilization(1.0)
 
 	// Constraints: picks the sc for addresses that goes READY, ignores the one that doesn't
 	// Shutdown should stop oob listener...how to test this...e2e behavior
@@ -483,20 +542,41 @@ func (s) TestEndpoints_MultipleAddresses(t *testing.T) {
 	// how to choose "first one that connects"? or even set that up (knowing constraints...)
 	// Yeah how does this work wrt endpoints?
 
-	sc := svcConfig(t, oobConfig)
+	sc := svcConfig(t, perCallConfig)
 	if err := srv1.StartClient(grpc.WithDefaultServiceConfig(sc)); err != nil {
 		t.Fatalf("Error starting client: %v", err)
 	}
 
 	// starts a client to server here...oob?
-	addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
+	// addrs := []resolver.Address{{Addr: srv1.Address}, {Addr: srv2.Address}}
 	// multipleAddrs
-	endpoints := []resolver.Endpoint{{Addresses: addrs[:1]}, {Addresses: addrs[1:]}}
+	// endpoints := []resolver.Endpoint{{Addresses: addrs[:1]}, {Addresses: addrs[1:]}}
 	// endpointsMultipleAddresses := []resolver.Endpoint{{Addresses: addrs}}
+	// oneBadOneGoodAddress := []resolver.Address{{Addr: "bad-address" /*will this just try for the next one, how to propagate signal immediately*/}, {Addr: srv1.Address}}
+	// and then do exact same assertion with one address
+
+	// and then test two, with one bad and one good for both, tests plurality and also
+	// twice
+	// balancer_test.go:539: Error from EmptyCall: rpc error: code = Unavailable desc = connection error: desc = "transport: Error while dialing: dial tcp: address bad-address: missing port in address"
+	twoEndpoints := []resolver.Endpoint{{Addresses: []resolver.Address{{Addr: "bad-address-1" /*will this just try for the next one, how to propagate signal immediately*/}, {Addr: srv1.Address}}}, {Addresses: []resolver.Address{{Addr: "bad-address-2" /*will this just try for the next one, how to propagate signal immediately*/}, {Addr: srv2.Address}}}}
+	// two endpoints, should balance load of the second correct address...
+
+	// endpointsMultipleAddresses := []resolver.Endpoint{{}} // and need to assert that it goes to first one
 	srv1.R.UpdateState(resolver.State{
-		Addresses: addrs,
-		Endpoints: endpoints,
+		// Addresses: addrs,
+		Endpoints: twoEndpoints, // should just work if signal propagates immediately...
 	}) // on a server what?
+
+	// Call each backend once to ensure the weights have been received.
+	ensureReached(ctx, t, srv1.Client, 2) // might need to wait for ready or will return the first picker that comes up from pick first so might need to change it around...
+
+	// All the time this hits...why doesn't it try the second one, only the first address?
+	// Always hits: connection error: desc = "transport: Error while dialing: dial tcp: address bad-address: missing port in address"
+
+	// Wait for the weight update period to allow the new weights to be processed.
+	time.Sleep(weightUpdatePeriod)
+	checkWeights(ctx, t, srvWeight{srv1, 10}, srvWeight{srv2, 1})
+	// This makes sure endpoints work as normal.
 
 	// Wait what does scaling up endpoints actually change dimensionally?
 	// Do I need to keep all these other assertions?
@@ -506,7 +586,7 @@ func (s) TestEndpoints_MultipleAddresses(t *testing.T) {
 	// ensureReached(ctx, t, srv1.Client, 2)
 
 	// Wait for the weight update period to allow the new weights to be processed...
-	time.Sleep(weightUpdatePeriod)
+	// time.Sleep(weightUpdatePeriod)
 	// checkWeights(ctx, t, srvWeight{srv1, 1}, srvWeight{srv2, 10})
 
 	// What do I check from endpoint(s)? with multiple addresses?
@@ -522,6 +602,8 @@ func (s) TestEndpoints_MultipleAddresses(t *testing.T) {
 	// so if only want to connect to 1...just stick one real address in there and one fake one
 	// or stick two of the same (ignore duplicate?) orrrr two real ones but can you deterministically connect?
 	// deterministic first pass or is it random/parallel Doug said have knobs...
+
+	// Management server 1 2 find simple assertion to make sure it's working properly then cleanup...
 
 }
 
@@ -799,7 +881,7 @@ func ensureReached(ctx context.Context, t *testing.T, c testgrpc.TestServiceClie
 	reached := make(map[string]struct{})
 	for len(reached) != n {
 		var peer peer.Peer
-		if _, err := c.EmptyCall(ctx, &testpb.Empty{}, grpc.Peer(&peer)); err != nil {
+		if _, err := c.EmptyCall(ctx, &testpb.Empty{}, grpc.Peer(&peer), grpc.WaitForReady(true)); err != nil {
 			t.Fatalf("Error from EmptyCall: %v", err)
 		}
 		reached[peer.Addr.String()] = struct{}{}
