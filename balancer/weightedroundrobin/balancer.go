@@ -49,7 +49,7 @@ const Name = "weighted_round_robin"
 var (
 	rrFallbackMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.rr_fallback",
-		Description:    "EXPERIMENTAL. Number of scheduler updates in which there were not enough endpointToWeight with valid weight, which caused the WRR policy to fall back to RR behavior.",
+		Description:    "EXPERIMENTAL. Number of scheduler updates in which there were not enough endpoints with valid weight, which caused the WRR policy to fall back to RR behavior.",
 		Unit:           "update",
 		Labels:         []string{"grpc.target"},
 		OptionalLabels: []string{"grpc.lb.locality"},
@@ -58,7 +58,7 @@ var (
 
 	endpointWeightNotYetUsableMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.endpoint_weight_not_yet_usable",
-		Description:    "EXPERIMENTAL. Number of endpointToWeight from each scheduler update that don't yet have usable weight information (i.e., either the load report has not yet been received, or it is within the blackout period).",
+		Description:    "EXPERIMENTAL. Number of endpoints from each scheduler update that don't yet have usable weight information (i.e., either the load report has not yet been received, or it is within the blackout period).",
 		Unit:           "endpoint",
 		Labels:         []string{"grpc.target"},
 		OptionalLabels: []string{"grpc.lb.locality"},
@@ -67,7 +67,7 @@ var (
 
 	endpointWeightStaleMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
 		Name:           "grpc.lb.wrr.endpoint_weight_stale",
-		Description:    "EXPERIMENTAL. Number of endpointToWeight from each scheduler update whose latest weight is older than the expiration period.",
+		Description:    "EXPERIMENTAL. Number of endpoints from each scheduler update whose latest weight is older than the expiration period.",
 		Unit:           "endpoint",
 		Labels:         []string{"grpc.target"},
 		OptionalLabels: []string{"grpc.lb.locality"},
@@ -98,10 +98,9 @@ type bb struct{}
 
 func (bb) Build(cc balancer.ClientConn, bOpts balancer.BuildOptions) balancer.Balancer {
 	b := &wrrBalancer{
-		ClientConn:      cc,
-		target:          bOpts.Target.String(),
-		metricsRecorder: bOpts.MetricsRecorder,
-
+		ClientConn:       cc,
+		target:           bOpts.Target.String(),
+		metricsRecorder:  bOpts.MetricsRecorder,
 		addressWeights:   resolver.NewAddressMap(),
 		endpointToWeight: resolver.NewEndpointMap(),
 		scToWeight:       make(map[balancer.SubConn]*endpointWeight),
@@ -148,8 +147,9 @@ func (bb) Name() string {
 	return Name
 }
 
-// updateEndpointsLocked updates endpoint weight state based off new update, by starting
-// and clearing any endpoint weights needed.
+// updateEndpointsLocked updates endpoint weight state based off new update, by
+// starting and clearing any endpoint weights needed.
+//
 // Caller must hold b.mu.
 func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 	endpointSet := resolver.NewEndpointMap()
@@ -170,32 +170,20 @@ func (b *wrrBalancer) updateEndpointsLocked(endpoints []resolver.Endpoint) {
 				target:          b.target,
 				locality:        b.locality,
 			}
-
 			for _, addr := range endpoint.Addresses {
 				b.addressWeights.Set(addr, ew)
 			}
 			b.endpointToWeight.Set(endpoint, ew)
 		}
-
 		ew.updateConfig(b.cfg)
 	}
 
-	// Is there a way to test this doesn't leak or some sort of functionality here?
-
-	// Update 1 with two endpoints, Update 2 with two endpoints or three that partially overlap
-	// Test case of duplicate addresses to make sure doesn't crash, undefined behavior
-
-	// Test case of endpoints with multiple addresses, how many endpoints and what diff up in the air...
-
-	// child endpointSharding to ping ExitIdle...
-
-	// Delete old endpointToWeight...check this algorithm (through unit tests :))?
 	for _, endpoint := range b.endpointToWeight.Keys() {
 		if _, ok := endpointSet.Get(endpoint); ok {
 			// Existing endpoint also in new endpoint list; skip.
 			continue
 		}
-		b.endpointToWeight.Delete(endpoint) // This is ok to do in iteration on line 479 line writing to something you append to I guess...will find out in tests, yeah I think so evaluates before deletes...
+		b.endpointToWeight.Delete(endpoint)
 		for _, addr := range endpoint.Addresses {
 			b.addressWeights.Delete(addr)
 		}
@@ -223,11 +211,6 @@ type wrrBalancer struct {
 	scToWeight       map[balancer.SubConn]*endpointWeight
 }
 
-// Test case for duplicate - sane, but undefined so just make sure works or
-// something...make sure it doesn't crash...undefined behavior unless overlapped address
-// doesn't connect...
-// API guarantee is undefined for that case
-
 func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error {
 	b.logger.Infof("UpdateCCS: %v", ccs)
 	cfg, ok := ccs.BalancerConfig.(*lbConfig)
@@ -235,24 +218,19 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 		return fmt.Errorf("wrr: received nil or illegal BalancerConfig (type %T): %v", ccs.BalancerConfig, ccs.BalancerConfig)
 	}
 
-	// So here: (switch this to actual comment)
-	// call validation on endpoint sharding for the no addresses at all case, and call resolver error on endpoint sharding
-	// old data structures here and in endpoint sharding will work if already warmed up, if not will report TF to parent
-	if err := resolver.ValidateEndpoints(ccs.ResolverState.Endpoints); err != nil { // this symbol moved to resolver but I think this is ok...move once other PR is merged...
-		// Call resolver error on child - that will allow old system to continue working
-		// but generate a tf picker from child putting channel in TF if needed. Will return a picker
-		// inline.
+	// Validate the endpoints provided before updating any data in Weighted
+	// Round Robin to see if need this needs to provide an erroring TF picker to
+	// potentially trigger reresolution on the resolver. If an error does occur,
+	// call resolver error on the child. This will allow an old working system
+	// to continue working, but generate a TF picker if needed.
+	if err := resolver.ValidateEndpoints(ccs.ResolverState.Endpoints); err != nil {
 		b.child.ResolverError(err)
-		return err // or error + failed to validate endpoints? or err bad resolver state or something...
+		return err
 	}
 
-	// ignore empty endpointToWeight in endpoint sharding lol, it'll create data here that
-	// won't be used...and get cleared on next one so no leak, if multiple goes
-	// to same one anyway
-
-	// treat duplicate as undefined...my map structure will work as is...it'll just point to last one it hits...
-	// Could comment this ^^^
-
+	// Note: empty endpoints will simply get ignored by child and create data
+	// here that will be cleared on next update, and duplicate addresses across
+	// endpoints won't explicitly error but will have undefined behavior.
 	b.mu.Lock()
 	b.cfg = cfg
 	b.locality = weightedtarget.LocalityFromResolverState(ccs.ResolverState)
@@ -260,16 +238,16 @@ func (b *wrrBalancer) UpdateClientConnState(ccs balancer.ClientConnState) error 
 	b.mu.Unlock()
 
 	// Note: if this call ever starts erroring (as of writing this won't happen
-	// unless programmer error), will need to rethink this operation, as once
-	// it gets here it has already updated all the data structures.
+	// unless programmer error), will need to rethink this operation, as once it
+	// gets here it has already updated all the data structures tracking
+	// endpoints.
 	return b.child.UpdateClientConnState(balancer.ClientConnState{
 		BalancerConfig: gracefulSwitchPickFirst,
 		ResolverState:  ccs.ResolverState,
-	}) // this updates picker inline
+	}) // this causes child to update picker inline and will thus cause inline picker update
 }
 
-// Called from below from UpdateCCS ResolverError and UpdateSCS as it was, call out from this
-func (b *wrrBalancer) UpdateState(state balancer.State) { // called inline from child update, so will update sync, not a guarantee?
+func (b *wrrBalancer) UpdateState(state balancer.State) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -332,8 +310,8 @@ type pickerWeightedEndpoint struct {
 	weightedEndpoint *endpointWeight
 }
 
-func (b *wrrBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) { // more subtle - interacts with endpoint weight in certain weights, need to figure out
-	addr := addrs[0]
+func (b *wrrBalancer) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
+	addr := addrs[0] // The new pick first policy for DualStack will only ever create a SubConn with one address.
 	var sc balancer.SubConn
 
 	oldListener := opts.StateListener
@@ -376,13 +354,13 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 	b.mu.Lock()
 	ew := b.scToWeight[sc]
 	// updates from a no longer relevant SubConn update, nothing to do here but
-	// forward in state listener.
+	// forward state to state listener, which happens in wrapped listener.
 	if ew == nil {
 		b.mu.Unlock()
 		return
 	}
 	if state.ConnectivityState == connectivity.Shutdown {
-		delete(b.scToWeight, sc) // this will get shutdown when pick first shuts down
+		delete(b.scToWeight, sc)
 	}
 	b.mu.Unlock()
 
@@ -399,46 +377,16 @@ func (b *wrrBalancer) updateSubConnState(sc balancer.SubConn, state balancer.Sub
 		return
 	}
 
-	// *** All related to having child ping IDLE children
-	// sc connect call when child goes IDLE, like it does now, operations now
-	// need to be translated
-	// when connection is lost, pick first says it's idle, call it that says connect
-	// immediately
-	// when child updates it's picker idle, call connect...
-	// ExitIdle()...expose child balancer?
-	// Exit Idle propagate to all children (Doug doesn't like)
-	// expose child balancers to call ExitIdle to call on them
-	// or endpoint sharding should do this?
-	// option endpoint sharding - add knob to config
-	// add to what it's behavior should be
-	// endpoint sharding calls children exit idle if idle
-	// todo of making it configurable...all petiole and rr will probably use this
-	// so happens at a lower layer...
-	// breaking change if configurable
-	// ***
-
-	// updateConfig can clear this out/update period, how does this operation map...
-	// Should this go through updateListener?
-	// How to test this logic? New endpoint or
-	// I think same endpoint 1 2, 1 goes ready throw away 2, one goes out of ready and back to ready (or test this in pick first unit tests?)
-
-	// Or any state not READY - transition out of READY...?
-
-	// If the pickedSC (the one pick first uses for an endpoint) transitions out of READY,
-	// stop oob listener if needed and clear pickedSC so the next created sc for endpoint
-	// that goes READY will be chosen for endpoint.
+	// If the pickedSC (the one pick first uses for an endpoint) transitions out
+	// of READY, stop OOB listener if needed and clear pickedSC so the next
+	// created SubConn for the endpoint that goes READY will be chosen for
+	// endpoint as the active SubConn.
 	if state.ConnectivityState != connectivity.Ready && ew.pickedSC == sc {
-		// If same sc that created listener, stop OOB Listener if needed and clear it.
-
-		// The first SubConn that goes READY for an endpoint is what pick first will pick.
-		// Only once that SubConn goes not ready will pick first restart this cycle
-		// of creating SubConns and using the first READY one. The lower level
-		// endpoint sharding will ping the Pick First once this occurs to ExitIdle and connect.
-
-		// "When pick first says it's idle, ping it to get it out of idle, comment this will be configurable in future"
-
-		// implied by whatever goes READY even if 2, one goes READY, fails, then the next ready one for endpoint pick first will choose (combine these two into one comment...)
-
+		// The first SubConn that goes READY for an endpoint is what pick first
+		// will pick. Only once that SubConn goes not ready will pick first
+		// restart this cycle of creating SubConns and using the first READY
+		// one. The lower level endpoint sharding will ping the Pick First once
+		// this occurs to ExitIdle which will trigger a connection attempt.
 		if ew.stopORCAListener != nil {
 			ew.stopORCAListener()
 		}
@@ -465,8 +413,11 @@ func (b *wrrBalancer) Close() {
 	}
 }
 
-// ExitIdle is ignored; we always connect to all backends.
-func (b *wrrBalancer) ExitIdle() {}
+func (b *wrrBalancer) ExitIdle() {
+	if ei, ok := b.child.(balancer.ExitIdler); ok { // Should always be ok, as child is endpoint sharding.
+		ei.ExitIdle()
+	}
+}
 
 // picker is the WRR policy's picker.  It uses live-updating backend weights to
 // update the scheduler periodically and ensure picks are routed proportional
@@ -561,7 +512,11 @@ type endpointWeight struct {
 	// do not need a mutex.
 	connectivityState connectivity.State
 	stopORCAListener  func()
-	pickedSC          balancer.SubConn // the first sc for the endpoint that goes READY, cleared on that sc disconnecting (i.e. going out of READY). Represents what pick first will use as it's picked SubConn for a certain endpoint.
+	// The first SubConn for the endpoint that goes READY when endpoint has no
+	// READY SubConns yet, cleared on that sc disconnecting (i.e. going out of
+	// READY). Represents what pick first will use as it's picked SubConn for
+	// this endpoint.
+	pickedSC balancer.SubConn
 
 	// The following fields are accessed asynchronously and are protected by
 	// mu.  Note that mu may not be held when calling into the stopORCAListener
@@ -687,20 +642,3 @@ func (w *endpointWeight) weight(now time.Time, weightExpirationPeriod, blackoutP
 
 	return w.weightVal
 }
-
-// seems mostly right
-// Endpoints get emitted so should just work...
-// pick first needs to be new one...
-// pick_first.
-
-// This is done outside of from lower layer
-// trigger Exit Idle the moment something goes idle
-
-// and write cleanup/write tests...
-
-// For testing: what is different is it used to be on scs,
-// now it's on pf policies
-
-// Done outside of cleaning up UpdateClientConnState and cleaning up TODO's in updateSubConnState
-// But need to write tests and ping exit idle at a lower layer (maybe separate PR for faster iteration)
-// and move endpoint sharding helper to resolver...

@@ -148,7 +148,6 @@ func (s) TestWRR_Metrics_Scheduler_RR_Fallback(t *testing.T) {
 			WeightExpirationPeriod: iserviceconfig.Duration(3 * time.Minute),
 		},
 		weightedPickers: []pickerWeightedEndpoint{{weightedEndpoint: ew}},
-		// subConns:        []*endpointWeight{wsc}, // I switched this to picker weighted endpoint...
 		metricsRecorder: tmr,
 	}
 	// There is only one SubConn, so no matter if the SubConn has a weight or

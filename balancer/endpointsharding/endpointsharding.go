@@ -81,8 +81,8 @@ type endpointSharding struct {
 // for endpoints that are no longer present. It also updates all the children,
 // and sends a single synchronous update of the childrens' aggregated state at
 // the end of the UpdateClientConnState operation. If any endpoint has no
-// addresses, returns error without forwarding any updates. Otherwise returns
-// first error found from a child, but fully processes the new update.
+// addresses it will ignore that endpoint. Otherwise, returns first error found
+// from a child, but fully processes the new update.
 func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState) error {
 	es.childMu.Lock()
 	defer es.childMu.Unlock()
@@ -99,6 +99,9 @@ func (es *endpointSharding) UpdateClientConnState(state balancer.ClientConnState
 
 	// Update/Create new children.
 	for _, endpoint := range state.ResolverState.Endpoints {
+		if len(endpoint.Addresses) == 0 {
+			continue
+		}
 		if _, ok := newChildren.Get(endpoint); ok {
 			// Endpoint child was already created, continue to avoid duplicate
 			// update.
