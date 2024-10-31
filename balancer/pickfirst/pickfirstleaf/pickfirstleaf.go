@@ -64,6 +64,7 @@ const logPrefix = "[pick-first-leaf-lb %p] "
 type pickfirstBuilder struct{}
 
 func (pickfirstBuilder) Build(cc balancer.ClientConn, _ balancer.BuildOptions) balancer.Balancer {
+	print("building new pick first policy")
 	b := &pickfirstBalancer{
 		cc:          cc,
 		addressList: addressList{},
@@ -205,7 +206,7 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 
 		// "Flatten the list by concatenating the ordered list of addresses for
 		// each of the endpoints, in order." - A61
-		for _, endpoint := range endpoints {
+		for _, endpoint := range endpoints { // make sure it appears in new Addrs here...
 			// "In the flattened list, interleave addresses from the two address
 			// families, as per RFC-8305 section 4." - A61
 			// TODO: support the above language.
@@ -224,6 +225,7 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 			internal.RandShuffle(len(endpoints), func(i, j int) { endpoints[i], endpoints[j] = endpoints[j], endpoints[i] })
 		}
 	}
+	// See what it ends up being here...
 
 	// If an address appears in multiple endpoints or in the same endpoint
 	// multiple times, we keep it only once. We will create only one SubConn
@@ -232,8 +234,12 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 	// SubConn multiple times in the same pass. We don't want this.
 	newAddrs = deDupAddresses(newAddrs)
 
+	print("new addrs after deduping: ", newAddrs)
+
 	// Since we have a new set of addresses, we are again at first pass.
 	b.firstPass = true
+
+	// Figure out what happens here for the next ones...why does it not go down addrs (also it should shuffle but only one endpoint received since child of endpoint sharding)
 
 	// If the previous ready SubConn exists in new address list,
 	// keep this connection and don't create new SubConns.
@@ -244,7 +250,11 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 		return nil
 	}
 
-	b.reconcileSubConnsLocked(newAddrs)
+	// If hits this codeblock uses that one and doesn't create new SubConns...
+
+	// shut down = close = addresses no longer in list here...
+	b.reconcileSubConnsLocked(newAddrs) // reconcileSCsLocked? this is just updating the data structures for the sc data structures for persisting scs...
+
 	// If it's the first resolver update or the balancer was already READY
 	// (but the new address list does not contain the ready SubConn) or
 	// CONNECTING, enter CONNECTING.
@@ -257,15 +267,22 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 		b.state = connectivity.Connecting
 		b.cc.UpdateState(balancer.State{
 			ConnectivityState: connectivity.Connecting,
-			Picker:            &picker{err: balancer.ErrNoSubConnAvailable},
+			Picker:            &picker{err: balancer.ErrNoSubConnAvailable}, // triggers queueing I think...
 		})
-		b.requestConnectionLocked()
+		b.requestConnectionLocked() // This requests a connection and triggers first one no all of them...
 	} else if b.state == connectivity.TransientFailure {
 		// If we're in TRANSIENT_FAILURE, we stay in TRANSIENT_FAILURE until
 		// we're READY. See A62.
 		b.requestConnectionLocked()
 	}
 	return nil
+
+	// This doesn't go through all the addresses...and try to connect in a list
+	// (or is that part of happy eyeballs PR)
+
+	// If gets the correct addresses in endpoint should just work...
+
+	// Triage manual resolver component to see if correctly forwards endpoints or not...
 }
 
 // UpdateSubConnState is unused as a StateListener is always registered when
@@ -347,7 +364,7 @@ func (b *pickfirstBalancer) shutdownRemainingLocked(selected *scData) {
 		if sd.subConn != selected.subConn {
 			sd.subConn.Shutdown()
 		}
-	}
+	} // So this shuts down everything, it shuts down and throws away I guess? Once it goes shut down it ends...
 	b.subConns = resolver.NewAddressMap()
 	b.subConns.Set(selected.addr, selected)
 }
@@ -356,7 +373,7 @@ func (b *pickfirstBalancer) shutdownRemainingLocked(selected *scData) {
 // the current address. If no subchannel exists, one is created. If the current
 // subchannel is in TransientFailure, a connection to the next address is
 // attempted until a subchannel is found.
-func (b *pickfirstBalancer) requestConnectionLocked() {
+func (b *pickfirstBalancer) requestConnectionLocked() { // Wait this does whole list? until a subchannel is found...
 	if !b.addressList.isValid() {
 		return
 	}
@@ -446,7 +463,7 @@ func (b *pickfirstBalancer) updateSubConnState(sd *scData, newState balancer.Sub
 	if (b.state == connectivity.Ready && newState.ConnectivityState != connectivity.Ready) || (oldState == connectivity.Connecting && newState.ConnectivityState == connectivity.Idle) {
 		// Once a transport fails, the balancer enters IDLE and starts from
 		// the first address when the picker is used.
-		b.shutdownRemainingLocked(sd)
+		b.shutdownRemainingLocked(sd) // starts brand new ones...
 		b.state = connectivity.Idle
 		b.addressList.reset()
 		b.cc.UpdateState(balancer.State{
@@ -479,7 +496,7 @@ func (b *pickfirstBalancer) updateSubConnState(sd *scData, newState balancer.Sub
 			if curAddr := b.addressList.currentAddress(); !equalAddressIgnoringBalAttributes(&curAddr, &sd.addr) {
 				return
 			}
-			if b.addressList.increment() {
+			if b.addressList.increment() { // goes to the next one if this one FAILS.....
 				b.requestConnectionLocked()
 				return
 			}
