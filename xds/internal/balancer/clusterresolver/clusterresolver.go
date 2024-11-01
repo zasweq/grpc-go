@@ -249,10 +249,12 @@ func (b *clusterResolverBalancer) updateChildConfig() {
 	}
 
 	endpoints := make([]resolver.Endpoint, len(addrs))
-	for i, a := range addrs {
-		endpoints[i].Attributes = a.BalancerAttributes
+	for i, a := range addrs { // This is already present, should it just work
+		endpoints[i].Attributes = a.BalancerAttributes // so looks like gets from balancer attributes if I were to write my own but I don't think I need to write my own.
 		endpoints[i].Addresses = []resolver.Address{a}
-		endpoints[i].Addresses[0].BalancerAttributes = nil
+		// for this change to work in the future, load reports would need taken
+		// from endpoint attributes
+		// endpoints[i].Addresses[0].BalancerAttributes = nil
 	}
 	if err := b.child.UpdateClientConnState(balancer.ClientConnState{
 		ResolverState: resolver.State{
