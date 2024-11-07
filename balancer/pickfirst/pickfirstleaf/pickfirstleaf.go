@@ -29,17 +29,44 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/pickfirst/internal"
 	"google.golang.org/grpc/connectivity"
+	estats "google.golang.org/grpc/experimental/stats"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal/envconfig"
 	internalgrpclog "google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/internal/pretty"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
+)
+
+var (
+	pickFirstDisconnectionsMetric = estats.RegisterInt64Count(estats.MetricDescriptor{
+		Name:        "grpc.lb.pick_first.disconnections",
+		Description: "Number of times the selected subchannel becomes disconnected.",
+		Unit:        "disconnection",
+		Labels:      []string{"grpc.target"},
+		Default:     false,
+	})
+	pickFirstConnectionAttemptsSucceeded = estats.RegisterInt64Count(estats.MetricDescriptor{
+		Name:        "grpc.lb.pick_first.connection_attempts_succeeded",
+		Description: "Number of successful connection attempts.",
+		Unit:        "attempt",
+		Labels:      []string{"grpc.target"},
+		Default:     false,
+	})
+	pickFirstConnectionAttemptsFailed = estats.RegisterInt64Count(estats.MetricDescriptor{
+		Name:        "grpc.lb.pick_first.connection_attempts_failed",
+		Description: "Number of failed connection attempts.",
+		Unit:        "attempt",
+		Labels:      []string{"grpc.target"},
+		Default:     false,
+	})
 )
 
 func init() {
@@ -58,18 +85,37 @@ var (
 	Name = "pick_first_leaf"
 )
 
-// TODO: change to pick-first when this becomes the default pick_first policy.
-const logPrefix = "[pick-first-leaf-lb %p] "
+const (
+	// TODO: change to pick-first when this becomes the default pick_first policy.
+	logPrefix = "[pick-first-leaf-lb %p] "
+	// connectionDelayInterval is the time to wait for during the happy eyeballs
+	// pass before starting the next connection attempt.
+	connectionDelayInterval = 250 * time.Millisecond
+)
+
+type ipAddrFamily int
+
+const (
+	// ipAddrFamilyUnknown represents strings that can't be parsed as an IP
+	// address.
+	ipAddrFamilyUnknown ipAddrFamily = iota
+	ipAddrFamilyV4
+	ipAddrFamilyV6
+)
 
 type pickfirstBuilder struct{}
 
-func (pickfirstBuilder) Build(cc balancer.ClientConn, _ balancer.BuildOptions) balancer.Balancer {
+func (pickfirstBuilder) Build(cc balancer.ClientConn, bo balancer.BuildOptions) balancer.Balancer {
 	b := &pickfirstBalancer{
-		cc:          cc,
-		addressList: addressList{},
-		subConns:    resolver.NewAddressMap(),
-		state:       connectivity.Connecting,
-		mu:          sync.Mutex{},
+		cc:              cc,
+		target:          bo.Target.String(),
+		metricsRecorder: bo.MetricsRecorder,
+
+		addressList:           addressList{},
+		subConns:              resolver.NewAddressMap(),
+		state:                 connectivity.Connecting,
+		mu:                    sync.Mutex{},
+		cancelConnectionTimer: func() {},
 	}
 	b.logger = internalgrpclog.NewPrefixLogger(logger, fmt.Sprintf(logPrefix, b))
 	return b
@@ -104,8 +150,9 @@ type scData struct {
 	subConn balancer.SubConn
 	addr    resolver.Address
 
-	state   connectivity.State
-	lastErr error
+	state            connectivity.State
+	lastErr          error
+	connectionFailed bool
 }
 
 func (b *pickfirstBalancer) newSCData(addr resolver.Address) (*scData, error) {
@@ -128,8 +175,10 @@ func (b *pickfirstBalancer) newSCData(addr resolver.Address) (*scData, error) {
 type pickfirstBalancer struct {
 	// The following fields are initialized at build time and read-only after
 	// that and therefore do not need to be guarded by a mutex.
-	logger *internalgrpclog.PrefixLogger
-	cc     balancer.ClientConn
+	logger          *internalgrpclog.PrefixLogger
+	cc              balancer.ClientConn
+	target          string
+	metricsRecorder estats.MetricsRecorder
 
 	// The mutex is used to ensure synchronization of updates triggered
 	// from the idle picker and the already serialized resolver,
@@ -137,10 +186,11 @@ type pickfirstBalancer struct {
 	mu    sync.Mutex
 	state connectivity.State
 	// scData for active subonns mapped by address.
-	subConns    *resolver.AddressMap
-	addressList addressList
-	firstPass   bool
-	numTF       int
+	subConns              *resolver.AddressMap
+	addressList           addressList
+	firstPass             bool
+	numTF                 int
+	cancelConnectionTimer func()
 }
 
 // ResolverError is called by the ClientConn when the name resolver produces
@@ -175,6 +225,7 @@ func (b *pickfirstBalancer) resolverErrorLocked(err error) {
 func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.cancelConnectionTimer()
 	if len(state.ResolverState.Addresses) == 0 && len(state.ResolverState.Endpoints) == 0 {
 		// Cleanup state pertaining to the previous resolver state.
 		// Treat an empty address list like an error by calling b.ResolverError.
@@ -206,9 +257,6 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 		// "Flatten the list by concatenating the ordered list of addresses for
 		// each of the endpoints, in order." - A61
 		for _, endpoint := range endpoints {
-			// "In the flattened list, interleave addresses from the two address
-			// families, as per RFC-8305 section 4." - A61
-			// TODO: support the above language.
 			newAddrs = append(newAddrs, endpoint.Addresses...)
 		}
 	} else {
@@ -231,9 +279,7 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 	// Not de-duplicating would result in attempting to connect to the same
 	// SubConn multiple times in the same pass. We don't want this.
 	newAddrs = deDupAddresses(newAddrs)
-
-	// Since we have a new set of addresses, we are again at first pass.
-	b.firstPass = true
+	newAddrs = interleaveAddresses(newAddrs)
 
 	// If the previous ready SubConn exists in new address list,
 	// keep this connection and don't create new SubConns.
@@ -259,11 +305,11 @@ func (b *pickfirstBalancer) UpdateClientConnState(state balancer.ClientConnState
 			ConnectivityState: connectivity.Connecting,
 			Picker:            &picker{err: balancer.ErrNoSubConnAvailable},
 		})
-		b.requestConnectionLocked()
+		b.startFirstPassLocked()
 	} else if b.state == connectivity.TransientFailure {
 		// If we're in TRANSIENT_FAILURE, we stay in TRANSIENT_FAILURE until
 		// we're READY. See A62.
-		b.requestConnectionLocked()
+		b.startFirstPassLocked()
 	}
 	return nil
 }
@@ -278,6 +324,7 @@ func (b *pickfirstBalancer) Close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.closeSubConnsLocked()
+	b.cancelConnectionTimer()
 	b.state = connectivity.Shutdown
 }
 
@@ -287,10 +334,19 @@ func (b *pickfirstBalancer) Close() {
 func (b *pickfirstBalancer) ExitIdle() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.state == connectivity.Idle && b.addressList.currentAddress() == b.addressList.first() {
-		b.firstPass = true
-		b.requestConnectionLocked()
+	if b.state == connectivity.Idle {
+		b.startFirstPassLocked()
 	}
+}
+
+func (b *pickfirstBalancer) startFirstPassLocked() {
+	b.firstPass = true
+	b.numTF = 0
+	// Reset the connection attempt record for existing SubConns.
+	for _, sd := range b.subConns.Values() {
+		sd.(*scData).connectionFailed = false
+	}
+	b.requestConnectionLocked()
 }
 
 func (b *pickfirstBalancer) closeSubConnsLocked() {
@@ -312,6 +368,67 @@ func deDupAddresses(addrs []resolver.Address) []resolver.Address {
 		retAddrs = append(retAddrs, addr)
 	}
 	return retAddrs
+}
+
+// interleaveAddresses interleaves addresses of both families (IPv4 and IPv6)
+// as per RFC-8305 section 4.
+// Whichever address family is first in the list is followed by an address of
+// the other address family; that is, if the first address in the list is IPv6,
+// then the first IPv4 address should be moved up in the list to be second in
+// the list. It doesn't support configuring "First Address Family Count", i.e.
+// there will always be a single member of the first address family at the
+// beginning of the interleaved list.
+// Addresses that are neither IPv4 nor IPv6 are treated as part of a third
+// "unknown" family for interleaving.
+// See: https://datatracker.ietf.org/doc/html/rfc8305#autoid-6
+func interleaveAddresses(addrs []resolver.Address) []resolver.Address {
+	familyAddrsMap := map[ipAddrFamily][]resolver.Address{}
+	interleavingOrder := []ipAddrFamily{}
+	for _, addr := range addrs {
+		family := addressFamily(addr.Addr)
+		if _, found := familyAddrsMap[family]; !found {
+			interleavingOrder = append(interleavingOrder, family)
+		}
+		familyAddrsMap[family] = append(familyAddrsMap[family], addr)
+	}
+
+	interleavedAddrs := make([]resolver.Address, 0, len(addrs))
+
+	for curFamilyIdx := 0; len(interleavedAddrs) < len(addrs); curFamilyIdx = (curFamilyIdx + 1) % len(interleavingOrder) {
+		// Some IP types may have fewer addresses than others, so we look for
+		// the next type that has a remaining member to add to the interleaved
+		// list.
+		family := interleavingOrder[curFamilyIdx]
+		remainingMembers := familyAddrsMap[family]
+		if len(remainingMembers) > 0 {
+			interleavedAddrs = append(interleavedAddrs, remainingMembers[0])
+			familyAddrsMap[family] = remainingMembers[1:]
+		}
+	}
+
+	return interleavedAddrs
+}
+
+// addressFamily returns the ipAddrFamily after parsing the address string.
+// If the address isn't of the format "ip-address:port", it returns
+// ipAddrFamilyUnknown. The address may be valid even if it's not an IP when
+// using a resolver like passthrough where the address may be a hostname in
+// some format that the dialer can resolve.
+func addressFamily(address string) ipAddrFamily {
+	// Parse the IP after removing the port.
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return ipAddrFamilyUnknown
+	}
+	ip := net.ParseIP(host)
+	switch {
+	case ip.To4() != nil:
+		return ipAddrFamilyV4
+	case ip.To16() != nil:
+		return ipAddrFamilyV6
+	default:
+		return ipAddrFamilyUnknown
+	}
 }
 
 // reconcileSubConnsLocked updates the active subchannels based on a new address
@@ -342,6 +459,7 @@ func (b *pickfirstBalancer) reconcileSubConnsLocked(newAddrs []resolver.Address)
 // shutdownRemainingLocked shuts down remaining subConns. Called when a subConn
 // becomes ready, which means that all other subConn must be shutdown.
 func (b *pickfirstBalancer) shutdownRemainingLocked(selected *scData) {
+	b.cancelConnectionTimer()
 	for _, v := range b.subConns.Values() {
 		sd := v.(*scData)
 		if sd.subConn != selected.subConn {
@@ -385,30 +503,73 @@ func (b *pickfirstBalancer) requestConnectionLocked() {
 		switch scd.state {
 		case connectivity.Idle:
 			scd.subConn.Connect()
+			b.scheduleNextConnectionLocked()
+			return
 		case connectivity.TransientFailure:
-			// Try the next address.
+			// The SubConn is being re-used and failed during a previous pass
+			// over the addressList. It has not completed backoff yet.
+			// Mark it as having failed and try the next address.
+			scd.connectionFailed = true
 			lastErr = scd.lastErr
 			continue
 		case connectivity.Ready:
 			// Should never happen.
 			b.logger.Errorf("Requesting a connection even though we have a READY SubConn")
+			return
 		case connectivity.Shutdown:
 			// Should never happen.
 			b.logger.Errorf("SubConn with state SHUTDOWN present in SubConns map")
+			return
 		case connectivity.Connecting:
-			// Wait for the SubConn to report success or failure.
+			// Wait for the connection attempt to complete or the timer to fire
+			// before attempting the next address.
+			b.scheduleNextConnectionLocked()
+			return
 		}
+	}
+
+	// All the remaining addresses in the list are in TRANSIENT_FAILURE, end the
+	// first pass if possible.
+	b.endFirstPassIfPossibleLocked(lastErr)
+}
+
+func (b *pickfirstBalancer) scheduleNextConnectionLocked() {
+	b.cancelConnectionTimer()
+	if !b.addressList.hasNext() {
 		return
 	}
-	// All the remaining addresses in the list are in TRANSIENT_FAILURE, end the
-	// first pass.
-	b.endFirstPassLocked(lastErr)
+	curAddr := b.addressList.currentAddress()
+	cancelled := false // Access to this is protected by the balancer's mutex.
+	closeFn := internal.TimeAfterFunc(connectionDelayInterval, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		// If the scheduled task is cancelled while acquiring the mutex, return.
+		if cancelled {
+			return
+		}
+		if b.logger.V(2) {
+			b.logger.Infof("Happy Eyeballs timer expired while waiting for connection to %q.", curAddr.Addr)
+		}
+		if b.addressList.increment() {
+			b.requestConnectionLocked()
+		}
+	})
+	// Access to the cancellation callback held by the balancer is guarded by
+	// the balancer's mutex, so it's safe to set the boolean from the callback.
+	b.cancelConnectionTimer = sync.OnceFunc(func() {
+		cancelled = true
+		closeFn()
+	})
 }
 
 func (b *pickfirstBalancer) updateSubConnState(sd *scData, newState balancer.SubConnState) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	oldState := sd.state
+	// Record a connection attempt when exiting CONNECTING.
+	if newState.ConnectivityState == connectivity.TransientFailure {
+		sd.connectionFailed = true
+	}
 	sd.state = newState.ConnectivityState
 	// Previously relevant SubConns can still callback with state updates.
 	// To prevent pickers from returning these obsolete SubConns, this logic
@@ -421,7 +582,12 @@ func (b *pickfirstBalancer) updateSubConnState(sd *scData, newState balancer.Sub
 		return
 	}
 
+	if oldState == connectivity.Connecting && newState.ConnectivityState == connectivity.TransientFailure {
+		pickFirstConnectionAttemptsFailed.Record(b.metricsRecorder, 1, b.target)
+	}
+
 	if newState.ConnectivityState == connectivity.Ready {
+		pickFirstConnectionAttemptsSucceeded.Record(b.metricsRecorder, 1, b.target)
 		b.shutdownRemainingLocked(sd)
 		if !b.addressList.seekTo(sd.addr) {
 			// This should not fail as we should have only one SubConn after
@@ -448,12 +614,17 @@ func (b *pickfirstBalancer) updateSubConnState(sd *scData, newState balancer.Sub
 		// the first address when the picker is used.
 		b.shutdownRemainingLocked(sd)
 		b.state = connectivity.Idle
+		pickFirstDisconnectionsMetric.Record(b.metricsRecorder, 1, b.target)
 		b.addressList.reset()
 		b.cc.UpdateState(balancer.State{
 			ConnectivityState: connectivity.Idle,
 			Picker:            &idlePicker{exitIdle: sync.OnceFunc(b.ExitIdle)},
 		})
 		return
+	}
+
+	if oldState == connectivity.Ready && newState.ConnectivityState == connectivity.Idle {
+		pickFirstDisconnectionsMetric.Record(b.metricsRecorder, 1, b.target)
 	}
 
 	if b.firstPass {
@@ -474,17 +645,20 @@ func (b *pickfirstBalancer) updateSubConnState(sd *scData, newState balancer.Sub
 			sd.lastErr = newState.ConnectionError
 			// Since we're re-using common SubConns while handling resolver
 			// updates, we could receive an out of turn TRANSIENT_FAILURE from
-			// a pass over the previous address list. We ignore such updates.
+			// a pass over the previous address list. Happy Eyeballs will also
+			// cause out of order updates to arrive.
 
-			if curAddr := b.addressList.currentAddress(); !equalAddressIgnoringBalAttributes(&curAddr, &sd.addr) {
-				return
+			if curAddr := b.addressList.currentAddress(); equalAddressIgnoringBalAttributes(&curAddr, &sd.addr) {
+				b.cancelConnectionTimer()
+				if b.addressList.increment() {
+					b.requestConnectionLocked()
+					return
+				}
 			}
-			if b.addressList.increment() {
-				b.requestConnectionLocked()
-				return
-			}
-			// End of the first pass.
-			b.endFirstPassLocked(newState.ConnectionError)
+
+			// End the first pass if we've seen a TRANSIENT_FAILURE from all
+			// SubConns once.
+			b.endFirstPassIfPossibleLocked(newState.ConnectionError)
 		}
 		return
 	}
@@ -509,9 +683,17 @@ func (b *pickfirstBalancer) updateSubConnState(sd *scData, newState balancer.Sub
 	}
 }
 
-func (b *pickfirstBalancer) endFirstPassLocked(lastErr error) {
+func (b *pickfirstBalancer) endFirstPassIfPossibleLocked(lastErr error) {
+	if b.addressList.isValid() || b.subConns.Len() < b.addressList.size() {
+		return
+	}
+	for _, v := range b.subConns.Values() {
+		sd := v.(*scData)
+		if !sd.connectionFailed {
+			return
+		}
+	}
 	b.firstPass = false
-	b.numTF = 0
 	b.state = connectivity.TransientFailure
 
 	b.cc.UpdateState(balancer.State{
@@ -583,15 +765,6 @@ func (al *addressList) currentAddress() resolver.Address {
 	return al.addresses[al.idx]
 }
 
-// first returns the first address in the list. If the list is empty, it returns
-// an empty address instead.
-func (al *addressList) first() resolver.Address {
-	if len(al.addresses) == 0 {
-		return resolver.Address{}
-	}
-	return al.addresses[0]
-}
-
 func (al *addressList) reset() {
 	al.idx = 0
 }
@@ -612,6 +785,16 @@ func (al *addressList) seekTo(needle resolver.Address) bool {
 		return true
 	}
 	return false
+}
+
+// hasNext returns whether incrementing the addressList will result in moving
+// past the end of the list. If the list has already moved past the end, it
+// returns false.
+func (al *addressList) hasNext() bool {
+	if !al.isValid() {
+		return false
+	}
+	return al.idx+1 < len(al.addresses)
 }
 
 // equalAddressIgnoringBalAttributes returns true is a and b are considered
