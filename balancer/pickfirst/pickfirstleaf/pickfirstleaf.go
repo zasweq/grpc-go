@@ -623,10 +623,6 @@ func (b *pickfirstBalancer) updateSubConnState(sd *scData, newState balancer.Sub
 		return
 	}
 
-	if oldState == connectivity.Ready && newState.ConnectivityState == connectivity.Idle {
-		pickFirstDisconnectionsMetric.Record(b.metricsRecorder, 1, b.target)
-	}
-
 	if b.firstPass {
 		switch newState.ConnectivityState {
 		case connectivity.Connecting:
