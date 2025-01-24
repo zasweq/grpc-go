@@ -81,7 +81,7 @@ const (
 	ResourceWatchStateStarted WatchState = iota
 	// ResourceWatchStateRequested is the state when a request has been sent for
 	// the resource being watched.
-	ResourceWatchStateRequested
+	ResourceWatchStateRequested // The resource has been requested from the xDS server but has not yet been received.
 	// ResourceWatchStateReceived is the state when a response has been received
 	// for the resource being watched.
 	ResourceWatchStateReceived
@@ -89,6 +89,34 @@ const (
 	// with the resource expired because no response was received.
 	ResourceWatchStateTimeout
 )
+
+// I don't think this maps 1:1 with the cache_state attribute
+
+// The resource has been requested from the xDS server but has not yet been received. - watch state requested the rest don't map...
+
+// Need to add business logic to derive and also store it in an area where
+// once it's emitted, it has access to data
+
+// Esp if emits synchronously...
+// Number of xDS resources in a cache...
+
+// It's the number of resources in each cache state.
+
+// Every resource also has an authority and resource type associated with it.
+// We're just tallying up a count across a few different dimensions.
+// Each resource can have an authority, resource type, and cache state...
+
+// Iterate over the entries and count the number with each authority, resource
+// type, and cache state.
+
+// So I think the recording point since sync is *when I add to cache*, attach
+// those attributes including the enum that represents cache state....
+
+// so the place I add to cache I need to add business logic/persisted enum that
+// allows me to record this.
+// Yeah just like RLS's gauge when I add to cache I record on gauge
+// cacheSizeMetric.Record(dc.metricsRecorder, dc.currentSize, dc.grpcTarget, dc.rlsServerTarget, dc.uuid)
+// When I record on the gauge just attach these different dimensions and thing be exported to will take care of it...
 
 // ResourceWatchState is the state corresponding to a resource being watched.
 type ResourceWatchState struct {
@@ -132,7 +160,38 @@ type StreamImpl struct {
 	resourceTypeState map[xdsresource.Type]*resourceTypeState // Map of resource types to their state.
 	fc                *adsFlowControl                         // Flow control for ADS stream.
 	firstRequest      bool                                    // False after the first request is sent out.
-}
+} // "working ADS stream with the server" - does this get determined here? This is all the logic wrt retries and stuff
+// it's a bit? Where is this bit determined and what layer of transport? One per st?
+
+// A counter of xDS servers going from healthy to unhealthy.
+// same as the gauge bit except this is a counter, is this also emitted from here?
+
+// A counter of resources received that were considered valid.
+
+// A counter of resources received that were considered invalid.
+
+// received resources that were valid/invalid, and also connected to a server or not
+
+// and then how many resources are in the cache (this might be in the cache component)
+// the cache for target authority cache state and resource type - so every time you
+// put xDS resource into cache, you update this
+
+// Figure out what components emit, and whatever components emit plumb the attributes there
+// (or could emit from a higher layer)
+
+// find the map[target]->xDS Client
+// The "hook" point of xDS Client impl (per target passes it to xDS Client impl)
+// and then passes it around to all the components inside it that uses it
+
+// I feel like the first 4 metrics all can emit out of this thing the ADS Stream...
+
+// We have sync gauges, could plumb async, but every time I get a resource
+// emit a new thing for that gauge/attribute, which is fine because that's when it needs to update
+
+// this thing receives resource right so I think I can emit from here...
+
+// I already identified all 5 attributes outside of the place it emits,
+// once I figure out where to emit I can plumb the attributes around.
 
 // StreamOpts contains the options for creating a new ADS Stream.
 type StreamOpts struct {

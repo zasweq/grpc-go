@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/experimental/stats"
 	"net"
 	"net/url"
 	"strings"
@@ -175,6 +176,8 @@ type BuildOptions struct {
 	// Authority is the effective authority of the clientconn for which the
 	// resolver is built.
 	Authority string
+	// MetricsRecorder is the metrics recorder to do recording.
+	MetricsRecorder stats.MetricsRecorder // populate this with the channels metrics recoder list...
 }
 
 // An Endpoint is one network endpoint, or server, which may have multiple

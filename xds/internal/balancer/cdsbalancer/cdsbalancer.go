@@ -270,7 +270,7 @@ func (b *cdsBalancer) createAndAddWatcherForCluster(name string) {
 	}
 	ws := &watcherState{
 		watcher:     w,
-		cancelWatch: xdsresource.WatchCluster(b.xdsClient, name, w),
+		cancelWatch: xdsresource.WatchCluster(b.xdsClient, name, w), // what triggers the watch on the cluster is passing in the xDS Client here...
 	}
 	b.watchers[name] = ws
 }

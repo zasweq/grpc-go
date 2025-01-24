@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/grpc/experimental/stats"
 	"google.golang.org/grpc/internal/cache"
 	"google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/internal/grpcsync"
@@ -44,9 +45,16 @@ var ErrClientClosed = errors.New("xds: the xDS client is closed")
 type clientImpl struct {
 	// The following fields are initialized at creation time and are read-only
 	// after that, and therefore can be accessed without a mutex.
-	done               *grpcsync.Event              // Fired when the client is closed.
-	topLevelAuthority  *authority                   // The top-level authority, used only for old-style names without an authority.
-	authorities        map[string]*authority        // Map from authority names in bootstrap to authority struct.
+	done              *grpcsync.Event       // Fired when the client is closed.
+	topLevelAuthority *authority            // The top-level authority, used only for old-style names without an authority.
+	authorities       map[string]*authority // Map from authority names in bootstrap to authority struct.
+	// the string key is grpc.xds.authority ^^^ attribute 3 yeah authority name
+
+	// value will be #old for old-style non-xdstp resource names...is this
+	// already implemented and an invariant somewhere...ask?
+
+	// attribute 2 - grpc.xds.server, target URI of xDS Server, I don't know how that relates to map above...
+
 	config             *bootstrap.Config            // Complete bootstrap configuration.
 	watchExpiryTimeout time.Duration                // Expiry timeout for ADS watch.
 	backoff            func(int) time.Duration      // Backoff for ADS and LRS stream failures.
@@ -55,6 +63,10 @@ type clientImpl struct {
 	serializer         *grpcsync.CallbackSerializer // Serializer for invoking resource watcher callbacks.
 	serializerClose    func()                       // Function to close the serializer.
 	logger             *grpclog.PrefixLogger        // Logger for this client.
+	metricsRecorder    stats.MetricsRecorder        // Metrics recorder, just reads it, OTel handles sync calls?
+	target             string                       // Attribute 1
+
+	// and fifth attribute is resource type, where is that found?
 
 	// The clientImpl owns a bunch of channels to individual xDS servers
 	// specified in the bootstrap configuration. Authorities acquire references
@@ -123,6 +135,7 @@ func (cs *channelState) adsResourceUpdate(typ xdsresource.Type, updates map[stri
 		}
 	}
 	for authority := range cs.interestedAuthorities {
+		// Loops over the authorities...
 		authority.adsResourceUpdate(cs.serverConfig, typ, updates, md, done)
 	}
 }

@@ -37,12 +37,14 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/encoding/proto"
+	estats "google.golang.org/grpc/experimental/stats"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/internal/binarylog"
 	"google.golang.org/grpc/internal/channelz"
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/grpcutil"
+	istats "google.golang.org/grpc/internal/stats"
 	"google.golang.org/grpc/internal/transport"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/mem"
@@ -82,6 +84,10 @@ func init() {
 	internal.BinaryLogger = binaryLogger
 	internal.JoinServerOptions = newJoinServerOption
 	internal.BufferPool = bufferPool
+	// Only called once so I think you can just convert here...
+	internal.MetricsRecorderForServer = func(srv *Server) estats.MetricsRecorder {
+		return istats.NewMetricsRecorderList(srv.opts.statsHandlers)
+	}
 }
 
 var statusOK = status.New(codes.OK, "")
@@ -120,6 +126,7 @@ type serviceInfo struct {
 // Server is a gRPC server to serve RPC requests.
 type Server struct {
 	opts serverOptions
+	// metricsRecorder estats.MetricsRecorder
 
 	mu  sync.Mutex // guards following
 	lis map[net.Listener]bool
@@ -146,17 +153,24 @@ type Server struct {
 }
 
 type serverOptions struct {
-	creds                 credentials.TransportCredentials
-	codec                 baseCodec
-	cp                    Compressor
-	dc                    Decompressor
-	unaryInt              UnaryServerInterceptor
-	streamInt             StreamServerInterceptor
-	chainUnaryInts        []UnaryServerInterceptor
-	chainStreamInts       []StreamServerInterceptor
-	binaryLogger          binarylog.Logger
-	inTapHandle           tap.ServerInHandle
-	statsHandlers         []stats.Handler
+	creds           credentials.TransportCredentials
+	codec           baseCodec
+	cp              Compressor
+	dc              Decompressor
+	unaryInt        UnaryServerInterceptor
+	streamInt       StreamServerInterceptor
+	chainUnaryInts  []UnaryServerInterceptor
+	chainStreamInts []StreamServerInterceptor
+	binaryLogger    binarylog.Logger
+	inTapHandle     tap.ServerInHandle
+	statsHandlers   []stats.Handler // persists stats handlers, needs to persist stats.MetricsRecorder...
+	// persist it here or in server...
+	// then do trick to expose (can just read out of here or top level), read it in xDS Server, pass it (how to downcast to internal/)
+	// Then Unit tests should work...
+
+	// cc.metricsRecorderList = stats.NewMetricsRecorderList(cc.dopts.copts.StatsHandlers) (so maybe persist in top level server, not really an option)...after processing Dial Options...
+	// metricsRecorder estats.MetricsRecorder // experimental...I guess this is just internal
+
 	maxConcurrentStreams  uint32
 	maxReceiveMessageSize int
 	maxSendMessageSize    int
@@ -651,25 +665,33 @@ func (s *Server) initServerWorkers() {
 	}
 }
 
+/*func (s *Server) metricsRecorderForServer() estats.MetricsRecorder {
+	return s.metricsRecorder
+}*/
+
 // NewServer creates a gRPC server which has no service registered and has not
 // started to accept requests yet.
 func NewServer(opt ...ServerOption) *Server {
 	opts := defaultServerOptions
-	for _, o := range globalServerOptions {
+	for _, o := range globalServerOptions { // Oh for CSM stuff, to see if it's an xDS Server...
 		o.apply(&opts)
 	}
 	for _, o := range opt {
 		o.apply(&opts)
 	}
 	s := &Server{
-		lis:      make(map[net.Listener]bool),
-		opts:     opts,
+		lis:  make(map[net.Listener]bool),
+		opts: opts,
+		// metricsRecorder: istats.NewMetricsRecorderList(opts.statsHandlers), // always set
 		conns:    make(map[string]map[transport.ServerTransport]bool),
 		services: make(map[string]*serviceInfo),
 		quit:     grpcsync.NewEvent(),
 		done:     grpcsync.NewEvent(),
 		channelz: channelz.RegisterServer(""),
 	}
+
+	// internal.MetricsRecorderForServer(grpc.Server) stats.MetricsRecorder
+
 	chainUnaryServerInterceptors(s)
 	chainStreamServerInterceptors(s)
 	s.cv = sync.NewCond(&s.mu)

@@ -91,6 +91,14 @@ func xdsChannelForTest(t *testing.T, serverURI, nodeID string, watchExpiryTimeou
 		t.Fatalf("Failed to create bootstrap configuration: %v", err)
 	}
 
+	// Do I need to do all this shit maybe find a test that a. gets a good
+	// resource b. gets a bad resource and hook from there (this can also be
+	// used for polling gauges, how do you even test async gauges mock timer?)
+
+	// and some number of good/bad resources...I put that idea in the metrics test...
+
+	// scale the top level xDS Channel API up and the testing flow?
+
 	// Create an xdsChannel that uses everything set up above.
 	xc, err := newXDSChannel(xdsChannelOpts{
 		transport:       tr,
@@ -684,7 +692,7 @@ func (s) TestChannel_ADS_StreamFailure(t *testing.T) {
 		t.Fatalf("Failed to create listener resource: %v", err)
 	}
 
-	wantUpdates := map[string]ads.DataAndErrTuple{
+	wantUpdates := map[string]ads.DataAndErrTuple{ // This is a good example
 		listenerResourceName: {
 			Resource: &xdsresource.ListenerResourceData{
 				Resource: xdsresource.ListenerUpdate{

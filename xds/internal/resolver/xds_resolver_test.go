@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/experimental/stats"
 	"strings"
 	"testing"
 	"time"
@@ -252,12 +253,13 @@ func (s) TestResolverCloseClosesXDSClient(t *testing.T) {
 	// client is closed.
 	origNewClient := rinternal.NewXDSClient
 	closeCh := make(chan struct{})
-	rinternal.NewXDSClient = func(string) (xdsclient.XDSClient, func(), error) {
+	rinternal.NewXDSClient = func(_ string, mr stats.MetricsRecorder) (xdsclient.XDSClient, func(), error) {
 		bc := e2e.DefaultBootstrapContents(t, uuid.New().String(), "dummy-management-server-address")
 		c, cancel, err := xdsclient.NewForTesting(xdsclient.OptionsForTesting{
 			Name:               t.Name(),
 			Contents:           bc,
 			WatchExpiryTimeout: defaultTestTimeout,
+			MetricsRecorder:    mr,
 		})
 		return c, grpcsync.OnceFunc(func() {
 			close(closeCh)

@@ -19,6 +19,7 @@
 package xdsclient
 
 import (
+	"google.golang.org/grpc/experimental/stats"
 	"sync/atomic"
 	"time"
 
@@ -62,17 +63,31 @@ func clientRefCountedClose(name string) {
 // newRefCounted creates a new reference counted xDS client implementation for
 // name, if one does not exist already. If an xDS client for the given name
 // exists, it gets a reference to it and returns it.
-func newRefCounted(name string, config *bootstrap.Config, watchExpiryTimeout, idleChannelExpiryTimeout time.Duration, streamBackoff func(int) time.Duration) (XDSClient, func(), error) {
+func newRefCounted(name string, config *bootstrap.Config, watchExpiryTimeout, idleChannelExpiryTimeout time.Duration, streamBackoff func(int) time.Duration, metricsRecorder stats.MetricsRecorder) (XDSClient, func(), error) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
 	if c := clients[name]; c != nil {
 		c.incrRef()
 		return c, grpcsync.OnceFunc(func() { clientRefCountedClose(name) }), nil
-	}
+	} // The name passed is the target, persisted in the map here...
+
+	// At creation time pass in a metrics recorder
+	/*get a mr*/
+
+	// Say you have two Channels that have same target target1, or even xDS Servers that all use same well known key...
+	// Persists around the first one passed (document that), and ignore mr passed in for subsequent (i.e. when you pull from global map)
+
+	// So when you pull from the global map ignore the mr passed in if second
+
+	// also things that come from server, first xDS Server that uses...
+	// ...
+
+	// and then where do I get target uri of the xDS Server for communication (determine where to actually emit metrics)
+	// and see if data needs plumbing more than it already has...
 
 	// Create the new client implementation.
-	c, err := newClientImpl(config, watchExpiryTimeout, idleChannelExpiryTimeout, streamBackoff)
+	c, err := newClientImpl(config, watchExpiryTimeout, idleChannelExpiryTimeout, streamBackoff, metricsRecorder, name) // adding plumbing target, target gets plumbed...could make these opts?
 	if err != nil {
 		return nil, nil, err
 	}

@@ -301,7 +301,7 @@ type FailFastCallOption struct {
 }
 
 func (o FailFastCallOption) before(c *callInfo) error {
-	c.failFast = o.FailFast
+	c.failFast = o.FailFast // This is ugly because doesn't map 1:1
 	return nil
 }
 func (o FailFastCallOption) after(*callInfo, *csAttempt) {}

@@ -22,11 +22,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/internal"
+	"google.golang.org/grpc/internal/stats"
 	"net"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	estats "google.golang.org/grpc/experimental/stats"
 	internalgrpclog "google.golang.org/grpc/internal/grpclog"
 	"google.golang.org/grpc/internal/grpcsync"
 	iresolver "google.golang.org/grpc/internal/resolver"
@@ -43,8 +46,8 @@ const serverPrefix = "[xds-server %p] "
 
 var (
 	// These new functions will be overridden in unit tests.
-	newXDSClient = func(name string) (xdsclient.XDSClient, func(), error) {
-		return xdsclient.New(name)
+	newXDSClient = func(name string, mr estats.MetricsRecorder) (xdsclient.XDSClient, func(), error) {
+		return xdsclient.New(name, mr)
 	}
 	newGRPCServer = func(opts ...grpc.ServerOption) grpcServer {
 		return grpc.NewServer(opts...)
@@ -84,7 +87,7 @@ func NewGRPCServer(opts ...grpc.ServerOption) (*GRPCServer, error) {
 	}
 	newOpts = append(newOpts, opts...)
 	s := &GRPCServer{
-		gs:   newGRPCServer(newOpts...),
+		gs:   newGRPCServer(newOpts...), // can I downcast this or will not work
 		quit: grpcsync.NewEvent(),
 	}
 	s.handleServerOptions(opts)
@@ -95,14 +98,59 @@ func NewGRPCServer(opts ...grpc.ServerOption) (*GRPCServer, error) {
 	newXDSClient := newXDSClient
 	if s.opts.bootstrapContentsForTesting != nil {
 		// Bootstrap file contents may be specified as a server option for tests.
-		newXDSClient = func(name string) (xdsclient.XDSClient, func(), error) {
+		newXDSClient = func(name string, mr estats.MetricsRecorder) (xdsclient.XDSClient, func(), error) {
 			return xdsclient.NewForTesting(xdsclient.OptionsForTesting{
-				Name:     name,
-				Contents: s.opts.bootstrapContentsForTesting,
+				Name:            name,
+				Contents:        s.opts.bootstrapContentsForTesting,
+				MetricsRecorder: mr,
 			})
 		}
 	}
-	xdsClient, xdsClientClose, err := newXDSClient(xdsclient.NameForServer)
+
+	// Didn't I do something at this layer wrt estats handlers and metrics recorders?
+
+	// Does it need to persist mrl? Or just pass one sh it there?
+
+	// Convert numerous to one Metrics Recorder List (I guess write this assumption)
+
+	// Convert all sh and create a metrics recorder list wrapping []mrl...and then pass that here
+
+	// cc.metricsRecorderList = estats.NewMetricsRecorderList(cc.dopts.copts.StatsHandlers)
+
+	//
+
+	// Option 1 from Doug:
+	// internal.MetricsRecorderForServer(grpc.Server) estats.MetricsRecorder
+	// convert []sh -> metrics recorder list in place, persist it, and then read it from here...
+
+	// Option 2 from Doug:
+	//
+
+	// /*internal.StatsHandlerServerOption // struct definition like how these things work:
+	// https://pkg.go.dev/google.golang.org/grpc#FailFastCallOption*/
+
+	// Rename to estats
+	// istats.NewMetricsRecorderList() // It has estats handlers computed and stored in this thing...
+
+	// This will break if set to something else Underlying type in tests...I typecast it
+	// to an interface does it keep the *grpc.Server type?
+
+	/*
+		if grpc.Server {
+			get metrics recorder from them
+		} else { (Go prefers setting a variable above and setting it in the if...
+			NewMetricsRecorderList on nil shs (returns a set metrics recorder list which won't nil panic at least...)
+		}
+	*/
+
+	var mrl estats.MetricsRecorder
+	mrl = stats.NewMetricsRecorderList(nil)
+	if srv, ok := s.gs.(*grpc.Server); ok { // Will hit in prod but not for testing.
+		mrl = internal.MetricsRecorderForServer.(func(*grpc.Server) estats.MetricsRecorder)(srv)
+	}
+
+	// mrl := internal.MetricsRecorderForServer.(func(*grpc.Server) estats.MetricsRecorder)(s.gs.(*grpc.Server)) // can panic but never should panic right...?
+	xdsClient, xdsClientClose, err := newXDSClient(xdsclient.NameForServer, mrl)
 	if err != nil {
 		return nil, fmt.Errorf("xDS client creation failed: %v", err)
 	}

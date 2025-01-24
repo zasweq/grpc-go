@@ -20,6 +20,7 @@ package xdsclient
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/experimental/stats"
 	"sync/atomic"
 
 	"google.golang.org/grpc/grpclog"
@@ -86,6 +87,8 @@ type authority struct {
 	xdsClientSerializer       *grpcsync.CallbackSerializer // Serializer to run call ins from the xDS client, owned by this authority.
 	xdsClientSerializerClose  func()                       // Function to close the above serializer.
 	logger                    *igrpclog.PrefixLogger       // Logger for this authority.
+	target                    string                       // The gRPC Channel target.
+	metricsRecorder           stats.MetricsRecorder        // The metrics recorder used for emitting metrics.
 
 	// The below defined fields must only be accessed in the context of the
 	// serializer callback, owned by this authority.
@@ -99,6 +102,24 @@ type authority struct {
 	// The second level map key is the resource name, with the value being the
 	// actual state of the resource.
 	resources map[xdsresource.Type]map[string]*resourceState
+
+	// Related to fix Mark talked about?
+
+	/*
+			Indicates the cache state of an xDS resource. The value will be one of:
+		"requested": The resource has been requested from the xDS server but has not yet been received.
+		"does_not_exist": The server has indicated that the resource does not exist.
+		"acked": The resource has been received and is valid.
+		"nacked": The resource was received but was not valid.
+		"nacked_but_cached": There is a version of the resource cached, but the most recent update of the resource was invalid.
+
+		Need more business logic to determine this and to also store it in the correct "cache"
+		position of the xDS Client...
+
+			Is this logically the "cache_state" ^^^ resources...? Or is at the ADS stream level?
+	*/ // (attribute 4)
+
+	// attribute 5 - grpc.xds.resource_type - can a call a method on the xdsresource.Type interface type
 
 	// An ordered list of xdsChannels corresponding to the list of server
 	// configurations specified for this authority in the bootstrap. The
@@ -119,6 +140,8 @@ type authorityBuildOptions struct {
 	serializer       *grpcsync.CallbackSerializer // Callback serializer for invoking watch callbacks
 	getChannelForADS xdsChannelForADS             // Function to acquire a reference to an xdsChannel
 	logPrefix        string                       // Prefix for logging
+	target           string                       // Target for the gRPC Channel that owns xDS Client/Authority.
+	metricsRecorder  stats.MetricsRecorder        // metricsRecorder to emit metrics
 }
 
 // newAuthority creates a new authority instance with the provided
@@ -142,6 +165,8 @@ func newAuthority(args authorityBuildOptions) *authority {
 		xdsClientSerializerClose:  cancel,
 		logger:                    igrpclog.NewPrefixLogger(l, logPrefix),
 		resources:                 make(map[xdsresource.Type]map[string]*resourceState),
+		target:                    args.target,
+		metricsRecorder:           args.metricsRecorder,
 	}
 
 	// Create an ordered list of xdsChannels with their server configs. The
@@ -172,7 +197,7 @@ func (a *authority) adsStreamFailure(serverConfig *bootstrap.ServerConfig, err e
 // fallback if the associated conditions are met.
 //
 // Only executed in the context of a serializer callback.
-func (a *authority) handleADSStreamFailure(serverConfig *bootstrap.ServerConfig, err error) {
+func (a *authority) handleADSStreamFailure(serverConfig *bootstrap.ServerConfig, err error) { // not of interest since it's about xDS Client *resource* updates valid/invalid
 	if a.logger.V(2) {
 		a.logger.Infof("Connection to server %s failed with error: %v", serverConfig, err)
 	}
@@ -347,6 +372,14 @@ func (a *authority) handleADSResourceUpdate(serverConfig *bootstrap.ServerConfig
 		}
 	}()
 
+	// On each authority...
+	// target, server, and resource type
+	rType.TypeName() // string...would this compile? Either type name or type url...
+	rType.TypeURL()  // string (resource type
+	// I might need to convert it...example given in gRFC is "envoy.config.listener.v3.Listener"
+
+	// record on global counter here...
+
 	resourceStates := a.resources[rType]
 	for name, uErr := range updates {
 		state, ok := resourceStates[name]
@@ -357,9 +390,12 @@ func (a *authority) handleADSResourceUpdate(serverConfig *bootstrap.ServerConfig
 		// On error, keep previous version of the resource. But update status
 		// and error.
 		if uErr.Err != nil {
+			// Is a.target scoped to right thing...is it 1:1/correct scope?
+			// Target documentation - "For clients, indicates the target of the gRPC channel in which the XdsClient is used"
+			xdsClientResourceUpdatesInvalidMetric.Record(a.metricsRecorder /*need to plumb down the metrics recorder to the authority, take mr in top level function and write a docstring for it...*/, 1, a.target, serverConfig.ServerURI(), rType.TypeName() /*is this right?*/)
 			state.md.ErrState = md.ErrState
 			state.md.Status = md.Status
-			for watcher := range state.watchers {
+			for watcher := range state.watchers { // All the watchers for the resource?
 				watcher := watcher
 				err := uErr.Err
 				watcherCnt.Add(1)
@@ -367,6 +403,18 @@ func (a *authority) handleADSResourceUpdate(serverConfig *bootstrap.ServerConfig
 			}
 			continue
 		}
+
+		// Something here nil panics...
+
+		// Is a.target scoped to right thing...is it 1:1/correct scope?
+		// Target documentation - "For clients, indicates the target of the gRPC channel in which the XdsClient is used"
+
+		// Always here...
+		if a.metricsRecorder == nil {
+			print("metricsRecorder is nil")
+		}
+		print("about to record a valid update...")
+		xdsClientResourceUpdatesValidMetric.Record(a.metricsRecorder /*need to plumb down the metrics recorder to the authority, take mr in top level function and write a docstring for it...*/, 1, a.target, serverConfig.ServerURI(), rType.TypeName() /*is this right?*/)
 
 		if state.deletionIgnored {
 			state.deletionIgnored = false

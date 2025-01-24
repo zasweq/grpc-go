@@ -43,7 +43,7 @@ func NewMetricsRecorderList(shs []stats.Handler) *MetricsRecorderList {
 			mrs = append(mrs, mr)
 		}
 	}
-	return &MetricsRecorderList{
+	return &MetricsRecorderList{ // Set even if metricsRecorders is nil...
 		metricsRecorders: mrs,
 	}
 }

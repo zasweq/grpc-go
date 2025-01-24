@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/experimental/stats"
 	"net"
 	"reflect"
 	"strconv"
@@ -475,7 +476,7 @@ func (s) TestServeSuccess(t *testing.T) {
 // creation fails and verifies that the call to NewGRPCServer() fails.
 func (s) TestNewServer_ClientCreationFailure(t *testing.T) {
 	origNewXDSClient := newXDSClient
-	newXDSClient = func(string) (xdsclient.XDSClient, func(), error) {
+	newXDSClient = func(string, stats.MetricsRecorder) (xdsclient.XDSClient, func(), error) {
 		return nil, nil, errors.New("xdsClient creation failed")
 	}
 	defer func() { newXDSClient = origNewXDSClient }()

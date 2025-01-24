@@ -60,6 +60,12 @@ var (
 	// gRPC server. An xDS-enabled server needs to know what type of credentials
 	// is configured on the underlying gRPC server. This is set by server.go.
 	GetServerCredentials any // func (*grpc.Server) credentials.TransportCredentials
+	// MetricsRecorderForServer returns the MetricsRecorderList derived from a
+	// servers stats handlers. An xDS-enabled server needs to provide the xDS
+	// Client.
+
+	// how to test smoke test or will just not compile I guess...need to fix all tests that break...
+	MetricsRecorderForServer any // func (*grpc.Server) estats.MetricsRecorder
 	// CanonicalString returns the canonical string of the code defined here:
 	// https://github.com/grpc/grpc/blob/master/doc/statuscodes.md.
 	//
